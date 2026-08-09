@@ -8,10 +8,11 @@
  *   1. Dispatch push — preferred (already reaches their phone). Seam only here: the daemon
  *      wires the real Dispatch reach; a HANDOFF_DISPATCH_HOOK command, if set, is invoked.
  *   2. macOS notification via `terminal-notifier` — the CLICKABLE rung, OPT-IN ONLY
- *      (HANDOFF_TERMINAL_NOTIFIER=<path>). Measured NON-DELIVERING on the machine this was
- *      developed on: zero entries in `defaults read com.apple.ncprefs`, an ad-hoc-signed
- *      bundle, and the only ping that actually appeared came from osascript. Presence on
- *      disk is not evidence of delivery. macOS attributes an `osascript` notification to
+ *      (HANDOFF_TERMINAL_NOTIFIER=<path>). It DOES deliver here — retracted 2026-08-09, see
+ *      the retraction note below. Kept opt-in anyway: it must be installed, it is ad-hoc
+ *      signed, and whether a given machine's Notification Center accepts it is not something
+ *      this code can know in advance. Prove it per machine with notify-smoke --prove.
+ *      Presence on disk is still not evidence of delivery. macOS attributes an `osascript` notification to
  *      Script Editor, so clicking one "opens the sender" and Script Editor's file dialog
  *      appears: the tap does nothing useful and looks broken. terminal-notifier owns its
  *      notification, so the click CAN carry a real action — `-activate` the Claude app for
@@ -35,9 +36,23 @@ const { execFile } = require('child_process');
  * degrade, never an error — the osascript rung still shows the ping. HANDOFF_TERMINAL_NOTIFIER
  * overrides for tests and for non-Homebrew installs. */
 let TN_CACHE;
-/* OPT-IN ONLY. Presence on disk is not evidence of delivery — terminal-notifier was present
- * on the development machine and delivered nothing. Someone must prove it works here and set
- * the env var to an explicit path. */
+/* OPT-IN ONLY, but not for the reason first recorded.
+ *
+ * RETRACTION (2026-08-09). This said terminal-notifier "delivered nothing" on the development
+ * machine. It delivers. Both pieces of evidence behind the original claim were void:
+ *   - `defaults read com.apple.ncprefs` returned zero entries for it — but that command returns
+ *     "Domain does not exist" for EVERY app in this context, including ones that demonstrably
+ *     deliver. It measured our own lack of access, not the notification's fate.
+ *   - a six-second look with nobody watching. The owner later saw the notification.
+ * `terminal-notifier -list <group>` reads the notification centre's DELIVERED records and shows
+ * these arriving. That is also the delivery receipt an earlier note claimed did not exist, which
+ * means auto-promotion on real evidence IS buildable if anyone wants it.
+ *
+ * Still opt-in, on the reasons that survived: it must be installed, the Homebrew bottle is
+ * ad-hoc signed and spctl-rejected, and whether a particular machine's Notification Center
+ * honours it depends on that machine's policy — n=1 here, and one machine does not settle it.
+ * The general lesson, which cost two false claims in one day: exit 0 proves the binary ran.
+ * Only a delivered-record proves delivery. Run `node notify-smoke.js --prove` per machine. */
 function clickableRungEnabled() {
   const v = process.env.HANDOFF_TERMINAL_NOTIFIER;
   return !!v && v !== 'none' ? terminalNotifierPath() : null;
@@ -115,7 +130,8 @@ function notify(ev) {
         conversation: (ev && ev.conversation) || null, meta: (ev && ev.meta) || null,
         // Which rung WOULD have fired, and what the click would carry. Without this the
         // smoke can only assert that something was notified, not that the tap works.
-        would_fire: process.platform === 'darwin' ? (clickableRungEnabled() ? 'terminal-notifier' : 'macos') : 'unavailable',
+        would_fire: process.platform === 'darwin' ? (clickableRungEnabled() ? 'terminal-notifier' : 'macos')
+          : process.platform === 'win32' ? 'windows-toast' : 'unavailable',
         click: clickableRungEnabled() ? (notifyTarget(ev).activate || 'none') : 'none',
         click_target: notifyTarget(ev).name || null
       }) + '\n');
@@ -161,6 +177,46 @@ function notify(ev) {
       const script = `display notification "${esc(body + suffix)}" with title "${esc(title)}"`;
       execFile('osascript', ['-e', script], () => {}); // fire-and-forget
       return { fired: true, channel: 'macos', click: 'none', degraded: 'terminal-notifier not installed' };
+    }
+
+    /* WINDOWS. Until now the only platform branch was darwin, so every notification on Windows
+     * returned {fired:false, channel:'unavailable'} — meaning wake tier rung 3 (bin/handoff-wake,
+     * "target CLOSED, ping the user so they open the window") did NOTHING on Windows, silently,
+     * and the mail sat in the store until the user happened to look. Found 2026-08-09 when the
+     * owner's second machine turned out to be Windows.
+     *
+     * Toast via PowerShell, chosen because it needs NO install: WinRT's ToastNotificationManager
+     * is present on Windows 10 and 11, and we borrow PowerShell's own registered AppUserModelID
+     * because a toast must be shown by a registered app and handoff is not one. Consequence,
+     * stated rather than hidden: the toast is attributed to PowerShell, which is the same class
+     * of compromise as osascript's Script Editor attribution on macOS — visible, honestly
+     * labelled, and the click belongs to the host app rather than to us. So no click is promised.
+     *
+     * NOT VERIFIED ON A REAL WINDOWS MACHINE by the author. It is written, it is covered by
+     * notify-smoke's routing assertions, and `node notify-smoke.js --prove` fires a real one so
+     * the person on that machine can confirm with their own eyes. Until someone does that, this
+     * comment must not claim it works — today produced two separate false "measured" claims
+     * about notification delivery and both came from asserting an effect nobody had seen. */
+    if (process.platform === 'win32') {
+      const xml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const q = s => String(s).replace(/'/g, "''"); // PowerShell single-quote escape
+      const doc =
+        `<toast><visual><binding template="ToastGeneric">` +
+        `<text>${xml(title)}</text><text>${xml(body)}</text>` +
+        `</binding></visual></toast>`;
+      const AUMID = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe';
+      const ps = [
+        `$ErrorActionPreference='Stop'`,
+        `$null=[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]`,
+        `$x=New-Object Windows.Data.Xml.Dom.XmlDocument`,
+        `$x.LoadXml('${q(doc)}')`,
+        `$t=New-Object Windows.UI.Notifications.ToastNotification $x`,
+        `[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('${q(AUMID)}').Show($t)`
+      ].join('; ');
+      execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], () => {}); // fire-and-forget
+      // click:'none' deliberately. The toast belongs to PowerShell's AUMID, so activating it
+      // cannot route back here. Same honesty as the osascript rung: say the tap does nothing.
+      return { fired: true, channel: 'windows-toast', click: 'none' };
     }
 
     return { fired: false, channel: 'unavailable' }; // no channel on this platform

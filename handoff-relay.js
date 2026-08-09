@@ -210,6 +210,20 @@ function unauthorized(res, reason, detail) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
+  /* ACCESS LOG, opt-in. An operator debugging "my client cannot reach the server" needs to
+   * know whether requests ARRIVE at all — the difference between a routing problem upstream
+   * and a refusal here is the whole diagnosis, and without this you are guessing. Logs the
+   * request line, whether a token was present, and the status; never the token itself. */
+  if (process.env.HANDOFF_RELAY_ACCESS_LOG) {
+    const started = Date.now();
+    const auth = req.headers.authorization ? 'bearer' : (req.headers['cf-access-jwt-assertion'] ? 'cf-access' : 'none');
+    res.on('finish', () => {
+      try {
+        require('fs').appendFileSync(process.env.HANDOFF_RELAY_ACCESS_LOG,
+          `${new Date().toISOString()} ${req.method} ${url.pathname} token=${auth} → ${res.statusCode} ${Date.now() - started}ms ua=${(req.headers['user-agent'] || '-').slice(0, 60)}\n`);
+      } catch (_) {}
+    });
+  }
 
   // Liveness, unauthenticated ON PURPOSE and deliberately empty of protocol facts: it says
   // the relay is up and whether home answers, and nothing about what is in the store.
@@ -223,6 +237,19 @@ const server = http.createServer(async (req, res) => {
    * path. Serve both, so discovery succeeds on the first request rather than the second. */
   if (req.method === 'GET' && url.pathname.startsWith('/.well-known/oauth-protected-resource')) {
     return send(res, 200, protectedResourceMetadata());
+  }
+
+  /* GET /mcp — the Streamable HTTP transport's SSE leg. We do not offer a server-initiated
+   * stream (every reply is a direct JSON response to a POST), and the spec allows saying so.
+   * It must NOT fall through to the catch-all 404: a 404 means "no such endpoint", which is
+   * why a connector reported "please verify the server URL" about a URL that was correct.
+   * Found by an access log showing GET /mcp → 404 three times while the POST leg answered
+   * perfectly. Unauthenticated still gets the 401 challenge, so discovery is unchanged; an
+   * authenticated GET gets an honest 405 naming what the endpoint accepts. */
+  if (req.method === 'GET' && url.pathname === '/mcp') {
+    const auth = await verifyToken(req.headers);
+    if (!auth.ok) return unauthorized(res, auth.reason, auth.detail);
+    return send(res, 405, { error: 'method_not_allowed', detail: 'this server replies to POST; it does not offer a server-initiated SSE stream' }, { allow: 'POST' });
   }
 
   if (req.method === 'POST' && url.pathname === '/mcp') {

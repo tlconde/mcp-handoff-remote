@@ -7,16 +7,19 @@
  * Channels, in preference order (BROADLY-USED-ONLY — no exotic transports):
  *   1. Dispatch push — preferred (already reaches their phone). Seam only here: the daemon
  *      wires the real Dispatch reach; a HANDOFF_DISPATCH_HOOK command, if set, is invoked.
- *   2. macOS notification via `terminal-notifier` — the CLICKABLE rung. macOS attributes an
- *      `osascript` notification to Script Editor, so clicking one "opens the sender" and
- *      Script Editor's file dialog appears: the tap does nothing useful and looks broken.
- *      terminal-notifier owns its notification, so the click can carry a real action —
- *      `-activate` the Claude app for chat/cowork/design targets. That completes lesson 2's
- *      line: the ping carries which window to open; the tap and the drain are one gesture.
- *   3. macOS notification via `osascript` — DISPLAY-ONLY fallback when terminal-notifier is
- *      absent. It says so in the body, because a notification that silently does nothing on
- *      click is a promise broken quietly, which is the failure class this project exists to
- *      kill. Install the click with: brew install terminal-notifier
+ *   2. macOS notification via `terminal-notifier` — the CLICKABLE rung, OPT-IN ONLY
+ *      (HANDOFF_TERMINAL_NOTIFIER=<path>). Measured NON-DELIVERING on the machine this was
+ *      developed on: zero entries in `defaults read com.apple.ncprefs`, an ad-hoc-signed
+ *      bundle, and the only ping that actually appeared came from osascript. Presence on
+ *      disk is not evidence of delivery. macOS attributes an `osascript` notification to
+ *      Script Editor, so clicking one "opens the sender" and Script Editor's file dialog
+ *      appears: the tap does nothing useful and looks broken. terminal-notifier owns its
+ *      notification, so the click CAN carry a real action — `-activate` the Claude app for
+ *      chat/cowork/design targets — on a machine where someone has proven it delivers.
+ *   3. macOS notification via `osascript` — the DEFAULT, because it is the only rung proven
+ *      to appear. Its click opens Script Editor (macOS attributes the notification to it),
+ *      which is useless — so the body says clicking does nothing rather than implying
+ *      otherwise. A visible notification with a dead click beats a click that never arrives.
  *
  * Test / CI mode: HANDOFF_NOTIFY_LOG=<file> appends one JSON line INSTEAD of firing any
  * real notification, so tests never spawn OS notifications. HANDOFF_NO_NOTIFY=1 disables
@@ -32,6 +35,13 @@ const { execFile } = require('child_process');
  * degrade, never an error — the osascript rung still shows the ping. HANDOFF_TERMINAL_NOTIFIER
  * overrides for tests and for non-Homebrew installs. */
 let TN_CACHE;
+/* OPT-IN ONLY. Presence on disk is not evidence of delivery — terminal-notifier was present
+ * on the development machine and delivered nothing. Someone must prove it works here and set
+ * the env var to an explicit path. */
+function clickableRungEnabled() {
+  const v = process.env.HANDOFF_TERMINAL_NOTIFIER;
+  return !!v && v !== 'none' ? terminalNotifierPath() : null;
+}
 function terminalNotifierPath() {
   if (TN_CACHE !== undefined) return TN_CACHE;
   const override = process.env.HANDOFF_TERMINAL_NOTIFIER;
@@ -105,8 +115,8 @@ function notify(ev) {
         conversation: (ev && ev.conversation) || null, meta: (ev && ev.meta) || null,
         // Which rung WOULD have fired, and what the click would carry. Without this the
         // smoke can only assert that something was notified, not that the tap works.
-        would_fire: process.platform === 'darwin' ? (terminalNotifierPath() ? 'terminal-notifier' : 'macos') : 'unavailable',
-        click: terminalNotifierPath() ? (notifyTarget(ev).activate || 'none') : 'none',
+        would_fire: process.platform === 'darwin' ? (clickableRungEnabled() ? 'terminal-notifier' : 'macos') : 'unavailable',
+        click: clickableRungEnabled() ? (notifyTarget(ev).activate || 'none') : 'none',
         click_target: notifyTarget(ev).name || null
       }) + '\n');
       return { fired: true, channel: 'log' };
@@ -122,13 +132,23 @@ function notify(ev) {
 
     if (process.platform === 'darwin') {
       const target = notifyTarget(ev);
-      // Channel 2: terminal-notifier — the click does something.
-      const tn = terminalNotifierPath();
+      /* RUNG ORDER REVERTED, and the earlier order was a REGRESSION THAT SHIPPED.
+       * terminal-notifier was made primary to fix the Script Editor click. It exits 0 and
+       * appears to work — but exit 0 proves the BINARY RAN, not that a notification was
+       * delivered. Measured afterwards: `defaults read com.apple.ncprefs` had ZERO entries
+       * for terminal-notifier, the bundle was ad-hoc/linker-signed rather than notarized,
+       * and the only ping the user actually saw came from osascript. So the "fix" traded an
+       * ugly-but-VISIBLE notification for an INVISIBLE one — silence, which is the exact
+       * failure class this project exists to kill, and worse than the bug it replaced.
+       * So: osascript is primary because it is proven to appear. terminal-notifier is
+       * opt-in only, via an explicit HANDOFF_TERMINAL_NOTIFIER path, so it cannot silently
+       * take over on a machine where nobody has proven it delivers. */
+      const tn = clickableRungEnabled();
       if (tn) {
         const argv = ['-title', title, '-message', body || ' ', '-group', 'handoff'];
         // The click's action, chosen by where the mail actually is. An app surface can be
-        // opened for their: activate Claude. A terminal cannot be focused from outside without
-        // guessing which of several windows it is (§I2b — five share this workspace), so it
+        // opened for the user: activate Claude. A terminal cannot be focused from outside
+        // without guessing which of several windows it is (§I2b — several can share one workspace), so it
         // gets no false promise: the ping names the window and the body says where to look.
         if (target.activate) argv.push('-activate', target.activate);
         execFile(tn, argv, () => {}); // fire-and-forget

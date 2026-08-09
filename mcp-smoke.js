@@ -856,6 +856,48 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
     delete process.env.CLAUDE_CODE_SESSION_ID;
   }
 
+  // ---- peek_inbox: watch without consuming ----
+  // check_inbox marks what it shows as READ and is scoped to a SURFACE, not to the caller's own
+  // records. Measured 2026-08-09: an inbox check from one terminal marked another conversation's
+  // envelope and its nudge read, so the session they were addressed to would have found an empty
+  // inbox. A wake agent polling that every 15-30s would do it continuously, to everyone. peek is a
+  // SEPARATE verb rather than a flag because a flag is one default away from the same accident.
+  {
+    const rSetup = await rpc([init,
+      call(1, 'send_to_surface', { to: 'code', from: 'code', title: 'Peek target', context: 'holds unread mail', open_in: 'none' }),
+      call(2, 'resolve_conversation', { title_contains: 'Peek target', surface: 'code' })
+    ]);
+    const peekId = (text(rSetup, 2).match(/session_id: (sess_[A-Za-z0-9]+)/) || [])[1];
+    await rpc([init, call(1, 'send_message', { session_id: peekId, message: 'first', from: 'chat' })]);
+    await rpc([init, call(1, 'send_message', { session_id: peekId, message: 'second', from: 'chat' })]);
+
+    const rPeek = await rpc([init, call(1, 'peek_inbox', { surface: 'code', title_contains: 'Peek target' })]);
+    const p1 = text(rPeek, 1);
+    ok(/NOTHING MARKED READ/.test(p1) && /2 unread/.test(p1),
+      'peek: reports the unread count and says plainly that it consumed nothing');
+    ok(!/first|second/.test(p1),
+      'peek: never returns message TEXT — the words belong to their reader, peek only counts them');
+
+    // The load-bearing assertion: peek twice, then check_inbox must STILL find both.
+    await rpc([init, call(1, 'peek_inbox', { surface: 'code', title_contains: 'Peek target' })]);
+    const rDrain = await rpc([init, call(1, 'check_inbox', { surface: 'code', title_contains: 'Peek target' })]);
+    ok(/first/.test(text(rDrain, 1)) && /second/.test(text(rDrain, 1)),
+      'peek: after TWO peeks the mail is still unread — the reader loses nothing to a watcher');
+
+    // ...and check_inbox still consumes, so the two verbs are genuinely different.
+    const rAgain = await rpc([init, call(1, 'check_inbox', { surface: 'code', title_contains: 'Peek target' })]);
+    ok(!/first/.test(text(rAgain, 1)),
+      'peek: check_inbox still consumes — peek is a second verb, not a softened one');
+
+    const rCursor = await rpc([init, call(1, 'peek_inbox', { surface: 'code', title_contains: 'Peek target', since: 'zzzzzzzzzzzzzzzzzzzzzzzzzz' })]);
+    ok(/nothing waiting/.test(text(rCursor, 1)),
+      'peek: a since-cursor past everything reports nothing, so repeat polls stay cheap');
+
+    const rReach = await rpc([init, call(1, 'peek_inbox', { surface: 'code' })]);
+    ok(/reachable: (process|stale-binding|none)/.test(text(rReach, 1)),
+      'peek: states whether each target can be reached, so the agent never attempts a wake it cannot perform');
+  }
+
   // ---- addressable names: a record answers to its terminal name, not only its title ----
   // Measured 2026-08-09: a send addressed to "build" resolved an app record merely CONTAINING
   // that word, while the live terminal actually NAMED build (title "tunnel") was never a

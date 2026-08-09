@@ -382,7 +382,7 @@ const MIGRATED = new Set([
   'pick_up', 'continue_from', 'return_to_origin',
   'resolve_conversation', 'send_message', 'send_to', 'send_to_surface', 'status', 'whoami',
   'send_to_worker', 'list_conversations', 'resume_code_session', 'open_conversation',
-  'check_inbox', 'withdraw_handoff', 'decline_handoff', 'list_workers',
+  'check_inbox', 'peek_inbox', 'withdraw_handoff', 'decline_handoff', 'list_workers',
 ]);
 
 /** Run a migrated tool against `core` with the caller's per-request `ctx`. */
@@ -1342,6 +1342,57 @@ async function callTool(name, args, ctx, core) {
       `(App conversation IDs are server-side; no deep link reaches a specific one — this is the closest the platform allows. ` +
       `Tip: queue content there first with send_message so it's waiting when you arrive.)`;
   }
+  /* PEEK — read the inbox WITHOUT consuming it. The wake agent's only read verb.
+   *
+   * check_inbox marks what it shows as read, and it is scoped to a SURFACE rather than to the
+   * caller's own records. That combination is fine for a human draining their own mail and is a
+   * correctness bug for anything that polls: measured 2026-08-09, an inbox check from this
+   * terminal marked another conversation's envelope and its nudge read, so the session they were
+   * addressed to would have found an empty inbox and never known. A wake agent polling every
+   * 15-30s would do that to every conversation on the surface, continuously.
+   *
+   * So peek exists as a separate verb rather than a flag on check_inbox: a flag would be one
+   * default away from the same accident, and the agent must be structurally incapable of
+   * consuming mail it is only watching for.
+   *
+   * It returns COUNTS AND ADDRESSES, never message bodies. The agent's job is to decide whether
+   * to wake someone, which needs only "how much is waiting, for whom, and can it be reached" —
+   * the text belongs to the reader. `since` makes repeat polls cheap, so interval tuning stops
+   * being load-bearing. */
+  if (name === 'peek_inbox') {
+    const nativeId = (ctx && ctx.cli_uuid) || null;
+    const surface = (args && args.surface) || (nativeId ? 'code' : 'chat');
+    const since = args && args.since ? String(args.since) : null;
+    const st = await call('GET', '/api/state');
+    let sessions = Object.values(st.sessions).filter(s => !s.archived && s.surface === surface);
+    if (args && args.title_contains) sessions = filterByName(sessions, args.title_contains);
+
+    const rows = [];
+    let newest = since;
+    for (const s of sessions) {
+      const fresh = freshMessages(s).filter(m => !since || String(m.id || '') > since);
+      if (!fresh.length) continue;
+      for (const m of fresh) if (!newest || String(m.id || '') > newest) newest = String(m.id || '');
+      const nr = s.native_ref || null;
+      // Whether a leg could even reach it, so the agent does not attempt a wake it cannot perform.
+      const live = !!(nr && nr.pid && (() => { try { process.kill(nr.pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } })());
+      rows.push({
+        session_id: s.id, title: s.title, surface: s.surface,
+        unread: fresh.length,
+        returns: fresh.filter(m => m.kind === 'resume_summary').length,
+        native_name: (nr && nr.name) || null,
+        reachable: live ? 'process' : (nr ? 'stale-binding' : 'none'),
+      });
+    }
+    if (!rows.length) {
+      return `PEEK ${surface}: nothing waiting${since ? ` since ${since}` : ''}. Cursor unchanged. Nothing was marked read — peek never consumes.`;
+    }
+    return `PEEK ${surface} — ${rows.length} conversation(s) holding unread mail. NOTHING MARKED READ.\n` +
+      rows.map(r => `- "${r.title}"${r.native_name && r.native_name !== r.title ? ` (native: ${r.native_name})` : ''} · ${r.unread} unread${r.returns ? `, ${r.returns} return(s)` : ''} · reachable: ${r.reachable}\n  session_id: ${r.session_id}`).join('\n') +
+      `\ncursor: ${newest || '(none)'} — pass it back as \`since\` to see only what is newer.` +
+      `\nThe text stays unread and belongs to its reader; check_inbox in that conversation delivers it.`;
+  }
+
   if (name === 'check_inbox') {
     const nativeId = (ctx && ctx.cli_uuid) || null;
     // Default to the surface this bridge actually lives on: a terminal bridge (CLI uuid

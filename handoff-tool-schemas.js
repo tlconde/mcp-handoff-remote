@@ -170,6 +170,19 @@ const TOOLS = [
     }
   },
   {
+    name: 'peek_inbox',
+    description: 'Read the inbox WITHOUT consuming it — counts, addresses and reachability, never message text, and nothing is marked read. Use this for anything that POLLS or watches on someone else\'s behalf; check_inbox marks what it shows as read and is scoped to a whole surface, so polling it consumes other conversations\' unread state (measured: an inbox check drained an envelope addressed to another session). Returns a cursor; pass it back as `since` so repeat polls only report what is newer. The message text belongs to its reader — check_inbox in that conversation delivers it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        surface: { type: 'string', enum: ['chat', 'cowork', 'design', 'code'], description: 'Surface to watch. Default: code in a terminal, else chat.' },
+        title_contains: { type: 'string', description: 'Limit to conversations matching a title or terminal name. Optional.' },
+        since: { type: 'string', description: 'Cursor from a previous peek. Only mail newer than this is reported.' }
+      },
+      additionalProperties: false
+    }
+  },
+  {
     name: 'pick_up',
     description: 'Pick up a handoff addressed to THIS surface (the receiving side of send_to). Exactly one pending → returns its brief. Several pending → returns a list to choose from (call again with session_id or title_contains). Already-picked-up handoffs are not offered again. Use when the user says "pick up the handoff".',
     inputSchema: {

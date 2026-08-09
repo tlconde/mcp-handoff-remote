@@ -19,8 +19,8 @@
  *                        via ListAgents, then SendMessage's ONE wake line. Proven live in
  *                        t26 (woke ai-product-sense-2a). Fire-and-exit, no-reply-expected,
  *                        exactly ONE call, NO retries (relay contract, t26 §reply).
- *   3. notify the user   — target CLOSED (no live socket). Ping via bin/handoff-notify so they
- *                        opens the window; their next turn there drains the mail.
+ *   3. notify the user   — target CLOSED (no live socket). Ping via bin/handoff-notify so the
+ *                        user opens the window; the next turn there drains the mail.
  *   4. store           — ALWAYS the durable truth. Written by the CALLER before wake() runs;
  *                        this module never owns durability. Every rung degrades to it.
  *
@@ -159,7 +159,7 @@ function nativeReach(native_ref) {
      * A uuid is NOT unique across processes: measured 2026-08-09, `/exit` followed by
      * `claude --continue` left TWO live processes (38088 and 87920) registered under one
      * session id, both named "build". find() would have picked whichever the filesystem
-     * listed first and relayed into a window they were not watching — starting a turn in the
+     * listed first and relayed into a window nobody was watching — starting a turn in the
      * wrong place is worse than not starting one. Several live claimants is ambiguity, and
      * ambiguity never gets a guess. */
     const claimants = rows.filter(r => r.sessionId === native_ref.session_id);

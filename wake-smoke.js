@@ -248,7 +248,7 @@ test('attention + closed → notify, no relay', () => withEnv({ HANDOFF_SESSIONS
 /* A UUID IS NOT UNIQUE ACROSS PROCESSES. Measured 2026-08-09: the user ran /exit then
  * `claude --continue`, and TWO live processes (38088, 87920) ended up registered under one
  * session id, both named "build". find() would have picked whichever the filesystem listed
- * first and relayed into a window they were not watching. Starting a turn in the wrong place
+ * first and relayed into a window nobody was watching. Starting a turn in the wrong place
  * is worse than not starting one. */
 test('duplicate claimants: two live processes on one uuid refuse to wake, and name the pids', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
   const DUP = 'dup0a1b2-c3d4-4e5f-9a0b-continue0001';
@@ -256,7 +256,7 @@ test('duplicate claimants: two live processes on one uuid refuse to wake, and na
   fx.write(p1, DUP, 'build', { cwd: '/repo/dup' });
   fx.write(p2, DUP, 'build', { cwd: '/repo/dup' });
   const r = nativeReach({ session_id: DUP, cwd: '/repo/dup', name: 'build' });
-  assert.strictEqual(r.open, false, 'never guess which window is hers');
+  assert.strictEqual(r.open, false, 'never guess which window the user is in');
   assert.strictEqual(r.candidates, 2);
   assert.match(r.reason, /2 live processes claim this session id/);
   assert.match(r.reason, new RegExp(String(p1)), 'the pids are named so the state is diagnosable');

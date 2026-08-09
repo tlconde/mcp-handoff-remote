@@ -192,9 +192,9 @@ async function buildStatusReport(args, ctx, core) {
    * filled once the store is loaded. */
   const identityLine = lines.length;
   lines.push('');
-  // WHO AM I, first line, before any machinery. She runs two terminals and the question she
-  // actually arrives with is "which one is this and what do I call it" — so status answers
-  // that before it reports on itself. Ids are for machines; this line is for her.
+  // WHO AM I, first line, before any machinery. You may be running two terminals, and the
+  // question you actually arrive with is "which one is this and what do I call it" — so status
+  // answers that before it reports on itself. Ids are for machines; this line is for you.
   const whoLine = lines.length;
   lines.push('');
 
@@ -228,10 +228,18 @@ async function buildStatusReport(args, ctx, core) {
   const nativeDisplay = boundRecord && boundRecord.native_ref && boundRecord.native_ref.name;
   const nameSplit = nativeDisplay && nativeDisplay !== (boundRecord && boundRecord.title)
     ? ` (native: ${nativeDisplay})` : '';
+  /* The contest goes IN the who-am-I line, not in a footnote, because whoami renders only
+   * that line — and this is precisely the fact someone asking "which session is this" needs.
+   * It was found twice by noticing a corrupted name; a warning someone has to go looking
+   * for would not have helped either time. */
+  const rivals = otherLiveClaimants(nativeId, (ctx && ctx.cli_pid) || null);
+  const contestNote = rivals.length
+    ? ` ⚠ SHARED SESSION: ${rivals.map(r => `pid ${r.pid}${r.name ? ` ("${r.name}")` : ''}`).join(', ')} also live on this session id — renames are refused while that is true. Give one of them its own session: exit and start plain \`claude\` (not --continue, which resumes the most recent session in this DIRECTORY, and not --resume of the same id).`
+    : '';
   lines[whoLine] = boundRecord
-    ? `You are: ${boundRecord.title}${nameSplit}${boundRecord.role ? ` (@${boundRecord.role}` : ' ('}${boundRecord.role ? ' · ' : ''}${boundRecord.surface}${workspace ? ` · ${workspace}` : ''})`
+    ? `You are: ${boundRecord.title}${nameSplit}${boundRecord.role ? ` (@${boundRecord.role}` : ' ('}${boundRecord.role ? ' · ' : ''}${boundRecord.surface}${workspace ? ` · ${workspace}` : ''})${contestNote}`
     : (nativeId
-      ? `You are: this terminal has no name yet${workspace ? ` (${workspace})` : ''} — name it with /name <one word>, e.g. /name build`
+      ? `You are: this terminal has no name yet${workspace ? ` (${workspace})` : ''} — name it with /name <one word>, e.g. /name build${contestNote}`
       : 'You are: unidentified (no CLI uuid in this environment)');
   lines[identityLine] = `Identity: ${boundRecord
     ? `${boundRecord.id} — "${boundRecord.title}"${nameSplit} (CLI ${nativeId.slice(0, 8)}…)`
@@ -386,7 +394,7 @@ async function callTool(name, args, ctx, core) {
   // notifies, the drain heals, send #2 wakes with zero taps.
   await touchBinding(ctx, core);
   if (name === 'status') return buildStatusReport(args || {}, ctx, core);
-  /* whoami — status's first line, alone. The same answer, without making her read a health
+  /* whoami — status's first line, alone. The same answer, without making you read a health
    * report to get it. One source: it IS the status line, sliced, so the two can never drift. */
   if (name === 'whoami') {
     const full = await buildStatusReport({}, ctx, core);
@@ -755,8 +763,8 @@ async function callTool(name, args, ctx, core) {
     } else {
       attribution = `This bridge has no identity (no CLI uuid, nothing pinned, and you named no from_title/from_session_id), so no read state can be attributed back. To get ✓✓ back, name your own conversation with from_title (asserted provenance).`;
     }
-    // Her name for it, not the process's. Native `name` is nameSource:"derived" and drifts
-    // per process (d1 -> d9); the title is what she typed and what she would type again.
+    // The user's name for it, not the process's. Native `name` is nameSource:"derived" and
+    // drifts per process (d1 -> d9); the title is what they typed and would type again.
     const windowName = dest.title || (dest.native_ref && dest.native_ref.name);
     let deliveryNote;
     /* A12, IN CODE. This line used to read "Started a turn in X — no tap needed": an effect
@@ -1427,7 +1435,7 @@ async function callTool(name, args, ctx, core) {
     });
     if (r && r.error) return `REFUSED: ${r.error}`;
     const s = r.session;
-    // The tab she is looking at follows the name she just gave. Best-effort and silent on
+    // The tab you are looking at follows the name you just gave. Best-effort and silent on
     // failure: a title that did not take must never make naming look like it failed.
     const titledTty = (args && args.title) ? setTerminalTitle(ctx && ctx.cli_pid, s.title, nativeId) : null;
     const cwd = s.native_ref && s.native_ref.cwd;
@@ -1537,7 +1545,7 @@ async function identitySession(ctx, core, extra) {
   /* The CALLING process knows its own pid — that is a fact. The registry lookup is an
    * inference, and with two rows on one uuid it picked the wrong window. So the caller's pid
    * wins, which also makes native_ref.pid mean something precise: THE PROCESS THAT LAST
-   * SPOKE TO US. That is evidence of which window she is actually driving, and it is what
+   * SPOKE TO US. That is evidence of which window the user is actually driving, and it is what
    * lets multi-claimant succession resolve by construction instead of by guess. */
   const pid = callerPid || (nat && nat.pid) || null;
   const body = Object.assign(
@@ -1766,11 +1774,37 @@ const SUNSET_AT_CONTRACT = 3;
  * It shipped as "Terminal tab renamed to X" because the WRITE succeeded — an effect asserted
  * from a successful syscall, never verified. That is A12 exactly, the same shape as the
  * "Started a turn" claim removed earlier the same day, committed by the person who removed it.
- * Writing bytes into her terminal for no benefit is worse than doing nothing, so nothing is
+ * Writing bytes into the user's terminal for no benefit is worse than doing nothing, so nothing is
  * written. The fix belongs upstream: #56933 asks for CLAUDE_CODE_DISABLE_TERMINAL_TITLE or
  * --no-terminal-title. If either ships, restore the write and verify the EFFECT, not the call.
  * Kept as a function so callers stay unchanged and the reason travels with the code. */
 function setTerminalTitle() { return null; }
+/* WHO ELSE IS HOLDING THIS SESSION ID.
+ * A session id is an ADDRESS, not a lock. Nothing in the CLI makes one exclusive: two
+ * terminals reach the same session through `--continue` (which resumes the most recent
+ * session in the DIRECTORY, not the one this terminal had) and equally through
+ * `--resume <id>` typed twice. Neither warns, and the merge is permanent — both processes
+ * then keep that transcript newest, so the next --continue lands there too.
+ * Every identity fix in this codebase handles the CONSEQUENCE of that. None prevent it,
+ * because it happens below us. What we can do is stop someone discovering it by seeing a
+ * corrupted name, which is how it was found twice. Returns the OTHER live claimants. */
+function otherLiveClaimants(uuid, myPid) {
+  const out = [];
+  if (!uuid) return out;
+  try {
+    const fs = require('fs'), os = require('os'), path = require('path');
+    const dir = process.env.HANDOFF_NATIVE_SESSIONS_DIR || path.join(os.homedir(), '.claude', 'sessions');
+    for (const f of fs.readdirSync(dir).filter(x => x.endsWith('.json'))) {
+      try {
+        const r = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+        if (!r || r.sessionId !== uuid || !r.pid || r.pid === myPid) continue;
+        try { process.kill(r.pid, 0); } catch (e) { if (e.code !== 'EPERM') continue; }
+        out.push({ pid: r.pid, name: r.name || null });
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return out;
+}
 /* A SUPERSEDED RECORD IS NOT A TARGET.
  * Adoption relinks DELIVERY through the successor chain, and that much shipped — but every
  * surface that OFFERS a destination kept advertising the old record, and the picker even

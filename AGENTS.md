@@ -29,6 +29,28 @@ No owner name, no real domain, no tunnel id, no audience tag, no `/Users/<name>`
 **in code, comments, docs, fixtures or configs alike**. Fixtures use `example.invalid` or
 `example.com`. Deployment values are placeholders in `.template` files.
 
+### Who things are called
+
+A session or an agent is **it**, never *she* or *he*. The person using this is **the user**, or
+**you** when the sentence is addressed to them. Applies to comments and assertion messages as
+much as to docs — an assertion string ships in test output and is read by strangers.
+
+**Rewrite the sentence; never run a substitution.** A mechanical pronoun replace is what
+produced `Ids are for machines; this line is for their.` and
+`opened for their: activate Claude` — six sites of broken English that no reviewer caught
+because each diff looked like a one-word change. A pronoun is grammatical, not lexical: swapping
+it changes the verb, and sometimes the subject. So the check below **reports and rewrites
+nothing**, exactly like the session-id check above it. Fix the hits by hand, one sentence at a
+time.
+
+```bash
+git diff --cached --name-only | while read f; do
+  [ -f "$f" ] && grep -HinE "\b(she|her|hers|herself|he|him|his)\b" "$f" | grep -viE "other|there"
+  # residue of a past substitution — a pronoun stranded where a noun belongs
+  [ -f "$f" ] && grep -HinE "for their[.:,]|is for their|they opens|they runs|they was" "$f"
+done
+```
+
 Prove it before every commit, do not assume it:
 
 ```bash

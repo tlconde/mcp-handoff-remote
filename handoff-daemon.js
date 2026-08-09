@@ -84,20 +84,52 @@ function nativeSessionsDir() {
  * a uuid that native knows, with a matching cwd, is stamped "verified"; anything else is
  * "asserted" (closes the lying-forwarder case with a file read), and no uuid is "anonymous".
  */
+/* A SESSION ID IS A TRANSCRIPT ADDRESS. THE IDENTITY IS THE PROCESS.
+ *
+ * This returned the FIRST registry row matching the declared uuid, which assumed one row per
+ * session. That assumption is false: `claude --continue` resumes the most recent session in a
+ * DIRECTORY, so two terminals in one cwd land on the same transcript and each registers under
+ * its own pid. Measured live — pids 82602 ("build") and 87920 ("tunnel"), both alive, one
+ * sessionId. Which row won depended on readdir order, so the stamp's name and cwd were
+ * nondeterministic and the cwd check could compare against a process that was not calling.
+ * That is how a terminal named build came to be renamed tunnel.
+ *
+ * The pid is the caller's own fact. It does not resolve who SHOULD own the session; it
+ * resolves who is ASKING, and those are different questions. An mtime tiebreak was proposed
+ * and rejected: both rows are legitimate and live, so "newest" picks a winner rather than
+ * finding the truth.
+ *
+ * A contested answer deliberately carries NO name and NO cwd. A guessed stamp is worse than
+ * no stamp — the whole finding in one line. */
 function verifyIdentity(identity) {
   if (!identity || !identity.cli_uuid) return { status: 'anonymous' };
   const dir = nativeSessionsDir();
   let files = [];
   try { files = fs.readdirSync(dir).filter(f => f.endsWith('.json')); } catch (_) { files = []; }
+  const matches = [];
   for (const f of files) {
     let r; try { r = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch (_) { continue; }
-    if (r && r.sessionId === identity.cli_uuid) {
-      if (identity.cwd && r.cwd && r.cwd !== identity.cwd)
-        return { status: 'asserted', cli_uuid: identity.cli_uuid, reason: 'cwd-mismatch' };
-      return { status: 'verified', cli_uuid: identity.cli_uuid, cwd: r.cwd || null, name: r.name || null };
-    }
+    if (r && r.sessionId === identity.cli_uuid) matches.push(r);
   }
-  return { status: 'asserted', cli_uuid: identity.cli_uuid, reason: 'not-in-native-registry' };
+  if (!matches.length) return { status: 'asserted', cli_uuid: identity.cli_uuid, reason: 'not-in-native-registry' };
+
+  // The pid resolves a contest by fact rather than by preference.
+  const byPid = identity.cli_pid ? matches.find(r => r.pid === identity.cli_pid) : null;
+  const row = byPid || (matches.length === 1 ? matches[0] : null);
+  if (!row) {
+    return {
+      status: 'contested', cli_uuid: identity.cli_uuid,
+      reason: 'several live processes share this session id',
+      pids: matches.map(r => r.pid).filter(Boolean)
+    };
+  }
+  // cwd is checked against the RESOLVED row, not against whichever matched first. It used to
+  // ask "does any matching row disagree about cwd" when the question is "does the row that is
+  // actually calling disagree". The check survives; comparing it to the wrong row does not.
+  if (identity.cwd && row.cwd && row.cwd !== identity.cwd) {
+    return { status: 'asserted', cli_uuid: identity.cli_uuid, reason: 'cwd-mismatch' };
+  }
+  return { status: 'verified', cli_uuid: identity.cli_uuid, cwd: row.cwd || null, name: row.name || null };
 }
 
 /** Load-safety reload: scan store records; a record that fails to parse is restored from

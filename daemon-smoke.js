@@ -152,6 +152,44 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     try { p2.kill(); } catch (_) {}
   }
 
+// ---- (3a) verifyIdentity resolves a contested uuid by PID, or refuses to pick ----
+  // `claude --continue` resumes the most recent session in a DIRECTORY, so two terminals in
+  // one cwd share a transcript and each registers under its own pid. First-match then returned
+  // whichever the filesystem listed first — nondeterministic, and how a terminal named "build"
+  // came to be stamped "tunnel". The pid answers who is ASKING, which is the only question
+  // this function can honestly answer.
+  {
+    const fsx = require('fs'), osx = require('os'), pathx = require('path');
+    const regDir = fsx.mkdtempSync(pathx.join(osx.tmpdir(), 'verifyid-'));
+    const prev = process.env.HANDOFF_NATIVE_SESSIONS_DIR;
+    process.env.HANDOFF_NATIVE_SESSIONS_DIR = regDir;
+    delete require.cache[require.resolve('./handoff-daemon')];
+    const d = require('./handoff-daemon');
+    const UUID = 'uuid-two-live-processes';
+    fsx.writeFileSync(pathx.join(regDir, '111.json'), JSON.stringify({ pid: 111, sessionId: UUID, cwd: '/repo', name: 'build' }));
+    fsx.writeFileSync(pathx.join(regDir, '222.json'), JSON.stringify({ pid: 222, sessionId: UUID, cwd: '/repo', name: 'tunnel' }));
+
+    const byPid = d.verifyIdentity({ cli_uuid: UUID, cli_pid: 222, cwd: '/repo' });
+    ok(byPid.status === 'verified' && byPid.name === 'tunnel',
+      'verifyIdentity: the PID resolves a contested uuid by fact — the right row, not the first one');
+    const other = d.verifyIdentity({ cli_uuid: UUID, cli_pid: 111, cwd: '/repo' });
+    ok(other.status === 'verified' && other.name === 'build',
+      'verifyIdentity: and the other process gets ITS row — directory order is irrelevant');
+    const noPid = d.verifyIdentity({ cli_uuid: UUID, cwd: '/repo' });
+    ok(noPid.status === 'contested' && Array.isArray(noPid.pids) && noPid.pids.length === 2,
+      'verifyIdentity: without a pid it reports CONTESTED and names the pids — it does not pick the newest');
+    ok(!noPid.name && !noPid.cwd,
+      'verifyIdentity: a contested answer carries NO name or cwd — a guessed stamp is worse than none');
+
+    fsx.unlinkSync(pathx.join(regDir, '222.json'));
+    const single = d.verifyIdentity({ cli_uuid: UUID, cwd: '/repo' });
+    ok(single.status === 'verified' && single.name === 'build',
+      'verifyIdentity: the ordinary uncontested case is unchanged — no pid required');
+
+    if (prev === undefined) delete process.env.HANDOFF_NATIVE_SESSIONS_DIR; else process.env.HANDOFF_NATIVE_SESSIONS_DIR = prev;
+    delete require.cache[require.resolve('./handoff-daemon')];
+  }
+
   // ---- (c2) exit-on-stale must cover the daemon's WHOLE code surface ----
   // The original isStale() watched only handoff-daemon.js. After slice 3b the daemon is the
   // sole executor — handoff-core.js and handoff-tools.js ARE the protocol, required once at

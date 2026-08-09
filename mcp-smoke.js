@@ -893,9 +893,33 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
     ok(/nothing waiting/.test(text(rCursor, 1)),
       'peek: a since-cursor past everything reports nothing, so repeat polls stay cheap');
 
+    /* REACHABILITY IS THE OWNING HOST'S TO ASSERT. A pid means something only on the machine
+     * whose process table it belongs to; checking one here for a record owned by another device
+     * infers another host's process table from ours. It fails in the worst direction — a LIVE
+     * session on the other laptop would read as unreachable and the wake agent would skip a
+     * target sitting right there. So a remote record with no fresh heartbeat is 'unknown', and
+     * 'unknown' must NEVER collapse into 'none': none means the owning host looked and found
+     * nothing, unknown means nobody looked recently. Same distinction as held-vs-delivered. */
+    {
+      const sdir2 = path.join(process.env.HANDOFF_HOME, 'store', 'v1', 'sessions');
+      const f2 = fs.readdirSync(sdir2).find(f => { try { return JSON.parse(fs.readFileSync(path.join(sdir2, f), 'utf8')).id === peekId; } catch (_) { return false; } });
+      const p2 = path.join(sdir2, f2);
+      const rec2 = JSON.parse(fs.readFileSync(p2, 'utf8'));
+      // Same shape as a local record, but owned by another device and with a pid that IS alive here.
+      rec2.native_ref = { kind: 'claude-code', session_id: 'remote-uuid-1', name: 'lulu', pid: process.pid, host: 'the-other-laptop' };
+      fs.writeFileSync(p2, JSON.stringify(rec2, null, 2));
+      await rpc([init, call(1, 'send_message', { session_id: peekId, message: 'for lulu', from: 'chat' })]);
+      const rRemote = await rpc([init, call(1, 'peek_inbox', { surface: 'code', title_contains: 'Peek target' })]);
+      const t = text(rRemote, 1);
+      ok(/reachable: unknown/.test(t),
+        'reachability: a record owned by ANOTHER host reports unknown — no local pid check is run against it');
+      ok(!/reachable: (process|none)/.test(t),
+        'reachability: unknown never collapses into none (nobody looked) or process (a pid alive HERE proves nothing there)');
+    }
+
     const rReach = await rpc([init, call(1, 'peek_inbox', { surface: 'code' })]);
-    ok(/reachable: (process|stale-binding|none)/.test(text(rReach, 1)),
-      'peek: states whether each target can be reached, so the agent never attempts a wake it cannot perform');
+    ok(/reachable: (process|stale-binding|none|unknown)/.test(text(rReach, 1)),
+      'peek: states whether each target can be reached, in the full four-value vocabulary, so the agent never attempts a wake it cannot perform');
   }
 
   // ---- addressable names: a record answers to its terminal name, not only its title ----

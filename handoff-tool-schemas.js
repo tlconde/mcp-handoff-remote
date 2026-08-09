@@ -171,7 +171,7 @@ const TOOLS = [
   },
   {
     name: 'peek_inbox',
-    description: 'Read the inbox WITHOUT consuming it — counts, addresses and reachability, never message text, and nothing is marked read. Use this for anything that POLLS or watches on someone else\'s behalf; check_inbox marks what it shows as read and is scoped to a whole surface, so polling it consumes other conversations\' unread state (measured: an inbox check drained an envelope addressed to another session). Returns a cursor; pass it back as `since` so repeat polls only report what is newer. The message text belongs to its reader — check_inbox in that conversation delivers it.',
+    description: 'Read the inbox WITHOUT consuming it — counts, addresses and reachability, never message text, and nothing is marked read. Use this for anything that POLLS or watches on someone else\'s behalf; check_inbox marks what it shows as read and is scoped to a whole surface, so polling it consumes other conversations\' unread state (measured: an inbox check drained an envelope addressed to another session). Reachability per target is process | stale-binding | none | unknown. UNKNOWN means NOBODY LOOKED RECENTLY (the owning host\'s agent is silent or stale) and is never the same as NONE, which means the owning host looked and found nothing. A watcher must not treat unknown as absent. Returns a cursor; pass it back as `since` so repeat polls only report what is newer. The message text belongs to its reader — check_inbox in that conversation delivers it.',
     inputSchema: {
       type: 'object',
       properties: {

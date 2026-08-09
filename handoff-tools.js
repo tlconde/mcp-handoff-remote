@@ -1342,6 +1342,50 @@ async function callTool(name, args, ctx, core) {
       `(App conversation IDs are server-side; no deep link reaches a specific one — this is the closest the platform allows. ` +
       `Tip: queue content there first with send_message so it's waiting when you arrive.)`;
   }
+  /* REACHABILITY IS ASSERTED BY THE OWNING HOST, NEVER INFERRED BY AN OBSERVER.
+   *
+   * A pid means something only on the machine whose process table it belongs to. Checking one
+   * here for a record owned by another device is inferring another host's process table from
+   * our own — the same error as routing state through one daemon, applied to liveness instead.
+   * It fails in the worst direction too: a live session on the Windows laptop would read as
+   * unreachable and a wake agent would skip a target that was sitting right there.
+   *
+   * So ownership decides who may answer:
+   *   own host    → check the pid, which is meaningful here
+   *   other host  → read that host's agent heartbeat; its agent resolved reachability LOCALLY
+   *   no heartbeat, or one older than ~3 poll intervals → 'unknown'
+   *
+   * 'unknown' is a FOURTH value and must never collapse into 'none'. They are different facts:
+   * 'none' means the owning host looked and found nothing; 'unknown' means nobody looked
+   * recently. Collapsing them rebuilds the silent-degrade class removed on 2026-08-09 — a wake
+   * agent skipping a leg because a stale heartbeat read as 'none' would fail with no evidence
+   * trail. It is the held-vs-delivered distinction one layer down.
+   *
+   * This is also the platform's own doctrine: cross-machine sessions appear in /list-agents only
+   * "while Remote Control is connected". Presence is asserted by the remote host's live
+   * connection, never probed from the observer's side.
+   *
+   * A record carries no liveness claim of its own (S5): a record is data, reachability is the
+   * owning agent's runtime assertion layered on top. That keeps the mint idempotent and makes a
+   * record whose agent has died read honestly as 'unknown' rather than falsely as anything. */
+  const HEARTBEAT_STALE_MS = 3 * 30 * 1000; // ~3 poll intervals at the 30s upper bound
+  function reachabilityOf(nr, st) {
+    if (!nr) return 'none';
+    const here = !nr.host || nr.host === (process.env.HANDOFF_HOST_ID || require('os').hostname());
+    if (here) {
+      if (!nr.pid) return 'stale-binding';
+      try { process.kill(nr.pid, 0); return 'process'; }
+      catch (e) { return e.code === 'EPERM' ? 'process' : 'stale-binding'; }
+    }
+    // Another device owns it. Only its agent may say, and only recently.
+    const beat = (st && st.agents && st.agents[nr.host]) || null;
+    if (!beat || !beat.last_seen) return 'unknown';
+    const age = Date.now() - Date.parse(beat.last_seen);
+    if (!(age >= 0) || age > HEARTBEAT_STALE_MS) return 'unknown';
+    const verdict = beat.sessions && beat.sessions[nr.session_id];
+    return verdict || 'unknown';
+  }
+
   /* PEEK — read the inbox WITHOUT consuming it. The wake agent's only read verb.
    *
    * check_inbox marks what it shows as read, and it is scoped to a SURFACE rather than to the
@@ -1375,13 +1419,12 @@ async function callTool(name, args, ctx, core) {
       for (const m of fresh) if (!newest || String(m.id || '') > newest) newest = String(m.id || '');
       const nr = s.native_ref || null;
       // Whether a leg could even reach it, so the agent does not attempt a wake it cannot perform.
-      const live = !!(nr && nr.pid && (() => { try { process.kill(nr.pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } })());
       rows.push({
         session_id: s.id, title: s.title, surface: s.surface,
         unread: fresh.length,
         returns: fresh.filter(m => m.kind === 'resume_summary').length,
         native_name: (nr && nr.name) || null,
-        reachable: live ? 'process' : (nr ? 'stale-binding' : 'none'),
+        reachable: reachabilityOf(nr, st),
       });
     }
     if (!rows.length) {

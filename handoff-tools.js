@@ -15,6 +15,40 @@
  * over from an in-process bridge to a pure forwarder. Until then the live bridge is untouched.
  */
 
+/* ADDRESSABLE NAMES — a record answers to the title on it AND to the name the user gave the
+ * terminal (native_ref.name, the handle on the tab). Every resolver used to read `title`
+ * alone, which is not the name a user types: measured 2026-08-09, a send addressed to "build"
+ * matched an app record merely CONTAINING that word, while the live terminal actually named
+ * build (title "tunnel", native_ref.name "build") was never even a candidate. Three messages
+ * went to a record with no native_ref, so the wake gate (dest.native_ref, send_message) was
+ * false and nothing could ever start a turn there. One predicate, so a target reachable by
+ * one resolver is reachable by all of them. */
+function targetNames(s) {
+  const out = [];
+  if (s && typeof s.title === 'string') out.push(s.title);
+  if (s && s.native_ref && typeof s.native_ref.name === 'string') out.push(s.native_ref.name);
+  return out;
+}
+/** Substring match on any addressable name. */
+function matchesName(s, q) {
+  const t = String(q == null ? '' : q).trim().toLowerCase();
+  if (!t) return false;
+  return targetNames(s).some(n => n.toLowerCase().includes(t));
+}
+/** Whole-name match on any addressable name. Ranked ABOVE substring everywhere, so an exact
+ * terminal name always beats an incidental word inside someone else's title. */
+function matchesNameExact(s, q) {
+  const t = String(q == null ? '' : q).trim().toLowerCase();
+  if (!t) return false;
+  return targetNames(s).some(n => n.trim().toLowerCase() === t);
+}
+/** The two-tier filter every by-name resolver applies: exact wins outright; substring only
+ * when nothing matched whole. Returns the surviving candidates, never picks among them. */
+function filterByName(list, q) {
+  const exact = list.filter(s => matchesNameExact(s, q));
+  return exact.length ? exact : list.filter(s => matchesName(s, q));
+}
+
 /* Explicit target beats pin; pin beats nothing — and nothing FAILS LOUD, never guesses (I2).
  * Mirrors mcp-handoff.js namedOrPinned, but resolves the pin from ctx, not a global. */
 async function namedOrPinned(args, ctx, core) {
@@ -23,10 +57,7 @@ async function namedOrPinned(args, ctx, core) {
     const st = await state();
     let hits = Object.values(st.sessions).filter(s => !s.archived);
     if (args.session_id) hits = hits.filter(s => s.id === args.session_id);
-    if (args.title_contains) {
-      const t = args.title_contains.toLowerCase();
-      hits = hits.filter(s => s.title.toLowerCase().includes(t));
-    }
+    if (args.title_contains) hits = filterByName(hits, args.title_contains);
     if (!hits.length) throw new Error(`no live session matches${args.session_id ? ' ' + args.session_id : ''}${args.title_contains ? ` "${args.title_contains}"` : ''}`);
     if (hits.length > 1) throw new Error(`${hits.length} sessions match — name one:\n` +
       hits.map(s => `- [${s.surface}] "${s.title}" · session_id: ${s.id}`).join('\n'));
@@ -186,13 +217,24 @@ async function buildStatusReport(args, ctx, core) {
     const c = (boundRecord && boundRecord.native_ref && boundRecord.native_ref.cwd) || (ctx && ctx.cwd) || null;
     return c ? require('path').basename(c) : null;
   })();
+  /* TWO NAMESPACES, ONE OF THEM READ-ONLY TO US. `title` is the protocol name — what /name
+   * sets, what send_message resolves. `native_ref.name` is Claude Code's own registry name —
+   * what ListAgents and native SendMessage resolve. register_session only ever READS native's
+   * registration and adopts the name; nothing here can write native's registry back. So a
+   * /name'd session is addressable by handoff and INVISIBLE to ListAgents under that name.
+   * Measured 2026-08-09: a peer could not find "booty" and addressed it as handoff-remote-3a,
+   * and the only way to see the split was to grep two stores. Print both whenever they differ
+   * — a divergence the user cannot see is one they cannot work around. */
+  const nativeDisplay = boundRecord && boundRecord.native_ref && boundRecord.native_ref.name;
+  const nameSplit = nativeDisplay && nativeDisplay !== (boundRecord && boundRecord.title)
+    ? ` (native: ${nativeDisplay})` : '';
   lines[whoLine] = boundRecord
-    ? `You are: ${boundRecord.title}${boundRecord.role ? ` (@${boundRecord.role}` : ' ('}${boundRecord.role ? ' · ' : ''}${boundRecord.surface}${workspace ? ` · ${workspace}` : ''})`
+    ? `You are: ${boundRecord.title}${nameSplit}${boundRecord.role ? ` (@${boundRecord.role}` : ' ('}${boundRecord.role ? ' · ' : ''}${boundRecord.surface}${workspace ? ` · ${workspace}` : ''})`
     : (nativeId
       ? `You are: this terminal has no name yet${workspace ? ` (${workspace})` : ''} — name it with /name <one word>, e.g. /name build`
       : 'You are: unidentified (no CLI uuid in this environment)');
   lines[identityLine] = `Identity: ${boundRecord
-    ? `${boundRecord.id} — "${boundRecord.title}" (CLI ${nativeId.slice(0, 8)}…)`
+    ? `${boundRecord.id} — "${boundRecord.title}"${nameSplit} (CLI ${nativeId.slice(0, 8)}…)`
     : (identityId || (nativeId
       ? `CLI ${nativeId.slice(0, 8)}… not yet registered (auto on first send; register_session names a title/role)`
       : 'unavailable — CLAUDE_CODE_SESSION_ID unset, sends will carry no sender and receipts cannot route back'))}`;
@@ -593,11 +635,7 @@ async function callTool(name, args, ctx, core) {
     let matches = Object.values(st.sessions).filter(isTargetable);
     if (args.session_id) matches = matches.filter(s => s.id === args.session_id);
     if (args.surface) matches = matches.filter(s => s.surface === args.surface);
-    if (args.title_contains) {
-      const t = args.title_contains.trim().toLowerCase();
-      const exact = matches.filter(s => s.title.trim().toLowerCase() === t);
-      matches = exact.length ? exact : matches.filter(s => s.title.toLowerCase().includes(t));
-    }
+    if (args.title_contains) matches = filterByName(matches, args.title_contains);
     if (!matches.length) {
       return `RESOLVED: nothing. No protocol-known conversation matches ${args.session_id ? `id "${args.session_id}"` : `"${args.title_contains}"`}${args.surface ? ` on ${args.surface}` : ''}. ` +
         `Call list_conversations to see what is addressable. (Local Claude Code terminal sessions cannot receive queued messages — reopen those with claude --resume.)`;
@@ -609,7 +647,10 @@ async function callTool(name, args, ctx, core) {
         `There is deliberately no "pick the newest" — recency is not intent.`;
     }
     const d = matches[0];
-    return `RESOLVED → [${d.surface}] "${d.title}"\nsession_id: ${d.id}\n\n` +
+    // Name the terminal when the record answers to one: a query of "build" can now resolve a
+    // record TITLED "tunnel", and showing the title alone would read as a mis-resolve.
+    const term = d.native_ref && d.native_ref.name ? ` · terminal "${d.native_ref.name}"` : '';
+    return `RESOLVED → [${d.surface}] "${d.title}"${term}\nsession_id: ${d.id}\n\n` +
       `Now call send_message with session_id:"${d.id}". Check the title above is the conversation you meant — this is the only point at which a wrong target is free to correct.`;
   }
   if (name === 'send_message') {
@@ -772,10 +813,7 @@ async function callTool(name, args, ctx, core) {
         return `No EXISTING ${args.to} session has id ${args.session_id}. Call list_conversations / send_to again to re-list. Nothing was sent.`;
       }
     } else if (args.target_title) {
-      const needle = args.target_title.trim().toLowerCase();
-      matches = matches.filter(s => s.title.toLowerCase().includes(needle));
-      const exact = matches.filter(s => s.title.trim().toLowerCase() === needle);
-      if (exact.length) matches = exact;
+      matches = filterByName(matches, args.target_title);
     }
 
     // Local Claude Code terminals are NOT protocol destinations for send_to.
@@ -1402,7 +1440,8 @@ async function callTool(name, args, ctx, core) {
       : '';
     return {
       text: `${r.minted ? 'Registered' : 'Refreshed'}: ${handle} — "${s.title}"${nameLine}\n` +
-        (titledTty ? `Terminal tab renamed to "${s.title}" (some shells re-title on the next prompt).\n` : '') +
+        (titledTty ? `Terminal tab renamed to "${s.title}".\n`
+          : (args && args.title ? `The terminal TAB still shows Claude Code's own title — it re-asserts that continuously, so naming cannot change it (anthropics/claude-code#56933). Use /rename to change what Claude Code itself calls this session.\n` : '')) +
         `CLI uuid ${nativeId} ↔ protocol record ${s.id}. ` +
         `Sends from this terminal are now attributed to this record; read state (✓✓) on them shows up inline in status.`,
       ctx_update: { identity: r.id },
@@ -1715,61 +1754,23 @@ const DEPRECATION_NOTE = '\n\n(send_to_surface is retired — use send_to with m
  * connection-lifetime, not back-compat, and it expires on its own rather than on someone
  * remembering. Past the sunset contract this refuses instead of serving, and says why. */
 const SUNSET_AT_CONTRACT = 3;
-/* TAB TITLE — the name she gave, on the tab she is looking at.
- * The tty is resolved LIVE from the caller's validated CLI pid at the moment of naming, and
- * never stored: same rule as the process-tree click (§I2b). Nothing else can reach her
- * terminal — the MCP server's stdout IS the JSON-RPC channel (writing there corrupts the
- * protocol), the Bash tool has no controlling tty (measured: /dev/tty is "device not
- * configured"), and the daemon has none of its own. The CLI process does, and `ps -o tty=`
- * on its pid finds it.
- * THE NAME IS SANITIZED, and that is not paranoia: it is user text being written straight to
- * a terminal device, so an unescaped ESC in a title could emit any control sequence it liked.
- * Control characters are stripped and the length is capped; only OSC 0 is ever written.
- * HONEST CAVEAT: shells that set their own title (zsh precmd, oh-my-zsh themes) will rewrite
- * it on the next prompt. We do not fight that — best-effort, documented, never retried. */
-function setTerminalTitle(cliPid, name, uuid) {
-  if (!cliPid || !name) return null;
-  try {
-    /* THE PID IS A HINT TOO (instance eight, found 2026-08-09 by this very feature).
-     * The forwarder froze CLI_PID at ITS process start, exactly as it once froze NATIVE_ID —
-     * so after the CLI process changed (38088 -> 87920, measured live) the title was written
-     * to /dev/ttys080: a REAL terminal, running a REAL claude session, just not the one she
-     * was looking at. Writing to a stale tty is not a no-op, it is writing into someone
-     * else's window. So the pid is validated against the live registry before any device
-     * write, and where the uuid resolves to MORE THAN ONE live process we write nothing:
-     * two rows carrying one uuid is ambiguity, and ambiguity never gets a guess. */
-    if (uuid) {
-      const fsx = require('fs'), osx = require('os'), pathx = require('path');
-      const dir = process.env.HANDOFF_NATIVE_SESSIONS_DIR || pathx.join(osx.homedir(), '.claude', 'sessions');
-      let owners = [];
-      try {
-        for (const f of fsx.readdirSync(dir).filter(x => x.endsWith('.json'))) {
-          try {
-            const r = JSON.parse(fsx.readFileSync(pathx.join(dir, f), 'utf8'));
-            if (!r || r.sessionId !== uuid || !r.pid) continue;
-            try { process.kill(r.pid, 0); owners.push(r.pid); } catch (e) { if (e.code === 'EPERM') owners.push(r.pid); }
-          } catch (_) {}
-        }
-      } catch (_) { return null; }
-      /* The CALLER'S OWN PID outranks the count. A process asking to title "its" terminal is
-       * the strongest evidence available — it is speaking to us right now, which is the same
-       * discriminator the wake tier uses for succession, only more direct. So several live
-       * claimants is not ambiguity WHEN ONE OF THEM IS THE CALLER. Only when the caller is
-       * not among them does the count decide, and then >1 writes nothing. */
-      if (owners.includes(cliPid)) { /* the caller is a live claimant: it is the window */ }
-      else if (owners.length !== 1) return null; // 0 = unknowable, >1 = genuinely ambiguous
-      else cliPid = owners[0];                   // the caller's pid was stale; the registry wins
-    }
-    const tty = require('child_process')
-      .execFileSync('ps', ['-o', 'tty=', '-p', String(cliPid)], { stdio: ['ignore', 'pipe', 'ignore'] })
-      .toString().trim();
-    if (!tty || tty === '??' || tty.includes('/')) return null;
-    const clean = String(name).replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 60);
-    if (!clean) return null;
-    require('fs').writeFileSync('/dev/' + tty, `\u001b]0;${clean}\u0007`);
-    return '/dev/' + tty;
-  } catch (_) { return null; } // no tty, no permission, headless — all fine, all silent
-}
+/* TAB TITLE — CANNOT BE SET FROM HERE, and the attempt is removed rather than retried.
+ * Measured, then sourced. The tty resolves correctly (/dev/ttys082 for this session) and the
+ * OSC 0 write succeeds — but Claude Code OWNS the terminal title and re-asserts it
+ * continuously (anthropics/claude-code#56933: "emits an OSC 0/2 escape sequence setting the
+ * host terminal's tab/window title ... and re-asserts it continuously"). The same issue
+ * records this exact approach failing: a wrapper re-emitting every second loses because "CC
+ * re-asserts faster", and "Cursor prioritizes the foreground process's OSC name over external
+ * writes". So the write is not flaky, it is futile by construction, and no retry or interval
+ * can win a race against the process that owns the surface.
+ * It shipped as "Terminal tab renamed to X" because the WRITE succeeded — an effect asserted
+ * from a successful syscall, never verified. That is A12 exactly, the same shape as the
+ * "Started a turn" claim removed earlier the same day, committed by the person who removed it.
+ * Writing bytes into her terminal for no benefit is worse than doing nothing, so nothing is
+ * written. The fix belongs upstream: #56933 asks for CLAUDE_CODE_DISABLE_TERMINAL_TITLE or
+ * --no-terminal-title. If either ships, restore the write and verify the EFFECT, not the call.
+ * Kept as a function so callers stay unchanged and the reason travels with the code. */
+function setTerminalTitle() { return null; }
 /* A SUPERSEDED RECORD IS NOT A TARGET.
  * Adoption relinks DELIVERY through the successor chain, and that much shipped — but every
  * surface that OFFERS a destination kept advertising the old record, and the picker even
@@ -1904,6 +1905,7 @@ function formatSessionCandidates(sessions, st) {
 
 module.exports = {
   namedOrPinned, callTool, MIGRATED,
+  targetNames, matchesName, matchesNameExact, filterByName,
   age, clipText, settledDestIds, offerIsPending, offerStateOf, resolveLiveNativeId, setTerminalTitle,
   sessionRecap, sessionCarrierNote, sessionLinkNote, formatSessionCandidates,
   localCodeSessions, readNativeRegistration, identitySession, assertReturnArtifacts,

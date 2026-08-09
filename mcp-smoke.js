@@ -817,6 +817,20 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
     const rC2 = await rpc([init, call(1, 'register_session', { title: 'terminal · build lane' })]);
     ok(/native\): ai-product-sense-2a · alias: "terminal · build lane"/.test(text(rC2, 1)),
       'converge: an explicit title is the alias; native name remains the display handle beside it');
+    /* THE SPLIT MUST BE VISIBLE WHERE THE USER LOOKS. register_session showed both names, but
+     * whoami and status showed the protocol title alone — so a session named with /name is
+     * addressable by handoff and INVISIBLE to ListAgents under that name, with nothing saying
+     * so. Measured 2026-08-09: a peer could not find "booty", addressed it by its native name
+     * instead, and the split was only findable by grepping two stores. */
+    const rWho = await rpc([init, call(1, 'whoami', {}), call(2, 'status', {})]);
+    ok(/You are: terminal · build lane \(native: ai-product-sense-2a\)/.test(text(rWho, 1)),
+      'names: whoami prints BOTH names when the protocol title and the native name diverge');
+    ok(/native: ai-product-sense-2a/.test(text(rWho, 2)),
+      'names: status carries the same divergence on its Identity line');
+    const rSame = await rpc([init, call(1, 'register_session', { title: nativeName }), call(2, 'whoami', {})]);
+    ok(/You are: ai-product-sense-2a/.test(text(rSame, 2)) && !/native:/.test(text(rSame, 2)),
+      'names: when the two names agree, whoami shows one name and no parenthetical');
+    await rpc([init, call(1, 'register_session', { title: 'terminal · build lane' })]); // restore for later blocks
     // Slice 2: a Code→Code send to a natively-reachable code session is redirected to
     // native SendMessage; the store leg is retired (nothing queued).
     const rC3 = await rpc([init,
@@ -841,6 +855,58 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
       'slice2: the retired store leg queues NOTHING for a Code→Code native-reachable target');
     delete process.env.HANDOFF_NATIVE_SESSIONS_DIR;
     delete process.env.CLAUDE_CODE_SESSION_ID;
+  }
+
+  // ---- addressable names: a record answers to its terminal name, not only its title ----
+  // Measured 2026-08-09: a send addressed to "build" resolved an app record merely CONTAINING
+  // that word, while the live terminal actually NAMED build (title "tunnel") was never a
+  // candidate — every resolver filtered on `title` alone. The decoy had no native_ref, so the
+  // wake gate in send_message was false and no rung could ever fire. Three messages landed
+  // somewhere nothing was reading. This fixture is that exact world: the right target is
+  // reachable ONLY by native_ref.name, and a wrong-but-plausible title sits beside it.
+  {
+    const sdir = path.join(process.env.HANDOFF_HOME, 'store', 'v1', 'sessions');
+    const rN = await rpc([init,
+      call(1, 'send_to_surface', { to: 'code', from: 'code', title: 'tunnel', context: 'the terminal the user calls build', open_in: 'none' }),
+      call(2, 'send_to_surface', { to: 'code', from: 'code', title: 'Claude desktop app POC — protocol build session (returned from Code)', context: 'decoy: title merely CONTAINS the word', open_in: 'none' }),
+      call(3, 'resolve_conversation', { title_contains: 'tunnel', surface: 'code' })
+    ]);
+    const tunnelId = (text(rN, 3).match(/session_id: (sess_[A-Za-z0-9]+)/) || [])[1];
+    // Only the tunnel record gets a native handle — and the name on it is what the user types.
+    const tFile = fs.readdirSync(sdir).find(f => {
+      try { return JSON.parse(fs.readFileSync(path.join(sdir, f), 'utf8')).id === tunnelId; } catch (_) { return false; }
+    });
+    const tPath = path.join(sdir, tFile);
+    const tRec = JSON.parse(fs.readFileSync(tPath, 'utf8'));
+    tRec.native_ref = { kind: 'claude-code', session_id: 'name-uuid-0001', name: 'build' };
+    fs.writeFileSync(tPath, JSON.stringify(tRec, null, 2));
+
+    const rBuild = await rpc([init, call(1, 'resolve_conversation', { title_contains: 'build', surface: 'code' })]);
+    const resolved = text(rBuild, 1);
+    ok(/^RESOLVED →/m.test(resolved) && resolved.includes(tunnelId),
+      'names: "build" resolves the terminal NAMED build, not the record whose title contains the word');
+    ok(/terminal "build"/.test(resolved),
+      'names: the echo names the terminal, so resolving "build" to a record titled "tunnel" does not read as a mis-resolve');
+    ok(!/AMBIGUOUS/.test(resolved),
+      'names: a whole-name hit outranks an incidental substring instead of tying with it');
+
+    // The decoy must stay reachable by the words actually in its title — the fix ADDS an
+    // addressable name, it does not take one away.
+    // send_to_surface re-titles the ORIGIN record each call, so the decoy title legitimately
+    // names two records here. What matters is that title matching still reaches them and does
+    // NOT drag in the terminal: the fix adds an addressable name, it takes none away.
+    const rDecoy = await rpc([init, call(1, 'resolve_conversation', { title_contains: 'desktop app POC', surface: 'code' })]);
+    ok(/desktop app POC/.test(text(rDecoy, 1)) && !text(rDecoy, 1).includes(tunnelId),
+      'names: title matching still reaches records with no terminal name, and never drags in the terminal');
+
+    // send_to reads the same predicate — the verb that actually misdelivered.
+    const rSend = await rpc([init, call(1, 'send_to', {
+      to: 'code', from: 'code', mode: 'existing', target_title: 'build', open_in: 'none',
+      confirm_code_project: true,
+      title: 'name-routing probe', context: 'must reach the terminal named build'
+    })]);
+    ok(/EXISTING/.test(text(rSend, 1)) && /"tunnel"/.test(text(rSend, 1)),
+      'names: send_to target_title:"build" lands on the terminal record, not the decoy');
   }
 
   // ---- wake tier (t28): an attention send to an OPEN terminal self-starts its turn ----

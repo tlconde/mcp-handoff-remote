@@ -19,19 +19,21 @@
  *                        via ListAgents, then SendMessage's ONE wake line. Proven live in
  *                        t26 (woke ai-product-sense-2a). Fire-and-exit, no-reply-expected,
  *                        exactly ONE call, NO retries (relay contract, t26 §reply).
- *   3. store           — ALWAYS the durable truth. Written by the CALLER before wake() runs;
+ *   3. notify          — the target cannot be reached by any process: no live socket, or it is
+ *                        on ANOTHER DEVICE. Tell the human instead, naming the session, the
+ *                        device and the window to open. REMOVED earlier on 2026-08-09 and
+ *                        REINSTATED the same day as a REQUIREMENT, because the reason for
+ *                        removal does not survive this case. It was removed for implying an
+ *                        autonomous wake that never happened; here nothing is implied — the
+ *                        session genuinely cannot be woken by any mechanism, so a signal to the
+ *                        human is not a substitute for the real thing, it IS the real thing.
+ *                        Without it the mail waits on the chance that someone looks.
+ *   4. store           — ALWAYS the durable truth. Written by the CALLER before wake() runs;
  *                        this module never owns durability. Every rung degrades to it.
  *
- * THERE IS NO NOTIFICATION RUNG. There was one; it was removed 2026-08-09 on the owner's
- * ruling, after it cost more than it returned. macOS attributes an osascript notification to
- * Script Editor, so the ping arrived branded as another app with a click that opened a file
- * dialog; the clickable alternative needed a separate install, was ad-hoc signed, and produced
- * two false "measured" claims about its own delivery in a single day. Windows had no rung at
- * all, so on that platform this tier degraded silently to the store and nobody was told.
- * Degrading to the store is what it did anyway on the paths that mattered. The store is honest:
- * the mail is there, and the next turn in that window drains it. A future notification layer
- * can re-enter HERE, as rung 3, and it should arrive with a delivery receipt rather than an
- * exit code — that distinction is the whole lesson this removal paid for.
+ * THE LINE THE NOTIFY RUNG IS HELD TO: it may say "mail is waiting for <name> on <device> —
+ * open that window", which is true and actionable. It may never say the session woke or that a
+ * turn started. tier:'notify' in the result means THE HUMAN WAS TOLD, never that anything ran.
  *
  * RULES HONOURED:
  *   - `fyi` never wakes. Only the `attention` tier reaches a rung. An fyi delivery returns
@@ -266,12 +268,24 @@ function notifyCopy(d) {
   if (d.kind === 'progress') {
     return { title: head, body: '' }; // what's happening now; no tap, so no action line
   }
-  return { title: head, body: d.from ? `From ${d.from} — open it to pick up.` : 'Open it to pick up.' };
+  /* THE REMOTE CASE NAMES THE DEVICE, because "open it" is not actionable when "it" is on the
+   * other laptop. A session reached only through the shared store has no pid and no socket here,
+   * so this notification is its WHOLE wake path — the copy has to be enough to act on without it.
+   * It still claims nothing false: mail is waiting and where to open it, never that a turn began. */
+  const where = d.device ? ` on ${d.device}` : '';
+  return {
+    title: `${head}${where}`,
+    body: d.from ? `From ${d.from} — open that window to pick it up.` : 'Open that window to pick it up.'
+  };
 }
 
 function wake(delivery, opts) {
   opts = opts || {};
   const doSpawn = opts.spawn || spawn;
+  /* Rung 3. Injected so tests can observe it, defaulting to the real layer. It NEVER throws and
+   * never blocks: the store write the caller already made is the durable delivery, and this is
+   * the signal to the human that it is there. */
+  const doNotify = opts.notify || ((ev) => { try { return require('./handoff-notify').notify(ev); } catch (_) { return { fired: false, channel: 'error' }; } });
   const reach = opts.reach || nativeReach;
   const d = delivery || {};
   const thread = d.thread || d.conversation || 'a thread';
@@ -314,7 +328,8 @@ function wake(delivery, opts) {
         // than fail a spawn and report a generic "closed" — this exact silence is what hid
         // the launchd-PATH defect.
         const c0 = notifyCopy(d);
-        const r0 = { woke: false, tier: 'store', reason: 'claude binary not found — relay impossible (set HANDOFF_CLAUDE_BIN)' };
+        const nr0 = doNotify(Object.assign({ conversation: d.conversation || thread, meta: { session_id: d.session_id || null, from: d.from || null, surface: d.surface || 'code', window: (d.native_ref && d.native_ref.name) || null, device: d.device || null } }, notifyCopy(d)));
+        const r0 = { woke: false, tier: nr0 && nr0.fired ? 'notify' : 'store', reason: 'claude binary not found — relay impossible (set HANDOFF_CLAUDE_BIN)', notified: nr0 || null };
         logChoice(r0); return r0;
       }
       const argv = ['-p', relayPrompt(rc.name, wakeLine),
@@ -348,7 +363,8 @@ function wake(delivery, opts) {
         if (child && typeof child.on === 'function') child.on('error', () => {});
         if (child && child.pid === undefined) {
           const cF = notifyCopy(d);
-          const rF = { woke: false, tier: 'store', reason: `relay spawn failed (${bin} did not start)` };
+          const nrF = doNotify(Object.assign({ conversation: d.conversation || thread, meta: { session_id: d.session_id || null, from: d.from || null, surface: d.surface || 'code', window: (d.native_ref && d.native_ref.name) || null, device: d.device || null } }, notifyCopy(d)));
+          const rF = { woke: false, tier: nrF && nrF.fired ? 'notify' : 'store', reason: `relay spawn failed (${bin} did not start)`, notified: nrF || null };
           logChoice(rF); return rF;
         }
         child.unref();
@@ -361,7 +377,8 @@ function wake(delivery, opts) {
       } catch (e) {
         // Could not even spawn — degrade to notify, no relay retry.
         const c = notifyCopy(d);
-        const r = { woke: false, tier: 'store', reason: 'relay spawn failed' };
+        const nr = doNotify(Object.assign({ conversation: d.conversation || thread, meta: { session_id: d.session_id || null, from: d.from || null, surface: d.surface || 'code', window: (d.native_ref && d.native_ref.name) || null, device: d.device || null } }, notifyCopy(d)));
+        const r = { woke: false, tier: nr && nr.fired ? 'notify' : 'store', reason: 'relay spawn failed', notified: nr || null };
         logChoice(r); return r;
       }
     }
@@ -372,7 +389,8 @@ function wake(delivery, opts) {
     // would be false. stale_binding rides out so the caller can say which happened, and so
     // the two-step (this send notifies and heals; the next one wakes) is legible.
     const c = notifyCopy(d);
-    const r = { woke: false, tier: 'store', reason: rc.reason, stale_binding: !!rc.stale_binding, candidates: rc.candidates || 0 };
+    const nr = doNotify(Object.assign({ conversation: d.conversation || thread, meta: { session_id: d.session_id || null, from: d.from || null, surface: d.surface || 'code', window: (d.native_ref && d.native_ref.name) || null, device: d.device || null } }, notifyCopy(d)));
+    const r = { woke: false, tier: nr && nr.fired ? 'notify' : 'store', reason: rc.reason, stale_binding: !!rc.stale_binding, candidates: rc.candidates || 0, notified: nr || null };
     logChoice(r); return r;
   } catch (_) {
     // A wake failure must never break the send — the store remains the durable truth.

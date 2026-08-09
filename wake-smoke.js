@@ -153,16 +153,16 @@ test('resume: a dead PROCESS still reads closed — the fix must not manufacture
   assert.match(r.reason, /no live session for this workspace/);
 }));
 
-test('resume: the stale-binding send degrades to the store and says so — the two-step, made visible', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
+test('resume: the stale-binding send notifies the human and says so — the two-step, made visible', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
   const n = notifyRecorder();
   const s = recorder();
   const r = wake({ tier: 'attention', thread: 'Wake tier', conversation: 'Wake tier', from: 'chat',
     native_ref: { session_id: 'dead-binding-uuid', cwd: '/repo/shared', name: 'proj-a1' } },
     { spawn: s.spawn, notify: n.notify });
-  assert.strictEqual(r.tier, 'store', 'first send after a resume degrades to the store BY DESIGN — no rung claims to have shown anything');
+  assert.strictEqual(r.tier, 'notify', 'first send after a resume tells the HUMAN by design — tier notify means told, never woken');
   assert.strictEqual(r.stale_binding, true, 'the caller can tell "unverifiable" from "closed"');
   assert.strictEqual(s.calls.length, 0, 'no relay was attempted');
-  assert.strictEqual(n.calls.length, 0, 'nothing is notified — the rung is gone; the store already holds the mail');
+  assert.strictEqual(n.calls.length, 1, 'exactly one notification — the only signal available for an unreachable target');
 }));
 
 // ---- wake line format (locked verbatim) ----
@@ -227,13 +227,13 @@ test('HANDOFF_WAKE_MODEL overrides the relay model', () => withEnv({ HANDOFF_SES
 }));
 
 // ---- closed target → the store ----
-test('attention + closed → the store, no relay', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
+test('attention + closed → notify, no relay', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
   const s = recorder(); const n = notifyRecorder();
   const r = wake({ tier: 'attention', thread: 'Wake tier', conversation: 'Wake tier', from: 'chat', session_id: 'sess_x', native_ref: { session_id: CLOSED_UUID } }, { spawn: s.spawn, notify: n.notify });
   assert.strictEqual(r.woke, false);
-  assert.strictEqual(r.tier, 'store');
+  assert.strictEqual(r.tier, 'notify');
   assert.strictEqual(s.calls.length, 0, 'closed target must NOT relay');
-  assert.strictEqual(n.calls.length, 0, 'a closed target is not pinged; it degrades to the store');
+  assert.strictEqual(n.calls.length, 1, 'a closed target IS pinged — no process can reach it, so the human is the path');
   // The ping-copy rule asserted here moved out with the rung. What survives is the only claim
   // the caller can still act on: the window is closed and the mail is in the store.
   assert.strictEqual(r.reason && typeof r.reason, 'string', 'the refusal carries a reason a human can read');
@@ -263,7 +263,7 @@ test('duplicate claimants: two live processes on one uuid refuse to wake, and na
  * Probed live — `/exit` then `claude --continue` leaves BOTH processes registered under one
  * session id and BOTH keep heartbeating, so the leftover is not defunct by construction.
  * The discriminator is native_ref.pid: the process that LAST SPOKE to the protocol, which
- * every tool contact refreshes from the caller's own pid. She drives the window that talks. */
+ * every tool contact refreshes from the caller's own pid. The user drives the window that talks. */
 test('exit+continue: the process that last spoke to us succeeds the others', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
   const SID = 'succ0a1b-c2d3-4e5f-8a9b-continue0002';
   const oldPid = livePid(), newPid = livePid();
@@ -316,14 +316,14 @@ test('relay binary: HANDOFF_CLAUDE_BIN still overrides', () => withEnv({ HANDOFF
  * had already returned {tier:'relay', delivery:'dispatched'}, so the caller announced
  * "Started a turn ... no tap needed" about a process that never existed. With the
  * launchd-PATH defect standing, that was EVERY relay claim since the flip. */
-test('relay: a spawn that never started degrades to the store, and says which binary', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir, HANDOFF_CLAUDE_BIN: '/nonexistent/claude' }, () => {
+test('relay: a spawn that never started notifies, and says which binary', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir, HANDOFF_CLAUDE_BIN: '/nonexistent/claude' }, () => {
   const n = notifyRecorder();
   const r = wake({ tier: 'attention', thread: 'x', conversation: 'x', from: 'chat', native_ref: { session_id: OPEN_UUID } },
     { notify: n.notify }); // REAL spawn: the failure must be detected, not stubbed away
-  assert.strictEqual(r.tier, 'store', 'a relay that did not start is not a relay');
+  assert.strictEqual(r.tier, 'notify', 'a relay that did not start is not a relay — tell the human');
   assert.strictEqual(r.woke, false);
   assert.match(r.reason, /did not start/);
-  assert.strictEqual(n.calls.length, 0, 'and nobody is pinged — a failed relay degrades to the store, not to a promise');
+  assert.strictEqual(n.calls.length, 1, 'and the human is told a relay could not start — silence would be the old failure');
 }));
 
 test('relay: a real dispatch is reported as UNCONFIRMED, never as a started turn', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
@@ -351,7 +351,30 @@ test('notifyCopy: progress shape — status headline, no action line', () => {
 test('notifyCopy: message shape — window+work headline, sender action', () => {
   const c = notifyCopy({ native_ref: { name: 'ai-product-sense-2a' }, conversation: 'Wake tier', from: 'chat' });
   assert.strictEqual(c.title, 'ai-product-sense-2a — Wake tier');
-  assert.strictEqual(c.body, 'From chat — open it to pick up.');
+  assert.strictEqual(c.body, 'From chat — open that window to pick it up.');
+});
+
+/* THE REMOTE CASE NAMES THE DEVICE. A session reached only through the shared store has no pid
+ * and no socket here, so this notification is its WHOLE wake path — "open it" is not actionable
+ * when "it" is on the other laptop. And the copy must still claim nothing false. */
+test('notifyCopy: a target on another device is named, so the ping is actionable', () => {
+  const c = notifyCopy({ native_ref: { name: 'lulu' }, conversation: 'Design review', from: 'chat', device: 'the Windows laptop' });
+  assert.strictEqual(c.title, 'lulu — Design review on the Windows laptop');
+  assert.match(c.body, /open that window/, 'says the one action that actually drains it');
+});
+
+test('notifyCopy: never claims a wake, on any shape', () => {
+  for (const d of [
+    { native_ref: { name: 'lulu' }, conversation: 'x', device: 'the Windows laptop' },
+    { native_ref: { name: 'lulu' }, conversation: 'x', kind: 'return', status: 'done' },
+    { native_ref: { name: 'lulu' }, conversation: 'x', kind: 'progress' },
+  ]) {
+    const c = notifyCopy(d);
+    const blob = (c.title + ' ' + c.body).toLowerCase();
+    for (const lie of ['woke', 'woken', 'started a turn', 'resumed', 'is running']) {
+      assert.ok(!blob.includes(lie), `notification must never claim "${lie}" — tier notify means TOLD, not woken`);
+    }
+  }
 });
 
 /* ---- the notification rung is GONE (removed 2026-08-09, owner's ruling) ----
@@ -378,12 +401,12 @@ test('notifyCopy: no protocol vocabulary in any shape', () => {
 });
 
 // ---- relay spawn failure → degrade to notify, no retry ----
-test('relay spawn failure degrades to the store (no relay retry)', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
+test('relay spawn failure degrades to notify (no relay retry)', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
   const n = notifyRecorder();
   const r = wake({ tier: 'attention', thread: 'x', conversation: 'x', native_ref: { session_id: OPEN_UUID } }, { spawn: throwingSpawn(), notify: n.notify });
-  assert.strictEqual(r.tier, 'store');
+  assert.strictEqual(r.tier, 'notify');
   assert.strictEqual(r.reason, 'relay spawn failed');
-    assert.strictEqual(n.calls.length, 0, 'no ping — the durable write the caller already made is the delivery');
+    assert.strictEqual(n.calls.length, 1, 'the human is told once — the durable write already happened, this says it is there');
 }));
 
 // ---- channel rung (only when flagged + hook set) ----

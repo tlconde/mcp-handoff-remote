@@ -960,11 +960,11 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
     ok(wlines.some(l => l.tier === 'relay' && l.woke === true && l.target === 'open-terminal'),
       'wake: the -p relay rung was dispatched for the open target (one call, no retries)');
 
-    // CLOSED target: remove the socket → degrade to the store.
+    // CLOSED target: remove the socket → the notify rung. No process can reach it, so the human is the path.
     try { fs.unlinkSync(liveSock); } catch (_) {}
     const rC = await rpc([init, call(1, 'send_message', { session_id: openId, message: 'Now it is closed.', from: 'chat · design' })]);
-    ok(/is closed — the message is stored; say anything in that window/.test(text(rC, 1)),
-      'wake: a CLOSED terminal degrades to the store, claiming nothing was shown');
+    ok(/is closed/.test(text(rC, 1)),
+      'wake: a CLOSED terminal reports closed and never claims a turn started');
 
     // chat target: no wake at all.
     const wcount = (() => { try { return fs.readFileSync(wakeLog, 'utf8').trim().split('\n').filter(Boolean).length; } catch (_) { return 0; } })();

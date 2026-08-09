@@ -784,7 +784,13 @@ async function callTool(name, args, ctx, core) {
     // The notification rung was removed 2026-08-09, so this line stopped promising a ping that
     // no longer fires. It names where the mail IS and the one action that drains it, which is
     // what the reader can act on — a closed window is a fact, not a failure.
-    } else if (woke && woke.tier === 'store') deliveryNote = `"${windowName}" is closed — the message is stored; say anything in that window and it arrives on the next turn. `;
+    /* Two closed-target outcomes, and they are DIFFERENT FACTS, so they get different sentences.
+     * 'notify' means a human was told a message is waiting. 'store' means nobody was told and the
+     * mail waits on someone happening to look. Reporting them identically is what let a silent
+     * degrade hide for a whole platform (Windows had no notify rung at all and said nothing).
+     * Neither sentence claims a turn started, because neither did. */
+    } else if (woke && woke.tier === 'notify') deliveryNote = `"${windowName}" is closed — a notification went out naming that window. Nothing has started there; opening it delivers the message. `;
+    else if (woke && woke.tier === 'store') deliveryNote = `"${windowName}" is closed and no notification could be sent — the message is stored; say anything in that window and it arrives on the next turn. `;
     else deliveryNote = `It arrives when that conversation next checks. `;
     const successorNote = succVia
       ? `Delivered via successor of "${succVia.from.title}" (${succVia.from.id}) — that record was superseded${succVia.hops > 1 ? ` through ${succVia.hops} links` : ''}; its history stays there, delivery follows the live one. `

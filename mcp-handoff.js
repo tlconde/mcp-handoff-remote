@@ -274,7 +274,9 @@ function forwardToDaemon(name, args, ctx) {
     const sock = daemonSockPath();
     const c = net.connect(sock, () => c.write(JSON.stringify({
       contract: CONTRACT, id: 1, tool: name, args: args || {}, ctx,
-      identity: { cli_uuid: nativeId(), cwd: process.cwd() }
+      // cli_pid is the DISCRIMINATOR: two live processes can share one session id, and the
+      // pid is what tells the daemon which of them is calling. Without it the door guesses.
+      identity: { cli_uuid: nativeId(), cli_pid: CLI_PID, cwd: process.cwd() }
     }) + '\n'));
     // The deadline must be CLEARED on every exit path. An uncleared timer is a live handle,
     // so the forwarder's event loop stays alive for the full 8s after it has already

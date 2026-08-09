@@ -161,9 +161,9 @@ async function buildStatusReport(args, ctx, core) {
    * filled once the store is loaded. */
   const identityLine = lines.length;
   lines.push('');
-  // WHO AM I, first line, before any machinery. She runs two terminals and the question they
+  // WHO AM I, first line, before any machinery. She runs two terminals and the question she
   // actually arrives with is "which one is this and what do I call it" — so status answers
-  // that before it reports on itself. Ids are for machines; this line is for their.
+  // that before it reports on itself. Ids are for machines; this line is for her.
   const whoLine = lines.length;
   lines.push('');
 
@@ -344,7 +344,7 @@ async function callTool(name, args, ctx, core) {
   // notifies, the drain heals, send #2 wakes with zero taps.
   await touchBinding(ctx, core);
   if (name === 'status') return buildStatusReport(args || {}, ctx, core);
-  /* whoami — status's first line, alone. The same answer, without making their read a health
+  /* whoami — status's first line, alone. The same answer, without making her read a health
    * report to get it. One source: it IS the status line, sliced, so the two can never drift. */
   if (name === 'whoami') {
     const full = await buildStatusReport({}, ctx, core);
@@ -590,7 +590,7 @@ async function callTool(name, args, ctx, core) {
     // what it resolved. Never delivers anything, so a wrong resolution costs nothing.
     if (!args || (!args.title_contains && !args.session_id)) throw new Error('title_contains or session_id required');
     const st = await call('GET', '/api/state');
-    let matches = Object.values(st.sessions).filter(s => !s.archived);
+    let matches = Object.values(st.sessions).filter(isTargetable);
     if (args.session_id) matches = matches.filter(s => s.id === args.session_id);
     if (args.surface) matches = matches.filter(s => s.surface === args.surface);
     if (args.title_contains) {
@@ -715,7 +715,7 @@ async function callTool(name, args, ctx, core) {
       attribution = `This bridge has no identity (no CLI uuid, nothing pinned, and you named no from_title/from_session_id), so no read state can be attributed back. To get ✓✓ back, name your own conversation with from_title (asserted provenance).`;
     }
     // Her name for it, not the process's. Native `name` is nameSource:"derived" and drifts
-    // per process (d1 -> d9); the title is what they typed and what they would type again.
+    // per process (d1 -> d9); the title is what she typed and what she would type again.
     const windowName = dest.title || (dest.native_ref && dest.native_ref.name);
     let deliveryNote;
     /* A12, IN CODE. This line used to read "Started a turn in X — no tap needed": an effect
@@ -765,7 +765,7 @@ async function callTool(name, args, ctx, core) {
     }
 
     const st = await call('GET', '/api/state');
-    let matches = Object.values(st.sessions).filter(s => !s.archived && s.surface === args.to);
+    let matches = Object.values(st.sessions).filter(s => isTargetable(s) && s.surface === args.to);
     if (args.session_id) {
       matches = matches.filter(s => s.id === args.session_id);
       if (!matches.length) {
@@ -1109,7 +1109,15 @@ async function callTool(name, args, ctx, core) {
     // was listed — Gate A was blind to the decision path. Every routing verb now logs.
     core.ops('route_query', { verb: 'list_conversations', surface: (args && args.surface) || null, protocol: sessions.length });
     const unread = s => unreadCount(s);
-    const loc = s => s.surface === 'code' ? 'Claude Code · protocol record' : `Claude app · ${s.surface}`;
+    /* Superseded records stay VISIBLE here — their history is the reason they exist — but they
+     * are labelled so nobody addresses one by mistake. Listing is not targeting: the target
+     * surfaces (resolve_conversation, send_to) refuse them outright. */
+    const supersededNote = s => {
+      if (!s.superseded_by) return '';
+      const to = (st.sessions || {})[s.superseded_by];
+      return ` · SUPERSEDED → ${to ? `"${to.title}"` : s.superseded_by} (history kept here; send to the successor)`;
+    };
+    const loc = s => (s.surface === 'code' ? 'Claude Code · protocol record' : `Claude app · ${s.surface}`) + supersededNote(s);
     const banner = await attentionBanner(ctx, core);
     const parts = [];
     if (!sessions.length && (!args || !args.surface)) {
@@ -1381,7 +1389,7 @@ async function callTool(name, args, ctx, core) {
     });
     if (r && r.error) return `REFUSED: ${r.error}`;
     const s = r.session;
-    // The tab they are looking at follows the name they just gave. Best-effort and silent on
+    // The tab she is looking at follows the name she just gave. Best-effort and silent on
     // failure: a title that did not take must never make naming look like it failed.
     const titledTty = (args && args.title) ? setTerminalTitle(ctx && ctx.cli_pid, s.title, nativeId) : null;
     const cwd = s.native_ref && s.native_ref.cwd;
@@ -1490,7 +1498,7 @@ async function identitySession(ctx, core, extra) {
   /* The CALLING process knows its own pid — that is a fact. The registry lookup is an
    * inference, and with two rows on one uuid it picked the wrong window. So the caller's pid
    * wins, which also makes native_ref.pid mean something precise: THE PROCESS THAT LAST
-   * SPOKE TO US. That is evidence of which window they are actually driving, and it is what
+   * SPOKE TO US. That is evidence of which window she is actually driving, and it is what
    * lets multi-claimant succession resolve by construction instead of by guess. */
   const pid = callerPid || (nat && nat.pid) || null;
   const body = Object.assign(
@@ -1707,9 +1715,9 @@ const DEPRECATION_NOTE = '\n\n(send_to_surface is retired — use send_to with m
  * connection-lifetime, not back-compat, and it expires on its own rather than on someone
  * remembering. Past the sunset contract this refuses instead of serving, and says why. */
 const SUNSET_AT_CONTRACT = 3;
-/* TAB TITLE — the name they gave, on the tab they are looking at.
+/* TAB TITLE — the name she gave, on the tab she is looking at.
  * The tty is resolved LIVE from the caller's validated CLI pid at the moment of naming, and
- * never stored: same rule as the process-tree click (§I2b). Nothing else can reach their
+ * never stored: same rule as the process-tree click (§I2b). Nothing else can reach her
  * terminal — the MCP server's stdout IS the JSON-RPC channel (writing there corrupts the
  * protocol), the Bash tool has no controlling tty (measured: /dev/tty is "device not
  * configured"), and the daemon has none of its own. The CLI process does, and `ps -o tty=`
@@ -1725,7 +1733,7 @@ function setTerminalTitle(cliPid, name, uuid) {
     /* THE PID IS A HINT TOO (instance eight, found 2026-08-09 by this very feature).
      * The forwarder froze CLI_PID at ITS process start, exactly as it once froze NATIVE_ID —
      * so after the CLI process changed (38088 -> 87920, measured live) the title was written
-     * to /dev/ttys080: a REAL terminal, running a REAL claude session, just not the one they
+     * to /dev/ttys080: a REAL terminal, running a REAL claude session, just not the one she
      * was looking at. Writing to a stale tty is not a no-op, it is writing into someone
      * else's window. So the pid is validated against the live registry before any device
      * write, and where the uuid resolves to MORE THAN ONE live process we write nothing:
@@ -1761,6 +1769,15 @@ function setTerminalTitle(cliPid, name, uuid) {
     require('fs').writeFileSync('/dev/' + tty, `\u001b]0;${clean}\u0007`);
     return '/dev/' + tty;
   } catch (_) { return null; } // no tty, no permission, headless — all fine, all silent
+}
+/* A SUPERSEDED RECORD IS NOT A TARGET.
+ * Adoption relinks DELIVERY through the successor chain, and that much shipped — but every
+ * surface that OFFERS a destination kept advertising the old record, and the picker even
+ * recommended one. Half a migration: sends resolved correctly while every list still pointed
+ * at a record whose binding was dead. The superseded record stays readable — its history is
+ * the reason it exists — it simply stops being selectable. */
+function isTargetable(s) {
+  return !!s && !s.archived && !s.superseded_by;
 }
 /* Walk the append-only successor chain over a state snapshot — the tools-layer twin of
  * handoff-core's resolveSuccessor. Capped and cycle-checked: a looping lineage must refuse,

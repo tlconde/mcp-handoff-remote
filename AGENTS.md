@@ -39,6 +39,11 @@ done
 
 Empty output, or do not commit.
 
+**This bit on the very first mirror.** Copying `handoff-tools.js` across re-introduced three
+owner references that live in comments on the notebook side. Copying a shared file is not the
+end of mirroring — **de-personalize after every copy, then run the grep above.** The rule
+caught it; assume it will need to.
+
 ## Test side-effects that must not be committed
 
 `protocol-test.js` exports `HANDOFF.md` into the working directory, and the bridge

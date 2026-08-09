@@ -856,6 +856,54 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
     delete process.env.CLAUDE_CODE_SESSION_ID;
   }
 
+  // ---- S5: the remote door — a device gets a record without a CLI uuid ----
+  // Measured 2026-08-09: a session named on a second laptop produced NO record, so it was
+  // invisible from here and unaddressable. register_session refuses without a CLI uuid, which is
+  // right for the LOCAL door; a device across the relay has none here and never will. Two doors.
+  {
+    const rMint = await rpc([init, call(1, 'register_remote_session', { title: 'lulu', device: 'windows-laptop' })]);
+    const m1 = text(rMint, 1);
+    ok(/Registered/.test(m1) && /"lulu"/.test(m1) && /windows-laptop/.test(m1),
+      'remote mint: a device with no CLI uuid gets a named, addressable record');
+    ok(/asserted/.test(m1) && /NOT CLI-verified/.test(m1),
+      'remote mint: says plainly it is asserted and not CLI-verified — attestation is transport provenance, not a stronger identity');
+    ok(/Reachability: unknown/.test(m1) && /nobody has looked recently/.test(m1),
+      'remote mint: claims no liveness, and explains unknown rather than letting it read as unreachable');
+    const lulu = (m1.match(/session_id: (sess_[A-Za-z0-9]+)/) || [])[1];
+
+    const sdir3 = path.join(process.env.HANDOFF_HOME, 'store', 'v1', 'sessions');
+    const lf = fs.readdirSync(sdir3).find(f => { try { return JSON.parse(fs.readFileSync(path.join(sdir3, f), 'utf8')).id === lulu; } catch (_) { return false; } });
+    const lrec = JSON.parse(fs.readFileSync(path.join(sdir3, lf), 'utf8'));
+    ok(lrec.native_ref === null,
+      'remote mint: native_ref stays NULL — a stored address nobody validated is this codebase oldest bug');
+    /* attested_by names WHO vouched, and minting from here is not Access vouching — an operator
+     * did it on the device behalf. Claiming 'access' for a local mint would be exactly the
+     * borrowed-authority error the two-door split exists to avoid. */
+    ok(lrec.remote && lrec.remote.attested_by === 'operator' && lrec.remote.host === 'windows-laptop',
+      'remote mint: a locally-minted record is attested by the OPERATOR, not by Access it never passed through');
+    ok(lrec.remote.minted_by && /local:/.test(lrec.remote.minted_by),
+      'remote mint: provenance says it was minted from HERE on the device behalf, never mistakable for one its own agent wrote');
+
+    // Idempotency: reconnect must UPDATE, not duplicate.
+    const rAgain = await rpc([init, call(1, 'register_remote_session', { title: 'lulu', device: 'windows-laptop' })]);
+    ok(/Refreshed/.test(text(rAgain, 1)) && text(rAgain, 1).includes(lulu),
+      'remote mint: re-registering on reconnect refreshes the SAME record — one device, one record');
+
+    // The whole point: addressable by name from anywhere that reads this store.
+    const rFind = await rpc([init, call(1, 'resolve_conversation', { title_contains: 'lulu', surface: 'code' })]);
+    ok(text(rFind, 1).includes(lulu),
+      'remote mint: resolvable by the name a human types, which is what visibility across devices means');
+
+    // And peek must read it as unknown, not none — the owning host has no agent yet.
+    await rpc([init, call(1, 'send_message', { session_id: lulu, message: 'hello lulu', from: 'chat' })]);
+    const rPeekL = await rpc([init, call(1, 'peek_inbox', { surface: 'code', title_contains: 'lulu' })]);
+    ok(/reachable: unknown/.test(text(rPeekL, 1)),
+      'remote mint: a record whose device agent does not exist yet reads unknown — the correct state, not a degraded one');
+
+    ok(text(rMint, 1).includes('addressable from every device'),
+      'remote mint: the reply states the outcome the user actually asked for');
+  }
+
   // ---- peek_inbox: watch without consuming ----
   // check_inbox marks what it shows as READ and is scoped to a SURFACE, not to the caller's own
   // records. Measured 2026-08-09: an inbox check from one terminal marked another conversation's

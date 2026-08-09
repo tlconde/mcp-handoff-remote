@@ -170,6 +170,20 @@ const TOOLS = [
     }
   },
   {
+    name: 'register_remote_session',
+    description: 'Give a session on ANOTHER DEVICE a record in the shared store, so it is visible and addressable from every machine. Use when a device cannot mint its own identity: register_session needs a CLI uuid from a real local Claude Code session and refuses without one, and a device on the far side of the relay has none HERE. The record is honest about what it is not: identity is asserted with attested_by access (never CLI-verified), native_ref stays null until that device agent claims it, and reachability reads unknown until its agent reports in. Idempotent on (device, title): re-registering on reconnect updates rather than duplicating.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'The name a human will address it by, one word if possible ("lulu").' },
+        device: { type: 'string', description: 'The machine it runs on ("windows-laptop"). Required: it is the dedup key on reconnect and the host whose agent answers for reachability.' },
+        role: { type: 'string', description: 'Optional role/lane label discriminating sessions on one device.' }
+      },
+      required: ['title', 'device'],
+      additionalProperties: false
+    }
+  },
+  {
     name: 'peek_inbox',
     description: 'Read the inbox WITHOUT consuming it — counts, addresses and reachability, never message text, and nothing is marked read. Use this for anything that POLLS or watches on someone else\'s behalf; check_inbox marks what it shows as read and is scoped to a whole surface, so polling it consumes other conversations\' unread state (measured: an inbox check drained an envelope addressed to another session). Reachability per target is process | stale-binding | none | unknown. UNKNOWN means NOBODY LOOKED RECENTLY (the owning host\'s agent is silent or stale) and is never the same as NONE, which means the owning host looked and found nothing. A watcher must not treat unknown as absent. Returns a cursor; pass it back as `since` so repeat polls only report what is newer. The message text belongs to its reader — check_inbox in that conversation delivers it.',
     inputSchema: {

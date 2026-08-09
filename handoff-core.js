@@ -966,6 +966,59 @@ async function handleApi(method, p, query, b) {
     if (method === 'GET' && p === '/api/health') return { code: 200, payload: { ok: true, sessions: Object.keys(db.sessions).length, store: HOME } };
     if (method === 'POST' && p === '/api/seed') return { code: 200, payload: await seed(!!b.force) };
     if (method === 'GET' && p === '/api/state') return { code: 200, payload: demoState() };
+    /* THE REMOTE DOOR — a DIFFERENT door with a different key, not a hole punched in the local one.
+     *
+     * /api/register mints from a CLI transcript uuid, and refuses without one. That refusal is
+     * correct: a local record keyed to nothing is an anonymous session wearing a name. But a
+     * device reaching the store over the authenticated relay is not anonymous and not local. It
+     * holds an ACCOUNT, verified by the tunnel; it simply has no process on THIS machine, and
+     * never will. Measured 2026-08-09: a session named on a second laptop produced no record at
+     * all, so it was invisible from here and unaddressable — the store could be read from that
+     * device and not written to by it.
+     *
+     * What this mints, and what it deliberately does NOT claim:
+     *   - status 'asserted' with attested_by 'access'. NOT a third door status: a status earns
+     *     existence only if consumers authorize differently on it, and none do. The attestation
+     *     is transport provenance ("arrived through the authenticated tunnel as this account"),
+     *     which is a different axis from how much native vouches for a session.
+     *   - native_ref STAYS NULL. A record does not know it has a live process; the owning host's
+     *     agent binds that later. Faking it here would be this codebase's oldest bug — a stored
+     *     address nobody validated.
+     *   - NO liveness claim and NO transport claim. Reachability is the owning agent's runtime
+     *     assertion (peek reads it from the heartbeat), and how a record gets woken is the
+     *     transport registry's decision at delivery time. Baking either in would survive exactly
+     *     until the first transport swap the seam exists to allow.
+     *
+     * Idempotent on (host, title): a device re-registering on reconnect UPDATES its record rather
+     * than minting a second one. That reuses the store's existing same-title discrimination
+     * instead of adding a second dedup mechanism with its own edge cases. */
+    if (method === 'POST' && p === '/api/register-remote') {
+      if (!b.host) return { code: 400, payload: { error: 'host required — a device record that cannot name its device is unaddressable and undedupable' } };
+      if (!b.title) return { code: 400, payload: { error: 'title required — the whole point of the record is that a human can address it by name' } };
+      const host = String(b.host);
+      let s = Object.values(db.sessions).find(x =>
+        !x.archived && x.remote && x.remote.host === host && x.title === b.title);
+      const minted = !s;
+      if (!s) { s = createSession({ surface: 'code', title: b.title }); }
+      s.title = b.title;
+      if (b.role !== undefined) s.role = b.role || null;
+      s.native_ref = null; // never asserted here; the owning host's agent claims it
+      s.remote = {
+        host,
+        attested_by: b.attested_by || 'access',
+        account_sub: b.account_sub || null,
+        /* PROVENANCE, because these are different facts and only one of them is the device
+         * speaking for itself. A first record minted FROM another machine on the device's behalf
+         * is legitimate — a record is data — but it must never be mistaken later for one the
+         * device's own agent wrote. */
+        minted_by: b.minted_by || 'unknown',
+        last_registered: now(),
+      };
+      ops('remote_session_registered', { session: s.id, host, title: b.title, minted, minted_by: s.remote.minted_by });
+      save(db);
+      return { code: minted ? 201 : 200, payload: { session: s, minted } };
+    }
+
     if (method === 'POST' && p === '/api/register') {
       // Identity minting (I2, t24 addendum): a terminal session joins the protocol under
       // its OWN record, keyed to the CLI transcript uuid, instead of borrowing whichever

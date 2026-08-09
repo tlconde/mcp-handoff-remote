@@ -382,7 +382,7 @@ const MIGRATED = new Set([
   'pick_up', 'continue_from', 'return_to_origin',
   'resolve_conversation', 'send_message', 'send_to', 'send_to_surface', 'status', 'whoami',
   'send_to_worker', 'list_conversations', 'resume_code_session', 'open_conversation',
-  'check_inbox', 'peek_inbox', 'withdraw_handoff', 'decline_handoff', 'list_workers',
+  'check_inbox', 'peek_inbox', 'register_remote_session', 'withdraw_handoff', 'decline_handoff', 'list_workers',
 ]);
 
 /** Run a migrated tool against `core` with the caller's per-request `ctx`. */
@@ -1369,8 +1369,14 @@ async function callTool(name, args, ctx, core) {
    * owning agent's runtime assertion layered on top. That keeps the mint idempotent and makes a
    * record whose agent has died read honestly as 'unknown' rather than falsely as anything. */
   const HEARTBEAT_STALE_MS = 3 * 30 * 1000; // ~3 poll intervals at the 30s upper bound
-  function reachabilityOf(nr, st) {
-    if (!nr) return 'none';
+  function reachabilityOf(sess, st) {
+    const nr = sess && sess.native_ref;
+    const remoteHost = sess && sess.remote && sess.remote.host;
+    /* A record owned by another device has NO native_ref at all — the mint refuses to assert one
+     * and its agent has not claimed it yet. Keying ownership off native_ref alone made those read
+     * 'none' ("the owning host looked and found nothing"), which is the precise wrong-direction
+     * failure the fourth value exists to prevent: nobody looked, and nobody had even been asked. */
+    if (!nr) return remoteHost ? remoteVerdict(remoteHost, null, st) : 'none';
     const here = !nr.host || nr.host === (process.env.HANDOFF_HOST_ID || require('os').hostname());
     if (here) {
       if (!nr.pid) return 'stale-binding';
@@ -1378,11 +1384,15 @@ async function callTool(name, args, ctx, core) {
       catch (e) { return e.code === 'EPERM' ? 'process' : 'stale-binding'; }
     }
     // Another device owns it. Only its agent may say, and only recently.
-    const beat = (st && st.agents && st.agents[nr.host]) || null;
+    return remoteVerdict(nr.host, nr.session_id, st);
+  }
+  /** The owning host's own verdict, or 'unknown'. Never a local inference. */
+  function remoteVerdict(host, sessionKey, st) {
+    const beat = (st && st.agents && st.agents[host]) || null;
     if (!beat || !beat.last_seen) return 'unknown';
     const age = Date.now() - Date.parse(beat.last_seen);
     if (!(age >= 0) || age > HEARTBEAT_STALE_MS) return 'unknown';
-    const verdict = beat.sessions && beat.sessions[nr.session_id];
+    const verdict = sessionKey && beat.sessions && beat.sessions[sessionKey];
     return verdict || 'unknown';
   }
 
@@ -1403,6 +1413,48 @@ async function callTool(name, args, ctx, core) {
    * to wake someone, which needs only "how much is waiting, for whom, and can it be reached" —
    * the text belongs to the reader. `since` makes repeat polls cheap, so interval tuning stops
    * being load-bearing. */
+  /* REGISTER A DEVICE'S SESSION — the remote door's verb.
+   *
+   * Separate from register_session on purpose. register_session mints from a CLI uuid and refuses
+   * without one, which is right for the local door: identity records are minted from a real
+   * Claude Code session, never guessed. A device on the far side of the relay has no uuid HERE and
+   * never will, so widening that refusal would weaken the local rule to serve a case it was never
+   * about. Two doors, two keys.
+   *
+   * The record it mints is honest about what it is not: no native_ref (the owning host's agent
+   * binds that), no liveness claim (peek reads the heartbeat), no transport claim (the registry
+   * decides at delivery). It is addressable and visible from every device, and reachability reads
+   * 'unknown' until that device's agent says otherwise — which is the correct state for a record
+   * whose agent does not exist yet, not a degraded one.
+   *
+   * minted_by records WHO wrote it. A first record created from another machine on the device's
+   * behalf is legitimate while that device has no credential yet, but it must never later be
+   * mistaken for one the device's own agent wrote. */
+  if (name === 'register_remote_session') {
+    if (!args || !args.title) return 'REFUSED: title required — the record exists so a human can address it by name.';
+    if (!args.device) return 'REFUSED: device required — name the machine this session runs on (e.g. "windows-laptop"). Without it the record cannot be deduplicated on reconnect, and reachability has no host to ask.';
+    const mintedBy = (ctx && ctx.remote)
+      ? `access:${(ctx && ctx.account_sub) || 'authenticated'}`
+      : `local:${(ctx && ctx.cli_uuid) ? 'terminal' : 'bridge'}`;
+    const r = await call('POST', '/api/register-remote', {}, {
+      host: args.device, title: args.title, role: args.role,
+      attested_by: (ctx && ctx.remote) ? 'access' : 'operator',
+      account_sub: (ctx && ctx.account_sub) || null,
+      minted_by: mintedBy,
+    });
+    if (!r || !r.session) return 'REFUSED: the store did not return a record.';
+    const s = r.session;
+    const onBehalf = !(ctx && ctx.remote);
+    return `${r.minted ? 'Registered' : 'Refreshed'}: [code] "${s.title}" on device "${s.remote.host}"\n` +
+      `session_id: ${s.id}\n` +
+      `Identity: asserted, attested_by ${s.remote.attested_by}. NOT CLI-verified — no process on this machine answers for it, and none is claimed.\n` +
+      `Reachability: unknown until that device's agent reports in. Unknown is not "unreachable"; it means nobody has looked recently.\n` +
+      (onBehalf
+        ? `Provenance: minted from HERE on that device's behalf (${mintedBy}), not by its own agent. Recorded on the record so it is not mistaken for one later.\n`
+        : `Provenance: minted by the device itself over the authenticated relay.\n`) +
+      `It is now visible and addressable from every device: send_to / send_message by the name "${s.title}".`;
+  }
+
   if (name === 'peek_inbox') {
     const nativeId = (ctx && ctx.cli_uuid) || null;
     const surface = (args && args.surface) || (nativeId ? 'code' : 'chat');
@@ -1424,7 +1476,7 @@ async function callTool(name, args, ctx, core) {
         unread: fresh.length,
         returns: fresh.filter(m => m.kind === 'resume_summary').length,
         native_name: (nr && nr.name) || null,
-        reachable: reachabilityOf(nr, st),
+        reachable: reachabilityOf(s, st),
       });
     }
     if (!rows.length) {

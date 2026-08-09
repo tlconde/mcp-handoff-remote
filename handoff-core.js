@@ -977,7 +977,13 @@ async function handleApi(method, p, query, b) {
      * device and not written to by it.
      *
      * What this mints, and what it deliberately does NOT claim:
-     *   - status 'asserted' with attested_by 'access'. NOT a third door status: a status earns
+     *   - attested_by names THE AUTHORITY THAT ACTUALLY PARTICIPATED IN THIS WRITE, never a
+     *     constant. 'access' only when the authenticated relay carried the mint; 'operator' when a
+     *     human minted it from another machine on the device's behalf. A fixed value would be
+     *     unfalsifiable — every record would claim Access whether or not one was involved, which
+     *     is the "asserted a fact nobody measured" failure this project spent 2026-08-09 removing.
+     *     A new write path gets its own value; nothing inherits 'access' by association.
+     *   - status 'asserted'. NOT a third door status: a status earns
      *     existence only if consumers authorize differently on it, and none do. The attestation
      *     is transport provenance ("arrived through the authenticated tunnel as this account"),
      *     which is a different axis from how much native vouches for a session.

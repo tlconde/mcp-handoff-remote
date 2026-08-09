@@ -1375,7 +1375,13 @@ async function callTool(name, args, ctx, core) {
     /* A record owned by another device has NO native_ref at all — the mint refuses to assert one
      * and its agent has not claimed it yet. Keying ownership off native_ref alone made those read
      * 'none' ("the owning host looked and found nothing"), which is the precise wrong-direction
-     * failure the fourth value exists to prevent: nobody looked, and nobody had even been asked. */
+     * failure the fourth value exists to prevent: nobody looked, and nobody had even been asked.
+     *
+     * FIXING A CLASS AT ONE LAYER DOES NOT FIX IT AT THE LAYER ABOVE. The commit that introduced
+     * this vocabulary reintroduced the same failure one layer up, in itself. It surfaced only
+     * because the test asserted the specific honest value ('unknown') rather than "some value
+     * came back" — the second time in one day that distinction was the only thing standing
+     * between a fix and its own regression. Assert the value, not the shape. */
     if (!nr) return remoteHost ? remoteVerdict(remoteHost, null, st) : 'none';
     const here = !nr.host || nr.host === (process.env.HANDOFF_HOST_ID || require('os').hostname());
     if (here) {

@@ -39,9 +39,37 @@ const tools = require('./handoff-tools');
 // reload that cannot parse a record restores it from here instead of losing it.
 const lastGood = new Map();
 
+/* EXIT-ON-STALE covers the daemon's WHOLE code surface, not just this file.
+ *
+ * It used to watch only __filename. That was defensible when the bridge held the logic and
+ * hot-reloaded core on every call — but after the slice-3b migration the daemon is the sole
+ * executor: handoff-core.js and handoff-tools.js ARE the protocol, and it requires both once
+ * at boot and never reloads them. So editing either left the daemon serving stale logic
+ * silently: no banner, no exit, no respawn, and the forwarders had no way to know.
+ *
+ * Found live on this machine: daemon booted 19:13:01 with handoff-core.js modified 19:50:28
+ * — 37 minutes of a running daemon executing superseded core, reporting itself healthy.
+ *
+ * The remedy is the spec's own doctrine ("Update = restart one process"): refuse, report,
+ * exit, and let launchd/systemd restart us with the new code. Deliberately NOT a hot-reload —
+ * swapping modules under in-flight requests is exactly the mixed-version corruption
+ * acceptance test (d) exists to forbid.
+ *
+ * Compare each file's mtime against the value captured at BOOT rather than against START_MS.
+ * A checkout or touch that leaves a file dated in the future would satisfy `mtime > start`
+ * forever and put launchd in a restart loop; "differs from what I loaded" cannot. */
+const WATCHED = ['handoff-daemon.js', 'handoff-core.js', 'handoff-tools.js', 'handoff-contract.js']
+  .map(f => path.join(__dirname, f));
+const mtimeOf = f => { try { return fs.statSync(f).mtimeMs; } catch (_) { return 0; } };
+const BOOT_MTIMES = new Map(WATCHED.map(f => [f, mtimeOf(f)]));
+/** Which watched file changed since boot, if any — named so the log says what went stale. */
+function staleFile() {
+  for (const f of WATCHED) if (mtimeOf(f) !== BOOT_MTIMES.get(f)) return path.basename(f);
+  return null;
+}
 function isStale() {
   if (process.env.HANDOFF_FORCE_STALE === '1') return true;
-  try { return fs.statSync(__filename).mtimeMs > START_MS + 2000; } catch (_) { return false; }
+  return staleFile() !== null;
 }
 
 function nativeSessionsDir() {
@@ -110,8 +138,10 @@ async function handleRequest(req) {
       note: 'forwarder must exit; Claude Code respawns a build matching the daemon' };
   }
   if (isStale()) {
-    return { id, error: 'daemon_stale', fatal: true,
-      note: 'on-disk daemon is newer than this process; forwarder must exit and respawn' };
+    const which = staleFile();
+    return { id, error: 'daemon_stale', fatal: true, stale_file: which,
+      note: `${which || 'daemon code'} changed since this daemon booted; it is exiting so the ` +
+            'service manager restarts it with current code, and the forwarder must exit and respawn' };
   }
   const identity = verifyIdentity(req.identity);
   // Slice 3a: tool calls carry per-session ctx (pinned, cli_uuid, cwd). The daemon is shared,
@@ -155,7 +185,14 @@ function createServer() {
         let req; try { req = JSON.parse(line); } catch (_) { conn.write(JSON.stringify({ error: 'bad json', fatal: false }) + '\n'); continue; }
         const res = await handleRequest(req);
         try { conn.write(JSON.stringify(res) + '\n'); } catch (_) {}
-        if (res.fatal && res.error === 'daemon_stale') { conn.end(); setImmediate(() => { try { srv.close(); } catch (_) {} try { fs.unlinkSync(SOCK); } catch (_) {} process.exit(0); }); }
+        if (res.fatal && res.error === 'daemon_stale') {
+          // Say WHY on the way out — this lands in daemon.err.log, so an unexplained restart
+          // in the launchd/systemd log can be traced to the exact file that changed.
+          // eslint-disable-next-line no-console
+          console.error(`handoff-daemon: ${res.stale_file || 'code'} changed since boot — exiting for restart with current code (pid ${process.pid})`);
+          conn.end();
+          setImmediate(() => { try { srv.close(); } catch (_) {} try { fs.unlinkSync(SOCK); } catch (_) {} process.exit(0); });
+        }
       }
     });
     conn.on('error', () => {});

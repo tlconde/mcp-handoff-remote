@@ -153,6 +153,58 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     try { p2.kill(); } catch (_) {}
   }
 
+  // ---- (c2) exit-on-stale must cover the daemon's WHOLE code surface ----
+  // The original isStale() watched only handoff-daemon.js. After slice 3b the daemon is the
+  // sole executor — handoff-core.js and handoff-tools.js ARE the protocol, required once at
+  // boot and never reloaded — so editing either left it serving stale logic silently. Found
+  // live: a daemon booted 19:13 while core was modified 19:50, reporting itself healthy for
+  // 37 minutes. Touch each watched file in a COPY of the tree so the real repo is untouched.
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hdaemon-stalesurface-'));
+    for (const f of ['handoff-daemon.js', 'handoff-core.js', 'handoff-tools.js', 'handoff-contract.js']) {
+      fs.copyFileSync(path.join(__dirname, f), path.join(dir, f));
+    }
+    for (const target of ['handoff-core.js', 'handoff-tools.js', 'handoff-contract.js']) {
+      const home = tmpHome();
+      const sock = path.join(home, 'daemon.sock');
+      const env = { ...process.env, HANDOFF_HOME: home, HANDOFF_DAEMON_SOCK: sock };
+      delete env.HANDOFF_FORCE_STALE;
+      const p = spawn(process.execPath, [path.join(dir, 'handoff-daemon.js')], { env });
+      SPAWNED.push(p);
+      await waitFor(() => fs.existsSync(sock));
+      const before = await forward(sock, { contract: CONTRACT, id: 1, method: 'GET', path: '/api/health' });
+      // Bump the watched file's mtime — the daemon must notice on the NEXT call.
+      const now = new Date();
+      fs.utimesSync(path.join(dir, target), now, new Date(now.getTime() + 5000));
+      const after = await forward(sock, { contract: CONTRACT, id: 2, method: 'GET', path: '/api/health' })
+        .catch(e => ({ error: 'threw: ' + e.message }));
+      ok(before.result && before.result.ok && after.error === 'daemon_stale' && after.stale_file === target,
+        `(c2) editing ${target} makes the daemon refuse daemon_stale and name the file`);
+      const gone = await waitFor(() => p.exitCode !== null || !fs.existsSync(sock));
+      ok(gone, `(c2) ...and it EXITS so the service manager restarts it with the new ${target}`);
+      try { p.kill(); } catch (_) {}
+    }
+    // Guard the restart-loop hazard the mtime-vs-BOOT comparison exists to prevent: a file
+    // dated in the FUTURE must not read as perpetually stale (mtime > start would).
+    {
+      const home = tmpHome();
+      const sock = path.join(home, 'daemon.sock');
+      const future = new Date(Date.now() + 3600_000);
+      fs.utimesSync(path.join(dir, 'handoff-core.js'), future, future);
+      const env = { ...process.env, HANDOFF_HOME: home, HANDOFF_DAEMON_SOCK: sock };
+      delete env.HANDOFF_FORCE_STALE;
+      const p = spawn(process.execPath, [path.join(dir, 'handoff-daemon.js')], { env });
+      SPAWNED.push(p);
+      await waitFor(() => fs.existsSync(sock));
+      const r = await forward(sock, { contract: CONTRACT, id: 1, method: 'GET', path: '/api/health' })
+        .catch(e => ({ error: 'threw: ' + e.message }));
+      ok(r.result && r.result.ok,
+        '(c2) a future-dated file is NOT stale — boot-mtime comparison avoids a restart loop');
+      try { p.kill(); } catch (_) {}
+    }
+  }
+
+
   // ---- (d) rollout smoke: 10 forwarders under load across a restart, zero lost writes ----
   {
     const home = tmpHome();

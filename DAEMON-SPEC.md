@@ -80,7 +80,16 @@ Support matrix copied from native: **macOS + Linux (incl. WSL 2); native Windows
   in `try/catch` with a **last-good fallback**. A broken hand-edit to one record degrades to
   last-good for that record and logs it — it never crashes the daemon. Test: corrupt one
   `store/v1/sessions/*.json`, assert the daemon stays up and every other record is intact.
-- **(c) Exit-on-stale.** When the on-disk daemon build is newer than the running daemon, it
+- **(c) Exit-on-stale — over the WHOLE code surface** (widened 2026-08-09). The watch covers
+  `handoff-daemon.js`, `handoff-core.js`, `handoff-tools.js` and `handoff-contract.js`, not just
+  the daemon file. After slice 3b the daemon is the sole executor and requires core + tools once
+  at boot without reloading, so watching only its own file left edits to the actual protocol
+  logic invisible — found live: a daemon 37 minutes stale on core, reporting itself healthy.
+  Staleness is "differs from the mtime loaded at boot", NOT "mtime > start": a future-dated file
+  satisfies the latter forever and would put launchd in a restart loop. The refusal names the
+  changed file. Deliberately not a hot-reload — swapping modules under in-flight requests is the
+  mixed-version corruption (d) forbids.
+  When the on-disk daemon build is newer than the running daemon, it
   **refuses, reports, and exits** so clients respawn — replacing "freeze and refuse to
   mutate". Test: the daemon exits on staleness AND app conversations actually respawn a
   working forwarder (today they sometimes time out — this is the specific regression to

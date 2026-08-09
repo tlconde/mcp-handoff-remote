@@ -15,13 +15,24 @@
  * Prerequisites: daemon installed (deploy/install.sh) and running.
  * Usage:          node forwarder-runbook.js
  *
+ * Run it from inside a Claude Code session, which exports CLAUDE_CODE_SESSION_ID. Three of
+ * the checks refresh THIS terminal's record, so without a real session id they fail for a
+ * boring reason (no such session) rather than a real one. Override with HANDOFF_BRIDGE to
+ * point at a bridge somewhere other than this directory.
+ *
  * Note on (c): assert time-to-RESPONSE and time-to-EXIT separately. An earlier version timed
  * only process close, reported 8047ms, and called it "fails fast" — conflating the two hid a
  * leaked 8s deadline in forwardToDaemon. They are different questions and both matter. */
 const { spawn } = require('child_process');
 const path = require('path');
-const BRIDGE = '/path/to/handoff-remote/mcp-handoff.js';
-const UUID = '115dfb99-df03-49d9-9f8a-9a2f1cc40644';
+/* NEITHER OF THESE IS A CONSTANT TO HARDCODE. The bridge is the one sitting next to this
+ * file, and the uuid is whatever session is running the runbook. An earlier version pinned
+ * both to the author's machine and shipped a REAL Claude Code session id into a repo meant
+ * to go public (found 2026-08-09). A session id is personal data: it names a transcript on
+ * someone's disk. It also made the runbook a lie anywhere else — the path did not exist and
+ * the uuid belonged to no live process, so register_session had nothing to refresh. */
+const BRIDGE = process.env.HANDOFF_BRIDGE || path.join(__dirname, 'mcp-handoff.js');
+const UUID = process.env.CLAUDE_CODE_SESSION_ID || '00000000-0000-4000-8000-000000000000';
 
 function run(env, calls, onFirstResponse) {
   return new Promise(resolve => {

@@ -32,12 +32,27 @@ No owner name, no real domain, no tunnel id, no audience tag, no `/Users/<name>`
 Prove it before every commit, do not assume it:
 
 ```bash
+# 1. named identifiers
 git diff --cached --name-only | while read f; do
   [ -f "$f" ] && grep -HinE "taissa|lconde|94da97ad|old-feather|/Users/dev" "$f"
 done
+
+# 2. session ids. A uuid that names a transcript on this disk is a REAL session, and a
+#    session id is personal data — it points at someone's conversation. Checking against
+#    ~/.claude/projects is exact where a uuid-shaped pattern is not: the suites are full of
+#    legitimate fixture uuids (11111111-…, ffffffff-dead-…) and a shape match flags them all.
+git diff --cached --name-only | while read f; do
+  [ -f "$f" ] && grep -hoiE "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" "$f"
+done | sort -u | while read u; do
+  ls ~/.claude/projects/*/"$u".jsonl >/dev/null 2>&1 && echo "REAL SESSION ID: $u"
+done
 ```
 
-Empty output, or do not commit.
+Empty output from both, or do not commit.
+
+The first list only ever grows, one entry per escape that already happened. It caught `94da97ad`
+after that leak, and it did not catch the live session id committed in `forwarder-runbook.js`
+with the initial release — a uuid is not a name. Prefer a check that describes the class.
 
 **This bit on the very first mirror.** Copying `handoff-tools.js` across re-introduced three
 owner references that live in comments on the notebook side. Copying a shared file is not the

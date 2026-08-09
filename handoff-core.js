@@ -48,9 +48,26 @@ const NAMES = { chat: 'Chat', cowork: 'Cowork', design: 'Design', code: 'Claude 
  */
 const STORE = path.join(HOME, 'store', 'v1');
 const SCHEMA_VERSION = 1;
-const COLLECTIONS = ['sessions', 'links'];
-let db = { sessions: {}, links: {}, seq: 0 };
-let snapshot = { sessions: {}, links: {} }; // id -> serialization as loaded (dirty tracking)
+/* The agents collection is a COLLECTION, not a top-level field, and that distinction was
+ * load-bearing enough to be worth a comment. The heartbeat design first put host liveness on
+ * st.agents -- but save() iterates COLLECTIONS and manages only records inside them, so a
+ * top-level key IS NEVER WRITTEN BY EITHER BUILD. It would have lived in one process's memory,
+ * been invisible to every other, and vanished on restart. And because a missing heartbeat
+ * legitimately reads 'unknown', the failure would have presented as a normal value rather than a
+ * fault -- a reader whose missing input is indistinguishable from a legitimate value of that
+ * reader. Never ship one of those.
+ *
+ * Caught by asking whether the store COULD hold the field before testing whether anything would
+ * eat it: "will X be destroyed" and "will X be written" are different questions, and the first
+ * quietly assumes the second.
+ *
+ * One record per host, so a host's liveness verdict is one fact with one atomic write. The
+ * rejected alternative -- scattering each host's verdict across its session records -- makes
+ * "when did this host last report" a full scan and the write non-atomic, which for a liveness
+ * assertion is disqualifying. */
+const COLLECTIONS = ['sessions', 'links', 'agents'];
+let db = { sessions: {}, links: {}, agents: {}, seq: 0 };
+let snapshot = { sessions: {}, links: {}, agents: {} }; // id -> serialization as loaded (dirty tracking)
 
 /* ULID: 48-bit ms timestamp + 80 bits randomness, Crockford base32. Lexicographically
  * sortable and time-ordered, and — unlike the old (++db.seq) counter — mintable without
@@ -106,8 +123,8 @@ function migrateIfNeeded() {
 }
 function load() {
   migrateIfNeeded();
-  db = { sessions: {}, links: {}, seq: 0 };
-  snapshot = { sessions: {}, links: {} };
+  db = { sessions: {}, links: {}, agents: {}, seq: 0 };
+  snapshot = { sessions: {}, links: {} , agents: {} };
   for (const c of COLLECTIONS) {
     let files = [];
     try { files = fs.readdirSync(path.join(STORE, c)); } catch (_) {}
@@ -925,7 +942,7 @@ async function seed(force) {
     e.status = 403; throw e;
   }
   if (!force && Object.keys(db.sessions).length) return demoState();
-  db = { sessions: {}, links: {}, seq: 0 };
+  db = { sessions: {}, links: {}, agents: {}, seq: 0 };
   const chat = createSession({ surface: 'chat', title: 'Landing page redesign' });
   addMessage(chat, { role: 'user', text: 'I want to redesign our landing page — warmer, more editorial. Hero, 3 feature cards, single CTA.' });
   addMessage(chat, { role: 'assistant', text: "Great direction. I'd go serif display headline, cream background, one coral CTA. I drafted the copy and structure:" });
@@ -952,7 +969,12 @@ async function seed(force) {
 function demoState() {
   const bySurface = {};
   for (const s of Object.values(db.sessions)) if (!s.archived) bySurface[s.surface] = s;
-  return { by_surface: Object.fromEntries(Object.entries(bySurface).map(([k, v]) => [k, v.id])), sessions: db.sessions, links: db.links };
+  /* agents travels with the state because a collection that persists but is never EXPOSED is the
+   * same failure one door along: peek's reachability reads st.agents[host], and without this it
+   * would read undefined forever and return 'unknown' for every remote record — indistinguishable
+   * from a host whose agent is genuinely silent. Third variant in one day of the same shape:
+   * can it be written, can it be read, can it be reached. Each one has to be asked separately. */
+  return { by_surface: Object.fromEntries(Object.entries(bySurface).map(([k, v]) => [k, v.id])), sessions: db.sessions, links: db.links, agents: db.agents || {} };
 }
 
 /* ---------------- API (transport-agnostic: MCP calls this in-process;

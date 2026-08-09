@@ -658,7 +658,13 @@ async function callTool(name, args, ctx, core) {
     // Name the terminal when the record answers to one: a query of "build" can now resolve a
     // record TITLED "tunnel", and showing the title alone would read as a mis-resolve.
     const term = d.native_ref && d.native_ref.name ? ` · terminal "${d.native_ref.name}"` : '';
-    return `RESOLVED → [${d.surface}] "${d.title}"${term}\nsession_id: ${d.id}\n\n` +
+    /* Say it HERE too, because this verb hands the caller a session_id and tells them to send.
+     * Necessary but not sufficient on its own: a caller who already holds the id skips the
+     * resolver entirely, which is why the send-side truth is the load-bearing one. */
+    const undeliverable = (d.remote && !d.native_ref)
+      ? `\nADDRESSABLE BUT NOT YET DELIVERABLE: owned by ${d.remote.host}, which has no agent claiming it. A send is stored durably and nothing will cause it to be read until one does.`
+      : '';
+    return `RESOLVED → [${d.surface}] "${d.title}"${term}${undeliverable}\nsession_id: ${d.id}\n\n` +
       `Now call send_message with session_id:"${d.id}". Check the title above is the conversation you meant — this is the only point at which a wrong target is free to correct.`;
   }
   if (name === 'send_message') {
@@ -791,6 +797,22 @@ async function callTool(name, args, ctx, core) {
      * Neither sentence claims a turn started, because neither did. */
     } else if (woke && woke.tier === 'notify') deliveryNote = `"${windowName}" is closed — a notification went out naming that window. Nothing has started there; opening it delivers the message. `;
     else if (woke && woke.tier === 'store') deliveryNote = `"${windowName}" is closed and no notification could be sent — the message is stored; say anything in that window and it arrives on the next turn. `;
+    /* UNREACHABLE is its own outcome, not a flavour of the generic line, and the difference is a
+     * promise. A record owned by another device has native_ref NULL by design -- the mint refuses
+     * to assert one -- so the wake gate below never fires and no rung is attempted. The old
+     * fallback then told the sender "It arrives when that conversation next checks", which nothing
+     * in any build could cause. Measured: two messages were sent to a remote record on that
+     * promise, one of them explaining that the mail would wait because nothing could reach it.
+     * Both cannot be true.
+     *
+     * It is NOT `held`. Held implies a holder that might release. There is none -- this is stored
+     * with no leg that can ever clear it until an agent claims the record. And it is NOT a refusal:
+     * the durable write is correct and BECOMES deliverable the instant one does, so refusing it
+     * would fix a sentence by breaking the feature. The distinction to preserve is between "this
+     * will never work" and "nothing can carry this yet" -- the second is a true statement about
+     * the present with a defined way out, and the copy names that way out. */
+    else if (dest.remote && !dest.native_ref) deliveryNote =
+      `Stored for "${dest.title}" on ${dest.remote.host}. NOT IN FLIGHT: no transport leg can reach that device yet, so nothing will cause it to be read. It drains when an agent on ${dest.remote.host} claims that record. `;
     else deliveryNote = `It arrives when that conversation next checks. `;
     const successorNote = succVia
       ? `Delivered via successor of "${succVia.from.title}" (${succVia.from.id}) — that record was superseded${succVia.hops > 1 ? ` through ${succVia.hops} links` : ''}; its history stays there, delivery follows the live one. `

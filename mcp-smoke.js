@@ -900,6 +900,28 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
     ok(/reachable: unknown/.test(text(rPeekL, 1)),
       'remote mint: a record whose device agent does not exist yet reads unknown — the correct state, not a degraded one');
 
+    /* THE SEND MUST NOT PROMISE ARRIVAL IT CANNOT CAUSE. A remote record has native_ref null by
+     * design, so the wake gate never fires and no rung is attempted — and the old fallback said
+     * "It arrives when that conversation next checks", which nothing in any build could cause.
+     * Measured: two real messages went to a remote record on that promise. Not 'held' (held
+     * implies a holder that might release; there is none) and not a refusal (the write is correct
+     * and becomes deliverable the instant an agent claims the record). */
+    await rpc([init, call(1, 'send_message', { session_id: lulu, message: 'probe', from: 'chat' })]);
+    const rSend2 = await rpc([init, call(1, 'send_message', { session_id: lulu, message: 'probe two', from: 'chat' })]);
+    const sendTxt = text(rSend2, 1);
+    ok(/NOT IN FLIGHT/.test(sendTxt) && /no transport leg can reach that device yet/.test(sendTxt),
+      'unreachable: the send names the state instead of promising arrival nothing can cause');
+    ok(!/It arrives when that conversation next checks/.test(sendTxt),
+      'unreachable: the generic in-flight promise is gone for a device with no agent');
+    ok(/drains when an agent on windows-laptop claims that record/.test(sendTxt),
+      'unreachable: the copy names the EXIT CONDITION — "nothing can carry this yet", not "this will never work"');
+    ok(/Stored for/.test(sendTxt),
+      'unreachable: the durable write is still reported as real — refusing it would fix a sentence by breaking the feature');
+
+    const rHint = await rpc([init, call(1, 'resolve_conversation', { title_contains: 'lulu', surface: 'code' })]);
+    ok(/ADDRESSABLE BUT NOT YET DELIVERABLE/.test(text(rHint, 1)),
+      'unreachable: the resolver warns BEFORE a send, since it is the verb that hands out the session_id');
+
     ok(text(rMint, 1).includes('addressable from every device'),
       'remote mint: the reply states the outcome the user actually asked for');
   }

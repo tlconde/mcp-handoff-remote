@@ -7,9 +7,18 @@
 | `~/Dev/Github/handoff-remote` (**here**) | The **publishable** artifact. Private on GitHub today, intended to go public. |
 | `~/Dev/Github/ai-product-sense/Projects/handoff-poc` | The **lab notebook**: trials, evaluation receipts, pitch material, the owner's personal runbook. |
 
-**Any change to shared code lands in BOTH.** Fix it here, apply it there — or the reverse —
-in the same working session. They diverge silently otherwise, and the first symptom is a bug
-fixed in one place and still live in the other.
+**Any change to shared code lands in BOTH.** They diverge silently otherwise, and the first
+symptom is a bug fixed in one place and still live in the other. Measured 2026-08-09: 15 of 23
+shared files had drifted apart while both sides believed they were mirroring.
+
+**This repo LEADS.** When the two disagree, the question is not "how do I carry the notebook's
+version across" but "is the notebook's version a divergence to correct back". Changes flow here
+first and the notebook follows. A change that exists only in the notebook is not yet real.
+
+Before assuming the trees match, measure it:
+`HANDOFF_MIRROR=<path-to-notebook> node drift-eval.js` separates comment-only and
+placeholder-value differences (both expected) from structural ones — the only kind that means
+the two copies would behave differently.
 
 Shared code means: `handoff-core.js`, `handoff-tools.js`, `handoff-daemon.js`,
 `handoff-contract.js`, `handoff-relay.js`, `handoff-jwt.js`, `handoff-tool-schemas.js`,
@@ -28,6 +37,13 @@ Not shared, and must **never** travel from the notebook to here:
 No owner name, no real domain, no tunnel id, no audience tag, no `/Users/<name>` path —
 **in code, comments, docs, fixtures or configs alike**. Fixtures use `example.invalid` or
 `example.com`. Deployment values are placeholders in `.template` files.
+
+**This applies to BOTH repos, not only this one** (ruled 2026-08-09). It was briefly written
+down as a one-way transform into the publishable repo, and that was worse than it sounds: the
+notebook then carried a second voice for the same shared code, so every mirroring pass had to
+reconcile prose by hand and structural drift hid behind it. One voice in both is less work and
+less drift. The single exception is the notebook's `trials/` — dated evidence where attribution
+IS the content, and which never ships anywhere.
 
 ### Who things are called
 

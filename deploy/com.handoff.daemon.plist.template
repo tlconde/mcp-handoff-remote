@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  handoff-daemon — macOS LaunchAgent (per-user). Lifecycle: KeepAlive (the user's lock —
+  not socket activation; "boring wins"). One process, restarted on exit, so a code edit
+  is a single `launchctl kickstart -k`, zero session restarts. Install via deploy/install.sh,
+  which substitutes @NODE@ and @DAEMON@ with absolute paths.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.handoff.daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@NODE@</string>
+    <string>@DAEMON@</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>@HOME@/.claude-handoff/daemon.out.log</string>
+  <key>StandardErrorPath</key><string>@HOME@/.claude-handoff/daemon.err.log</string>
+</dict>
+</plist>

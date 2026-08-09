@@ -1,0 +1,14 @@
+node_modules/
+*.log
+.DS_Store
+__pycache__/
+*.pyc
+# Your deployment config, made from the template — carries your own tunnel id and paths.
+deploy/cloudflared.yml
+# Never commit credentials. They live outside the repo; this is belt and braces.
+*.pem
+*.json.credentials
+# Test side-effects: protocol-test exports HANDOFF.md into the working directory,
+# and the bridge self-installs slash commands. Neither belongs in the repo.
+HANDOFF.md
+.claude/

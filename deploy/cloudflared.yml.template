@@ -1,0 +1,75 @@
+# cloudflared ingress for the t27 remote MCP relay — PREPARED, NOT RUNNING.
+#
+# Nothing starts because this file exists. Bringing the tunnel up is a separate, deliberate
+# act (see the runbook at the bottom), and it must not happen until the relay actually
+# refuses unauthenticated callers — i.e. until the AS decision lands and token verification
+# is in. A tunnel in front of an unauthenticated relay would publish the entire protocol
+# store to the internet and look like a successful demo while doing it.
+#
+# Lives in the repo rather than ~/.cloudflared/config.yml on purpose: routing rules are a
+# security surface, and a security surface belongs in review and in git history. Run it with
+#   cloudflared tunnel --config <this file> run
+# It contains NO secrets — credentials-file is a path, and the credentials stay in
+# ~/.cloudflared where cloudflared put them (mode 0400, outside the repo, never committed).
+
+tunnel: <TUNNEL-ID>            # cloudflared tunnel create handoff-store
+credentials-file: $HOME/.cloudflared/<TUNNEL-ID>.json
+
+# Outbound-only: the Mac dials Cloudflare, Cloudflare never dials the Mac. No inbound
+# firewall hole, no port forwarding, nothing listening on the LAN — the relay itself binds
+# 127.0.0.1 only, so this tunnel is the ONLY route in, by construction.
+originRequest:
+  connectTimeout: 10s
+  # The origin is loopback on the same machine: if it does not answer immediately it is not
+  # going to. Fail fast and let the client see an error rather than hang.
+  noTLSVerify: false
+  disableChunkedEncoding: false
+
+ingress:
+  # ---- 1. The three endpoints that exist, and nothing else ----
+  # Path-scoped ON PURPOSE (defence in depth): even if the relay grew a route by accident,
+  # the tunnel would not carry traffic to it. The relay's own 404 is the second line, not
+  # the first. Regex is anchored at both ends so /mcp-debug or /healthz.bak do not match.
+  - hostname: handoff-store.<YOUR-HOSTNAME>
+    path: ^/(mcp|healthz|\.well-known/oauth-protected-resource(/.*)?)$
+    service: http://127.0.0.1:8787
+
+  # ---- 2. Same hostname, any other path: refused at the edge ----
+  # Without this, the catch-all below would still 404 — but this rule makes the intent
+  # explicit and keeps the refusal attributable to policy rather than to a missing route.
+  - hostname: handoff-store.<YOUR-HOSTNAME>
+    service: http_status:404
+
+  # ---- 3. Catch-all. REQUIRED by cloudflared, and load-bearing here ----
+  # Any other hostname pointed at this tunnel — now or later, by accident or by a stray DNS
+  # record like the one already cleaned up — reaches nothing.
+  - service: http_status:404
+
+# ---- RUNBOOK (do not run any of this until token verification is in) ----
+#
+# 1. Validate the rules without starting anything:
+#      cloudflared tunnel ingress validate --config deploy/cloudflared-handoff-store.yml
+#
+# 2. Check what a given URL would match, still without starting anything:
+#      cloudflared tunnel ingress rule --config deploy/cloudflared-handoff-store.yml \
+#        https://handoff-store.<YOUR-HOSTNAME>/mcp        # → expect rule 0, the relay
+#      cloudflared tunnel ingress rule --config deploy/cloudflared-handoff-store.yml \
+#        https://handoff-store.<YOUR-HOSTNAME>/store      # → expect rule 1, 404
+#
+# 3. Start the relay FIRST, and confirm it refuses:
+#      node handoff-relay.js
+#      (it must print "REFUSING ALL CALLS" unless HANDOFF_RELAY_AS/_JWKS/_RESOURCE are set)
+#
+# 4. Only then, and only once auth is configured, bring the tunnel up in the FOREGROUND so
+#    it is obvious it is running and one Ctrl-C stops it:
+#      cloudflared tunnel --config deploy/cloudflared-handoff-store.yml run
+#    Do NOT `cloudflared service install` — a tunnel that survives reboots without anyone
+#    deciding it should is exactly the kind of quiet exposure this file exists to prevent.
+#
+# 5. Confirm from OUTSIDE (phone off wifi, or any non-local network):
+#      https://handoff-store.<YOUR-HOSTNAME>/healthz   → {"relay":"up",...}
+#      https://handoff-store.<YOUR-HOSTNAME>/mcp       → 401 with WWW-Authenticate
+#    A 200 from /mcp without a token means STOP and pull the tunnel down.
+#
+# Note (2026-08-09): cloudflared here is 2026.6.1; 2026.7.3 exists. Left alone deliberately —
+# changing a working dependency mid-build buys risk and no acceptance value. Upgrade after.

@@ -1,0 +1,17 @@
+# handoff-daemon — systemd USER service (Linux incl. WSL 2). Lifecycle: Restart=always
+# (the user's lock — not socket activation). One process; a code edit is a single
+# `systemctl --user restart handoff-daemon`, zero session restarts. Install via
+# deploy/install.sh, which substitutes @NODE@ and @DAEMON@ with absolute paths.
+[Unit]
+Description=handoff daemon (linked-threads store owner)
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=@NODE@ @DAEMON@
+Restart=always
+RestartSec=1
+# HANDOFF_HOME defaults to ~/.claude-handoff inside the daemon; override here if needed.
+
+[Install]
+WantedBy=default.target

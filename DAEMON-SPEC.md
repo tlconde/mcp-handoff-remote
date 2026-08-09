@@ -29,17 +29,18 @@ Hot-reload patched a symptom. The disease is N processes each holding logic and 
 
 **ONE process** (`handoff-daemon`, a LaunchAgent). It owns *all* logic (the current
 `handoff-core.js`, unchanged), *all* store access (sole writer to `store/v1/`), the
-watchers, and the **notification layer** (the wake mechanism — see below).
+watchers, and the **wake mechanism** (see below).
 
 **ONE socket** we own: the daemon's control socket at `$HANDOFF_HOME/daemon.sock` (mode
 `0600`). Every bridge connects to it.
 
-**WAKE MECHANISM — notification layer, NOT native socket posting (decided 2026-08-08).**
+**WAKE MECHANISM — NOT native socket posting (decided 2026-08-08).**
 An idle Code session cannot be woken by us: native exposes no send path, and posting into
 its `/tmp/cc-socks/<pid>.sock` means hand-rolling an undocumented, `peerProtocol`-versioned
 private wire — a violation of BROADLY-USED-ONLY and the dependency rule (t26 §wire). So the
 daemon does NOT post native frames. Instead it emits a "mail landed for [conversation]"
-event; the ping rides Dispatch push (preferred) or a macOS notification (fallback) to
+event; a relay spawn carries it where the target is open. There is NO notification rung:
+it was removed 2026-08-09 (see bin/handoff-wake.js). Everything degrades to
 the user. Her next turn in that conversation drains it: check THIS conversation's mail first,
 surface one "while you were away" line, then answer. Live Code↔Code delivery stays with
 native `SendMessage` in the refactor, where a real MCP session exists.
@@ -112,7 +113,7 @@ Support matrix copied from native: **macOS + Linux (incl. WSL 2); native Windows
   handle, explicit title is the alias. `mcp-smoke` +4.
 - **Slice 2 DONE** — Code↔Code sends go native: `send_message` from a code terminal to a
   natively-reachable code session redirects to `ListAgents`+`SendMessage` and queues nothing;
-  cross-surface and non-native targets keep the store path + notification. `mcp-smoke` +2.
+  cross-surface and non-native targets keep the store path. `mcp-smoke` +2.
 - **Slice 3a DONE** — the daemon owns a ctx-threaded tool layer, isolation proven. `handoff-tools.js`
   reads only `ctx` ({pinned, cli_uuid, cwd}) and `core`, holds no per-session state; the daemon
   exposes a `tools/call` request kind that runs it with the forwarded ctx + verified door stamp.

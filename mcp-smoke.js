@@ -35,7 +35,6 @@ process.env.HANDOFF_NO_AUTORECEIPT = '1';
 process.env.HANDOFF_NO_AUTOOPEN = '1';
 // Notification + wake layers: route to logs instead of firing real OS notifications or
 // spawning a real `claude -p` relay during tests.
-process.env.HANDOFF_NOTIFY_LOG = '/tmp/hsmoke-notify-' + Date.now() + '.log';
 process.env.HANDOFF_WAKE_LOG = '/tmp/hsmoke-wake-' + Date.now() + '.log';
 
 let passed = 0, failed = 0;
@@ -911,7 +910,7 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
 
   // ---- wake tier (t28): an attention send to an OPEN terminal self-starts its turn ----
   // send_message wires bin/handoff-wake.js at the delivery site. OPEN target (live socket) →
-  // -p relay rung (zero taps); CLOSED target → notify rung; chat target → no wake at all.
+  // -p relay rung (zero taps); CLOSED target → the store; chat target → no wake at all.
   {
     const wakeLog = process.env.HANDOFF_WAKE_LOG;
     try { fs.unlinkSync(wakeLog); } catch (_) {}
@@ -961,11 +960,11 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
     ok(wlines.some(l => l.tier === 'relay' && l.woke === true && l.target === 'open-terminal'),
       'wake: the -p relay rung was dispatched for the open target (one call, no retries)');
 
-    // CLOSED target: remove the socket → notify rung.
+    // CLOSED target: remove the socket → degrade to the store.
     try { fs.unlinkSync(liveSock); } catch (_) {}
     const rC = await rpc([init, call(1, 'send_message', { session_id: openId, message: 'Now it is closed.', from: 'chat · design' })]);
-    ok(/is closed — you have a notification to open it/.test(text(rC, 1)),
-      'wake: a CLOSED terminal falls to the notify rung');
+    ok(/is closed — the message is stored; say anything in that window/.test(text(rC, 1)),
+      'wake: a CLOSED terminal degrades to the store, claiming nothing was shown');
 
     // chat target: no wake at all.
     const wcount = (() => { try { return fs.readFileSync(wakeLog, 'utf8').trim().split('\n').filter(Boolean).length; } catch (_) { return 0; } })();

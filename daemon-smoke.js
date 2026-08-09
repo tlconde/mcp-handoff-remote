@@ -20,7 +20,6 @@ const { spawn } = require('child_process');
 process.env.HANDOFF_NO_CLI = '1';
 process.env.HANDOFF_NO_AUTORECEIPT = '1';
 process.env.HANDOFF_NO_AUTOOPEN = '1';
-process.env.HANDOFF_NOTIFY_LOG = path.join(os.tmpdir(), 'hdaemon-notify-' + process.pid + '.log');
 process.env.HANDOFF_WAKE_LOG = path.join(os.tmpdir(), 'hdaemon-wake-' + process.pid + '.log');
 // Fixture isolation, same t7 leak class mcp-smoke guards: localCodeSessions (migrated in
 // 3b-5, and continue_from's ambiguity check) scans ~/.claude/projects. Left unset, the

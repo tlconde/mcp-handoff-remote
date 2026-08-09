@@ -153,16 +153,16 @@ test('resume: a dead PROCESS still reads closed — the fix must not manufacture
   assert.match(r.reason, /no live session for this workspace/);
 }));
 
-test('resume: the stale-binding send notifies and says so — the two-step, made visible', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
+test('resume: the stale-binding send degrades to the store and says so — the two-step, made visible', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
   const n = notifyRecorder();
   const s = recorder();
   const r = wake({ tier: 'attention', thread: 'Wake tier', conversation: 'Wake tier', from: 'chat',
     native_ref: { session_id: 'dead-binding-uuid', cwd: '/repo/shared', name: 'proj-a1' } },
     { spawn: s.spawn, notify: n.notify });
-  assert.strictEqual(r.tier, 'notify', 'first send after a resume falls to notify BY DESIGN');
+  assert.strictEqual(r.tier, 'store', 'first send after a resume degrades to the store BY DESIGN — no rung claims to have shown anything');
   assert.strictEqual(r.stale_binding, true, 'the caller can tell "unverifiable" from "closed"');
   assert.strictEqual(s.calls.length, 0, 'no relay was attempted');
-  assert.strictEqual(n.calls.length, 1, 'exactly one notification');
+  assert.strictEqual(n.calls.length, 0, 'nothing is notified — the rung is gone; the store already holds the mail');
 }));
 
 // ---- wake line format (locked verbatim) ----
@@ -226,25 +226,20 @@ test('HANDOFF_WAKE_MODEL overrides the relay model', () => withEnv({ HANDOFF_SES
   assert.strictEqual(argv[argv.indexOf('--model') + 1], 'claude-haiku-4-5-20251001');
 }));
 
-// ---- closed target → notify ----
-test('attention + closed → notify, no relay', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
+// ---- closed target → the store ----
+test('attention + closed → the store, no relay', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
   const s = recorder(); const n = notifyRecorder();
   const r = wake({ tier: 'attention', thread: 'Wake tier', conversation: 'Wake tier', from: 'chat', session_id: 'sess_x', native_ref: { session_id: CLOSED_UUID } }, { spawn: s.spawn, notify: n.notify });
   assert.strictEqual(r.woke, false);
-  assert.strictEqual(r.tier, 'notify');
+  assert.strictEqual(r.tier, 'store');
   assert.strictEqual(s.calls.length, 0, 'closed target must NOT relay');
-  assert.strictEqual(n.calls.length, 1, 'must notify once');
-  // Colleague-status-line copy (NOTIFICATION-SPEC): the work is the headline, plain words,
-  // action phrase because opening the window does something. NOT the agent-facing wake line.
-  assert.strictEqual(n.calls[0].title, 'Wake tier', 'headline is the work in its own words');
-  assert.strictEqual(n.calls[0].body, 'From chat — open it to pick up.', 'action line names the sender');
-  const blob = (n.calls[0].title + ' ' + n.calls[0].body).toLowerCase();
-  for (const w of ['drain', 'mail', 'envelope', 'store', 'origin', 'carrier', 'handoff ·']) {
-    assert.ok(!blob.includes(w), `notification must not use protocol word "${w}"`);
-  }
+  assert.strictEqual(n.calls.length, 0, 'a closed target is not pinged; it degrades to the store');
+  // The ping-copy rule asserted here moved out with the rung. What survives is the only claim
+  // the caller can still act on: the window is closed and the mail is in the store.
+  assert.strictEqual(r.reason && typeof r.reason, 'string', 'the refusal carries a reason a human can read');
 }));
 
-// ---- notification copy rule (NOTIFICATION-SPEC.md) ----
+// ---- wake-line copy rule ----
 /* A UUID IS NOT UNIQUE ACROSS PROCESSES. Measured 2026-08-09: the user ran /exit then
  * `claude --continue`, and TWO live processes (38088, 87920) ended up registered under one
  * session id, both named "build". find() would have picked whichever the filesystem listed
@@ -321,14 +316,14 @@ test('relay binary: HANDOFF_CLAUDE_BIN still overrides', () => withEnv({ HANDOFF
  * had already returned {tier:'relay', delivery:'dispatched'}, so the caller announced
  * "Started a turn ... no tap needed" about a process that never existed. With the
  * launchd-PATH defect standing, that was EVERY relay claim since the flip. */
-test('relay: a spawn that never started degrades to notify, and says which binary', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir, HANDOFF_CLAUDE_BIN: '/nonexistent/claude' }, () => {
+test('relay: a spawn that never started degrades to the store, and says which binary', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir, HANDOFF_CLAUDE_BIN: '/nonexistent/claude' }, () => {
   const n = notifyRecorder();
   const r = wake({ tier: 'attention', thread: 'x', conversation: 'x', from: 'chat', native_ref: { session_id: OPEN_UUID } },
     { notify: n.notify }); // REAL spawn: the failure must be detected, not stubbed away
-  assert.strictEqual(r.tier, 'notify', 'a relay that did not start is not a relay');
+  assert.strictEqual(r.tier, 'store', 'a relay that did not start is not a relay');
   assert.strictEqual(r.woke, false);
   assert.match(r.reason, /did not start/);
-  assert.strictEqual(n.calls.length, 1, 'and the human is pinged instead');
+  assert.strictEqual(n.calls.length, 0, 'and nobody is pinged — a failed relay degrades to the store, not to a promise');
 }));
 
 test('relay: a real dispatch is reported as UNCONFIRMED, never as a started turn', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
@@ -359,69 +354,14 @@ test('notifyCopy: message shape — window+work headline, sender action', () => 
   assert.strictEqual(c.body, 'From chat — open it to pick up.');
 });
 
-/* ---- the notification CLICK (lesson 2: the tap and the drain are one gesture) ----
- * macOS attributes an osascript notification to Script Editor, so clicking one opened
- * Script Editor's FILE DIALOG — the thing the user touches most, doing something absurd.
- * terminal-notifier owns its notification, so the click can carry a real action. These
- * assert WHICH RUNG fired and, for terminal-notifier, that the click names the right
- * target — a rung that fires with the wrong click is the same broken promise. */
-{
-  const notifyMod = require('./bin/handoff-notify');
-  const logPath = path.join(os.tmpdir(), 'notify-click-' + process.pid + '.log');
-  const readLast = () => {
-    const lines = fs.readFileSync(logPath, 'utf8').trim().split('\n');
-    return JSON.parse(lines[lines.length - 1]);
-  };
-  const fire = (ev, tnPath) => withEnv({ HANDOFF_NOTIFY_LOG: logPath, HANDOFF_TERMINAL_NOTIFIER: tnPath }, () => {
-    delete require.cache[require.resolve('./bin/handoff-notify')]; // TN path is cached per process
-    require('./bin/handoff-notify').notify(ev);
-    return readLast();
-  });
-
-  test('notify click: an APP-surface target activates the Claude app', () => {
-    const r = fire({ title: 't', body: 'b', conversation: 'Wake tier', meta: { surface: 'chat', window: 'Wake tier' } }, '/opt/homebrew/bin/terminal-notifier');
-    assert.strictEqual(r.would_fire, 'terminal-notifier', 'terminal-notifier is the rung when present');
-    assert.strictEqual(r.click, 'com.anthropic.claudefordesktop', 'the click opens the app that holds the conversation');
-    assert.strictEqual(r.click_target, 'Wake tier');
-  });
-
-  test('notify click: a CODE terminal with NO validated pid promises nothing', () => {
-    const r = fire({ title: 't', body: 'b', conversation: 'ai-product-sense-d9', meta: { surface: 'code', window: 'ai-product-sense-d9' } }, '/opt/homebrew/bin/terminal-notifier');
-    assert.strictEqual(r.would_fire, 'terminal-notifier');
-    // A stale binding yields no pid, so there is nothing to walk and nothing to promise.
-    assert.strictEqual(r.click, 'none', 'no pid, no activate payload');
-    assert.strictEqual(r.click_target, 'ai-product-sense-d9', 'but the ping still names which window');
-  });
-
-  test('notify click: a CODE terminal WITH a validated pid activates its owning app', () => {
-    // The pid is this test process, whose owning app is walked live from the process tree —
-    // evidence, not a guess, and never stored. On a bare CI shell there is no .app ancestor
-    // at all, which must degrade to no-click rather than invent one.
-    const r = fire({ title: 't', body: 'b', conversation: 'term', meta: { surface: 'code', window: 'term', pid: process.pid } }, '/opt/homebrew/bin/terminal-notifier');
-    assert.strictEqual(r.would_fire, 'terminal-notifier');
-    assert.ok(r.click === 'none' || /^[a-zA-Z0-9.\-]+$/.test(r.click),
-      `click must be a bundle id or none, got: ${r.click}`);
-    assert.strictEqual(r.click_target, 'term', 'the payload names the APP; the window stays honestly unnamed');
-  });
-
-  test('notify click: an unwalkable pid degrades to no click, never an error', () => {
-    const r = fire({ title: 't', body: 'b', conversation: 'term', meta: { surface: 'code', window: 'term', pid: 999999 } }, '/opt/homebrew/bin/terminal-notifier');
-    assert.strictEqual(r.click, 'none', 'a dead pid has no owning app — say nothing rather than guess');
-  });
-
-  test('notify click: without terminal-notifier it degrades to osascript and PROMISES NOTHING', () => {
-    const r = fire({ title: 't', body: 'b', conversation: 'X', meta: { surface: 'chat', window: 'X' } }, 'none');
-    assert.strictEqual(r.would_fire, 'macos', 'osascript is the fallback rung');
-    assert.strictEqual(r.click, 'none', 'the fallback must not claim a click it cannot deliver');
-  });
-
-  test('notify: the layer never throws, whatever the rung', () => {
-    withEnv({ HANDOFF_NOTIFY_LOG: null, HANDOFF_NO_NOTIFY: '1' }, () => {
-      assert.strictEqual(notifyMod.notify({ title: 'x' }).fired, false);
-      assert.strictEqual(notifyMod.notify(null).fired, false);
-    });
-  });
-}
+/* ---- the notification rung is GONE (removed 2026-08-09, owner's ruling) ----
+ * These asserted WHICH notification rung fired and that its click named the right target.
+ * There is no rung to fire: macOS branded the ping as Script Editor with a click that opened
+ * a file dialog, the clickable alternative needed an install and produced two false delivery
+ * claims in a day, and Windows had no rung at all. wake() now degrades straight to the store,
+ * which is what it did on the paths that mattered anyway. The coverage that survives is the
+ * degrade path itself, asserted above: a CLOSED target yields tier 'store', never a promise
+ * that something was shown to anyone. */
 
 test('notifyCopy: no protocol vocabulary in any shape', () => {
   const shapes = [
@@ -438,13 +378,12 @@ test('notifyCopy: no protocol vocabulary in any shape', () => {
 });
 
 // ---- relay spawn failure → degrade to notify, no retry ----
-test('relay spawn failure degrades to notify (no relay retry)', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
+test('relay spawn failure degrades to the store (no relay retry)', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
   const n = notifyRecorder();
   const r = wake({ tier: 'attention', thread: 'x', conversation: 'x', native_ref: { session_id: OPEN_UUID } }, { spawn: throwingSpawn(), notify: n.notify });
-  assert.strictEqual(r.tier, 'notify');
+  assert.strictEqual(r.tier, 'store');
   assert.strictEqual(r.reason, 'relay spawn failed');
-  assert.strictEqual(n.calls.length, 1);
-  assert.strictEqual(n.calls[0].meta.degraded_from, 'relay');
+    assert.strictEqual(n.calls.length, 0, 'no ping — the durable write the caller already made is the delivery');
 }));
 
 // ---- channel rung (only when flagged + hook set) ----

@@ -781,7 +781,10 @@ async function callTool(name, args, ctx, core) {
       // (parentUuid is null across a resume), so a resumed terminal we have not heard from
       // since is unknowable from outside. Say that, and say the two-step out loud.
       deliveryNote = `"${windowName}" could not be verified as open — its identity pointer is stale, which is what a resume looks like from outside${woke.candidates ? ` (${woke.candidates} live session(s) in that workspace; I will not guess which)` : ''}. Notified instead; opening it heals the binding and the next send wakes it with no tap. `;
-    } else if (woke && woke.tier === 'notify') deliveryNote = `"${windowName}" is closed — you have a notification to open it. `;
+    // The notification rung was removed 2026-08-09, so this line stopped promising a ping that
+    // no longer fires. It names where the mail IS and the one action that drains it, which is
+    // what the reader can act on — a closed window is a fact, not a failure.
+    } else if (woke && woke.tier === 'store') deliveryNote = `"${windowName}" is closed — the message is stored; say anything in that window and it arrives on the next turn. `;
     else deliveryNote = `It arrives when that conversation next checks. `;
     const successorNote = succVia
       ? `Delivered via successor of "${succVia.from.title}" (${succVia.from.id}) — that record was superseded${succVia.hops > 1 ? ` through ${succVia.hops} links` : ''}; its history stays there, delivery follows the live one. `

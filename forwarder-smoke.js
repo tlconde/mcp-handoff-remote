@@ -15,7 +15,6 @@ const { spawn } = require('child_process');
 
 const base = { ...process.env,
   HANDOFF_NO_CLI: '1', HANDOFF_NO_AUTORECEIPT: '1', HANDOFF_NO_AUTOOPEN: '1',
-  HANDOFF_NOTIFY_LOG: path.join(os.tmpdir(), 'fwd-notify-' + process.pid + '.log'),
   HANDOFF_WAKE_LOG: path.join(os.tmpdir(), 'fwd-wake-' + process.pid + '.log'),
   CLAUDE_PROJECTS_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'fwd-ccproj-')),
 };

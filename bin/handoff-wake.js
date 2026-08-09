@@ -19,10 +19,19 @@
  *                        via ListAgents, then SendMessage's ONE wake line. Proven live in
  *                        t26 (woke ai-product-sense-2a). Fire-and-exit, no-reply-expected,
  *                        exactly ONE call, NO retries (relay contract, t26 §reply).
- *   3. notify the user   — target CLOSED (no live socket). Ping via bin/handoff-notify so the
- *                        user opens the window; the next turn there drains the mail.
- *   4. store           — ALWAYS the durable truth. Written by the CALLER before wake() runs;
+ *   3. store           — ALWAYS the durable truth. Written by the CALLER before wake() runs;
  *                        this module never owns durability. Every rung degrades to it.
+ *
+ * THERE IS NO NOTIFICATION RUNG. There was one; it was removed 2026-08-09 on the owner's
+ * ruling, after it cost more than it returned. macOS attributes an osascript notification to
+ * Script Editor, so the ping arrived branded as another app with a click that opened a file
+ * dialog; the clickable alternative needed a separate install, was ad-hoc signed, and produced
+ * two false "measured" claims about its own delivery in a single day. Windows had no rung at
+ * all, so on that platform this tier degraded silently to the store and nobody was told.
+ * Degrading to the store is what it did anyway on the paths that mattered. The store is honest:
+ * the mail is there, and the next turn in that window drains it. A future notification layer
+ * can re-enter HERE, as rung 3, and it should arrive with a delivery receipt rather than an
+ * exit code — that distinction is the whole lesson this removal paid for.
  *
  * RULES HONOURED:
  *   - `fyi` never wakes. Only the `attention` tier reaches a rung. An fyi delivery returns
@@ -31,7 +40,7 @@
  *     lets native's own SendMessage/ListAgents carry the frame. We never hand-roll native's
  *     private, peerProtocol-versioned wire (t26 §wire — socket posting is retired).
  *   - One relay call per delivery, no retries. If the single dispatch cannot even spawn, we
- *     degrade to notify — we do NOT re-attempt the relay.
+ *     degrade to the store — we do NOT re-attempt the relay.
  *   - Fire-and-forget; wake() never throws and never blocks a send (a wake failure must not
  *     break the durable write that already happened).
  *
@@ -46,7 +55,7 @@
  *                                         // letter provenance. Absent = stays unnamed, never invented.
  * }
  *
- * Test / CI seams (same convention as handoff-notify):
+ * Test / CI seams:
  *   HANDOFF_NO_WAKE=1       → disable the layer entirely → {woke:false, tier:'disabled'}
  *   HANDOFF_WAKE_LOG=<file> → append one JSON line describing the chosen rung INSTEAD of
  *                             spawning a real relay (channel/notify still route through their
@@ -64,7 +73,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 /* THE KNOCK NAMES THE SENDER WITHOUT IMPERSONATING (spec amendment, owner-approved
- * 2026-08-09 — see NOTIFICATION-SPEC.md §wake line).
+ * 2026-08-09).
  * This line travels INSIDE a native cross-session message sent by the relay session, so
  * native's own attribution already says who knocked: the relay. Two provenances are in play
  * and they are not the same fact — RELAY ATTRIBUTION belongs to the relay, LETTER PROVENANCE
@@ -233,7 +242,7 @@ function relayPrompt(targetName, wakeLine) {
 }
 
 /**
- * the user-facing ping copy (NOTIFICATION-SPEC.md, owner-approved 2026-08-08). A ping reads
+ * the user-facing wake-line copy (owner-approved 2026-08-08). A wake line reads
  * like a colleague's status line, not a system event:
  *   - the WORK is the headline, in its own words (task/update/done are meanings, never labels);
  *   - Title = window name + the work in its own words;
@@ -263,7 +272,6 @@ function notifyCopy(d) {
 function wake(delivery, opts) {
   opts = opts || {};
   const doSpawn = opts.spawn || spawn;
-  const doNotify = opts.notify || ((ev) => { try { return require('./handoff-notify').notify(ev); } catch (_) { return { fired: false, channel: 'error' }; } });
   const reach = opts.reach || nativeReach;
   const d = delivery || {};
   const thread = d.thread || d.conversation || 'a thread';
@@ -306,8 +314,7 @@ function wake(delivery, opts) {
         // than fail a spawn and report a generic "closed" — this exact silence is what hid
         // the launchd-PATH defect.
         const c0 = notifyCopy(d);
-        const n0 = doNotify({ title: c0.title, body: c0.body, conversation: d.conversation || thread, meta: { session_id: d.session_id || null, from: d.from || null, surface: d.surface || 'code', window: rc.name || null, pid: rc.pid || null } });
-        const r0 = { woke: false, tier: 'notify', reason: 'claude binary not found — relay impossible (set HANDOFF_CLAUDE_BIN)', notify: n0 };
+        const r0 = { woke: false, tier: 'store', reason: 'claude binary not found — relay impossible (set HANDOFF_CLAUDE_BIN)' };
         logChoice(r0); return r0;
       }
       const argv = ['-p', relayPrompt(rc.name, wakeLine),
@@ -341,8 +348,7 @@ function wake(delivery, opts) {
         if (child && typeof child.on === 'function') child.on('error', () => {});
         if (child && child.pid === undefined) {
           const cF = notifyCopy(d);
-          const nF = doNotify({ title: cF.title, body: cF.body, conversation: d.conversation || thread, meta: { session_id: d.session_id || null, from: d.from || null, surface: d.surface || 'code', window: rc.name || null, pid: rc.pid || null } });
-          const rF = { woke: false, tier: 'notify', reason: `relay spawn failed (${bin} did not start)`, notify: nF };
+          const rF = { woke: false, tier: 'store', reason: `relay spawn failed (${bin} did not start)` };
           logChoice(rF); return rF;
         }
         child.unref();
@@ -355,8 +361,7 @@ function wake(delivery, opts) {
       } catch (e) {
         // Could not even spawn — degrade to notify, no relay retry.
         const c = notifyCopy(d);
-        const n = doNotify({ title: c.title, body: c.body, conversation: d.conversation || thread, meta: { session_id: d.session_id || null, from: d.from || null, degraded_from: 'relay', surface: d.surface || 'code', window: (d.native_ref && d.native_ref.name) || null, pid: rc.pid || null } });
-        const r = { woke: false, tier: 'notify', reason: 'relay spawn failed', notify: n };
+        const r = { woke: false, tier: 'store', reason: 'relay spawn failed' };
         logChoice(r); return r;
       }
     }
@@ -367,8 +372,7 @@ function wake(delivery, opts) {
     // would be false. stale_binding rides out so the caller can say which happened, and so
     // the two-step (this send notifies and heals; the next one wakes) is legible.
     const c = notifyCopy(d);
-    const n = doNotify({ title: c.title, body: c.body, conversation: d.conversation || thread, meta: { session_id: d.session_id || null, from: d.from || null, surface: d.surface || 'code', window: (d.native_ref && d.native_ref.name) || null, pid: rc.pid || null } });
-    const r = { woke: false, tier: 'notify', reason: rc.reason, stale_binding: !!rc.stale_binding, candidates: rc.candidates || 0, notify: n };
+    const r = { woke: false, tier: 'store', reason: rc.reason, stale_binding: !!rc.stale_binding, candidates: rc.candidates || 0 };
     logChoice(r); return r;
   } catch (_) {
     // A wake failure must never break the send — the store remains the durable truth.

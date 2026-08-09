@@ -28,7 +28,8 @@ Full guide, including remote access from your phone or a second laptop: [INSTALL
 - **`check_inbox` / `pick_up`** — the receiving side. A handoff is a handshake: offered until
   claimed, and never re-offered once shaken.
 - **Waking** — mail for an *open* terminal starts a turn there with no taps. If it cannot be
-  reached, you get a notification instead, and it says which.
+  reached, the message waits in the store and the reply says so — say anything in that
+  window and it arrives on the next turn.
 - **`whoami` / `/name`** — name a terminal in one word and address it by that name.
 - **Returns** — a session can owe a result back, and the origin sees it arrive.
 

@@ -336,7 +336,7 @@ interim that works today; the per-request ctx of slice 3b is the structural fix 
 
 **Pending — t18 tightening (recorded 2026-08-08).** `send_to` with `to: 'code'` creating a NEW
 destination must refuse `open_in: 'app'` unless the app-side Code-tab project verifiably matches
-`project_state.project_id`; otherwise it creates with `open_in: 'none'`, fires the notification,
+`project_state.project_id`; otherwise it creates with `open_in: 'none'`, stores the message,
 and instructs `pick_up` from a terminal in the right repo. Cause: a wake-tier handoff opened
 under an unrelated app tab's project bucket even though the session cwd was correct — tab state,
 not cwd, decides the app Code target. The review seat already uses `open_in: 'none'` as its habit

@@ -25,16 +25,38 @@ broken down by distinct value:
 
 | id | occurrences | where it lives | real? |
 |---|---:|---|---|
-| `REDACTED-SESSION-ID` | 9 | `mcp-roundtrip-evals/calibrations/*.jsonl` | **yes** |
-| `REDACTED-SESSION-ID` | 9 | `mcp-roundtrip-evals/calibrations/*.jsonl` | **yes** |
-| `REDACTED-SESSION-ID` | 6 | `mcp-roundtrip-evals/calibrations/*.jsonl` | **yes** |
-| `REDACTED-SESSION-ID` | 5 | `mcp-roundtrip-evals/calibrations/run_log.jsonl` | **yes** |
-| `sess_code_0000000000000000000000ABCD` | 4 | `OBJECT-RECORD-SPEC.md` | **no — synthetic fixture** |
+| real id **A** | 9 | `mcp-roundtrip-evals/calibrations/*.jsonl` | **yes** |
+| real id **B** | 9 | `mcp-roundtrip-evals/calibrations/*.jsonl` | **yes** |
+| real id **C** | 6 | `mcp-roundtrip-evals/calibrations/*.jsonl` | **yes** |
+| real id **D** | 5 | `mcp-roundtrip-evals/calibrations/run_log.jsonl` | **yes** |
+| the all-zeros fixture | 4 | `OBJECT-RECORD-SPEC.md` | **no — synthetic fixture** |
 
-**Four real ids, and every one of them is confined to `mcp-roundtrip-evals/calibrations/`**
-(verified with `git log --all -S<id> --name-only`: no other path ever contained them). That is the
-single most useful fact here — step 1 below removes that path, so step 1 alone removes all four.
-Step 2 stays as belt-and-braces, not as the load-bearing step.
+**The four values are deliberately NOT written here.** An earlier version of this table listed them
+verbatim, which put four real record ids into a tracked file in the repo whose publication gate
+exists to remove exactly those ids — a document about a leak, leaking. The rule it broke is already
+written down one file over: *a checker must not contain the strings it searches for, which is why
+they live in `.scrub-values` (gitignored)*. Read them from there, or regenerate the inventory:
+
+```bash
+git log --all -p | grep -oE "sess_[a-z]*_?[0-9A-HJKMNP-TV-Z]{20,}" | sort | uniq -c | sort -rn
+```
+
+**Four real ids. They WERE confined to `mcp-roundtrip-evals/calibrations/` — and are not any more.**
+
+An earlier revision of this runbook listed the four values verbatim in the table above, and that
+revision was committed (`f8cba9b`) and pushed. So the ids now also live in the history of
+`docs/runbooks/history-scrub.md` — **a file that must survive the scrub.**
+
+That inverts this document's own earlier conclusion, and the inversion is the important part:
+
+- **Then:** every id sat under one removable path, so `--invert-paths` alone would have cleared
+  them and `--replace-text` was belt-and-braces.
+- **Now:** the ids sit in a path that cannot be deleted, so **`--replace-text` is load-bearing** and
+  path removal alone leaves them behind.
+
+A runbook that had been trusted at its earlier word would have been run, verified against a grep
+that could not fail, and declared clean while the ids sat in the history of the very file
+describing them.
 
 The fifth value is a deliberately all-zeros placeholder in a design spec. It is not a leak, it is
 what a fixture is supposed to look like, and **it must not be scrubbed**.
@@ -92,9 +114,11 @@ git clone <rewritten-remote> /tmp/pubcheck && cd /tmp/pubcheck
 # REAL ids only — the documented all-zeros fixture is excluded BY VALUE, not by loosening the
 # pattern. See the note below: this exclusion is the difference between a check that can pass and
 # a check that cannot.
+# The fixture exclusion is read from .scrub-values (gitignored) rather than written here, for the
+# same reason the id inventory above is not written here.
 git log --all -p \
   | grep -E "sess_[a-z]*_?[0-9A-HJKMNP-TV-Z]{20,}" \
-  | grep -v "sess_code_0000000000000000000000ABCD" \
+  | grep -vF -f "$REPO/.scrub-fixtures" \
   | head                                                                    # must be EMPTY
 
 git rev-list --all -- mcp-roundtrip-evals/ | wc -l                          # must be 0

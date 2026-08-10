@@ -1315,14 +1315,20 @@ function settleOffer(destId) {
   }
   if (!dest.offer || dest.offer === 'offered') dest.offer = 'completed';
 }
-async function pendingForOrigin(originId) {
+/* SAME DEFECT, WORSE ARITHMETIC — and included in the same change because splitting it would
+ * leave the multiplied version of a fault we had just finished removing. This awaited compact()
+ * once PER PENDING DESTINATION, so the 90s-inside-8s mismatch was not merely repeated but summed:
+ * three pending destinations meant three sequential model spawns before the caller heard anything.
+ * Deterministic by default here too. */
+async function pendingForOrigin(originId, opts) {
   const out = [];
   for (const link of Object.values(db.links)) {
     if (link.origin !== originId || link.status !== 'active') continue;
     const dest = db.sessions[link.dest];
     if (!dest) continue;
     const progressed = dest.messages.some(m => m.kind === 'progress' || (m.role === 'user' && m.kind === 'chat'));
-    if (progressed) out.push({ link_id: link.id, dest: { id: dest.id, surface: dest.surface }, summary: await compact(dest) });
+    if (progressed) out.push({ link_id: link.id, dest: { id: dest.id, surface: dest.surface },
+      summary: (opts && opts.summarize) ? await compact(dest) : mechanicalSummary(dest) });
   }
   return out;
 }
@@ -1342,10 +1348,28 @@ function taskLabel(origin) {
   );
   return String((m && m.text) || origin.title || 'untitled').slice(0, 160);
 }
+/* THE CLOSE IS DETERMINISTIC BY DEFAULT — the same medicine c10da1a applied to the read path,
+ * arriving late on the write path because nobody swept for the second call site.
+ *
+ * MEASURED 2026-08-10: a close against a THREE MESSAGE transcript took 9,974 ms, because
+ * compact() spawns `claude -p` with a 90,000 ms ceiling. The forwarder's deadline is 8,000 ms
+ * (mcp-handoff.js) and the relay's is 10,000 ms. A path that budgets 90s for itself inside an 8s
+ * deadline does not fail sometimes — it fails deterministically, and it fails in the ugliest
+ * possible way: the forwarder gives up at 8s while THE DAEMON KEEPS GOING and finishes the close
+ * at ~10s, so the link really is resolved while the caller saw a timeout, and the caller's retry
+ * then gets 409 "already resolved". Timeout, then refusal, then apparent nonsense — one cause,
+ * and the work had landed every time.
+ *
+ * So the model is opt-in here exactly as it is on reads. mechanicalSummary is not a fallback in
+ * this position; it is the answer. A close is a WRITE WITH A CALLER BLOCKED ON IT, which is a
+ * stronger case for refusing unasked-for compaction than the read path ever had.
+ *
+ * The opt-in path keeps its ceiling and still cannot block the daemon — that is (c7)'s property
+ * and this change does not touch it. */
 async function resolveLink(link, opts) {
   const origin = db.sessions[link.origin];
   const dest = db.sessions[link.dest];
-  const summary = await compact(dest);
+  const summary = (opts && opts.summarize) ? await compact(dest) : mechanicalSummary(dest);
   const artifacts = ((opts && opts.artifacts) || []).filter(a => a && a.name && a.content);
   const msg = addMessage(origin, {
     role: 'assistant', kind: 'resume_summary', from_session: dest.id,
@@ -2068,7 +2092,8 @@ async function handleApi(method, p, query, b) {
     }
     if ((m = p.match(/^\/api\/sessions\/([^/]+)\/pending$/)) && method === 'GET') {
       const s = db.sessions[m[1]]; if (!s) return { code: 404, payload: { error: 'not found' } };
-      return { code: 200, payload: await pendingForOrigin(s.id) };
+      // summarize=1 opts INTO the model, same grammar as the read path's opt-in.
+      return { code: 200, payload: await pendingForOrigin(s.id, { summarize: !!(query && (query.summarize === '1' || query.summarize === true)) }) };
     }
     if ((m = p.match(/^\/api\/sessions\/([^/]+)\/export$/)) && method === 'POST') {
       const s = db.sessions[m[1]]; if (!s) return { code: 404, payload: { error: 'not found' } };
@@ -2161,14 +2186,14 @@ async function handleApi(method, p, query, b) {
       if (b.summary) addMessage(s, { role: 'system', kind: 'progress', text: b.summary });
       const link = Object.values(db.links).find(l => l.dest === s.id && l.status === 'active');
       if (!link) return { code: 409, payload: { error: 'no active link back to an origin for this session' } };
-      const r = await resolveLink(link, { artifacts: b.artifacts });
+      const r = await resolveLink(link, { artifacts: b.artifacts, summarize: !!(b && b.summarize) });
       const origin = db.sessions[link.origin];
       return { code: 200, payload: { returned: true, origin: { id: origin.id, surface: origin.surface }, message: r.message, artifacts_returned: r.artifacts_returned } };
     }
     if ((m = p.match(/^\/api\/links\/([^/]+)\/resolve$/)) && method === 'POST') {
       const link = db.links[m[1]]; if (!link) return { code: 404, payload: { error: 'not found' } };
       if (link.status !== 'active') return { code: 409, payload: { error: 'already ' + link.status } };
-      return { code: 200, payload: await resolveLink(link) };
+      return { code: 200, payload: await resolveLink(link, { summarize: !!(b && b.summarize) }) };
     }
     if (method === 'POST' && p === '/api/gather') {
       if (!SURFACES.includes(b.to)) return { code: 400, payload: { error: 'to must be one of ' + SURFACES } };

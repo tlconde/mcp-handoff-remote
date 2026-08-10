@@ -1395,7 +1395,7 @@ async function callTool(name, args, ctx, core) {
    * A pid means something only on the machine whose process table it belongs to. Checking one
    * here for a record owned by another device is inferring another host's process table from
    * our own — the same error as routing state through one daemon, applied to liveness instead.
-   * It fails in the worst direction too: a live session on the Windows laptop would read as
+   * It fails in the worst direction too: a live session on another device would read as
    * unreachable and a wake agent would skip a target that was sitting right there.
    *
    * So ownership decides who may answer:

@@ -423,6 +423,29 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
       '(c5b) the CONTEXT SECTION carries the TASK — supplied_context must not return early over the transcript');
     ok(ctxSection.includes(`CTX-${runTag}`),
       '(c5b) ...and the caller\'s context verbatim — two payload channels, one brief, neither shadowing the other');
+
+    /* (c5c) A TASK OVER THE COMPACTION THRESHOLD MUST STILL ARRIVE WHOLE.
+     * The task used to be an ordinary message while the CONTEXT was kind 'context' — so past
+     * FULL_THRESHOLD the transcript was dropped and the brief a human wrote survived only as
+     * whatever the summariser said about it. Measured 2026-08-10: a 7,829-char dispatch was
+     * summarised by a model that answered IN CHARACTER ("I don't have prior session content to
+     * compact…") and that first-person reply became the worker's card.
+     *
+     * The marker sits at the END of a deliberately over-threshold task, so a summary cannot
+     * accidentally contain it and neither can the title, which truncates at 60 chars. HANDOFF_NO_CLI
+     * keeps a real summariser out of the test — the assertion is that compaction never gets the
+     * chance to touch this field, not that some model summarised it acceptably. */
+    const bigTag = `${Date.now().toString(36)}z${Math.floor(Math.random() * 1e6).toString(36)}`;
+    const dir3 = fs.mkdtempSync(path.join(os.tmpdir(), 'bigtask-'));
+    const filler = 'This sentence pads the task past the compaction threshold. '.repeat(80);
+    await c5.handleApi('POST', '/api/workers', {}, {
+      task: `Do the work described here. ${filler} FINAL-INSTRUCTION-${bigTag}`,
+      context: 'short context', dir: dir3, mode: 'headless'
+    });
+    let md3 = '';
+    try { md3 = fs.readFileSync(path.join(dir3, 'HANDOFF.md'), 'utf8'); } catch (_) {}
+    ok(md3.length > 0 && md3.includes(`FINAL-INSTRUCTION-${bigTag}`),
+      `(c5c) a task past FULL_THRESHOLD (${filler.length + 40} chars) still reaches the brief VERBATIM — a summariser may paraphrase a transcript, never the brief a human wrote`);
     if (prev === undefined) delete process.env.HANDOFF_HOME; else process.env.HANDOFF_HOME = prev;
     if (prevCli === undefined) delete process.env.HANDOFF_NO_CLI; else process.env.HANDOFF_NO_CLI = prevCli;
     delete require.cache[require.resolve('./handoff-core')];

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "handoff",
+  "version": "0.1.0",
+  "description": "Hand work between Claude conversations and machines: envelopes that carry a task, its decisions and its artifacts, a shared store, and a per-machine wake agent that delivers locally.",
+  "author": {
+    "name": "handoff contributors"
+  },
+  "_publication_note": "homepage and repository are OPTIONAL in the standard and are deliberately absent while this repo is private. They are the package's public address, not a leak — but the owner handle is on the scrub list, and exempting files from that check to fit one case would blunt it everywhere. Add both at publication, in one edit, here in the source.",
+  "license": "MIT",
+  "keywords": [
+    "handoff",
+    "mcp",
+    "session",
+    "continuity",
+    "cross-device"
+  ],
+  "extensions": {
+    "com.anthropic.claude-code": {
+      "_comment": "Claude Code specific components. The Agent Plugins standard defines the portable core (name, metadata, skills/, mcp.json); anything a single client understands lives here, under a reverse-domain key, which is what the spec's `extensions` field is for. bin/build-plugin-manifests.js reads THIS FILE and writes .claude-plugin/ from it — never the other way round.",
+      "hooks": {
+        "SessionStart": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "node",
+                "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/session-start.js"]
+              }
+            ]
+          }
+        ]
+      },
+      "monitors": [
+        {
+          "name": "wake-agent",
+          "command": "node ${CLAUDE_PLUGIN_ROOT}/bin/handoff-wake-agent.js",
+          "description": "Watches the store for mail addressed to this machine and delivers it locally; writes this host's own reachability verdict.",
+          "when": "always"
+        }
+      ]
+    }
+  }
+}

@@ -1117,6 +1117,57 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     delete require.cache[require.resolve('./handoff-tools')];
   }
 
+  /* ---- (c15) PACKAGING: one source, generated clients, drift caught ----
+   * The portable manifests (plugin.json + mcp.json, the agent-plugins.org standard) are the SOURCE;
+   * .claude-plugin/* and hooks/hooks.json are OUTPUT. This repo already paid for the alternative:
+   * two hand-kept copies of the tool list drifted and the remote surface diverged from the local
+   * one, which is why handoff-tool-schemas.js exists. Packaging is the same shape on the artifact a
+   * stranger meets first. */
+  {
+    const { execFileSync } = require('child_process');
+    const gen = path.join(__dirname, 'bin', 'build-plugin-manifests.js');
+    const run = args => {
+      try { return { out: execFileSync(process.execPath, [gen, ...args], { encoding: 'utf8' }), code: 0 }; }
+      catch (e) { return { out: (e.stdout || '') + (e.stderr || ''), code: e.status }; }
+    };
+
+    ok(run(['--check']).code === 0,
+      '(c15) the generated manifests match their source — the committed output is what the source produces');
+
+    /* THE RED RUN, required rather than optional: a check that has never failed is a check nobody
+     * has shown to work. Hand-edit an OUTPUT file, prove --check catches it, restore. */
+    const generated = path.join(__dirname, '.claude-plugin', 'plugin.json');
+    const before = fs.readFileSync(generated, 'utf8');
+    const tampered = JSON.parse(before);
+    tampered.version = '9.9.9-hand-edited';
+    fs.writeFileSync(generated, JSON.stringify(tampered, null, 2) + '\n');
+    const red = run(['--check']);
+    fs.writeFileSync(generated, before);
+    ok(red.code === 1 && /STALE/.test(red.out),
+      '(c15) a HAND EDIT to a generated manifest FAILS the check — verified by making one, not by asserting it would');
+    ok(/Edit plugin.json \/ mcp.json/.test(red.out),
+      '(c15) ...and the failure names the source to edit, so nobody re-edits the output and wonders why it reverts');
+    ok(run(['--check']).code === 0, '(c15) ...and the restore leaves it green, so the red run cost nothing');
+
+    /* THE TRANSLATION IS THE POINT OF THE GENERATOR: the standard's ${PLUGIN_ROOT} must become
+     * Claude Code's ${CLAUDE_PLUGIN_ROOT}, or the plugin resolves nothing at runtime. */
+    const src = JSON.parse(fs.readFileSync(path.join(__dirname, 'mcp.json'), 'utf8'));
+    const out = JSON.parse(fs.readFileSync(generated, 'utf8'));
+    ok(/\$\{PLUGIN_ROOT\}/.test(JSON.stringify(src.mcpServers)),
+      '(c15) the SOURCE uses the standard placeholder');
+    ok(/\$\{CLAUDE_PLUGIN_ROOT\}/.test(JSON.stringify(out.mcpServers)) && !/\$\{PLUGIN_ROOT\}/.test(JSON.stringify(out.mcpServers)),
+      '(c15) ...and the OUTPUT carries Claude Code\'s, with none of the standard\'s left behind to resolve to nothing');
+    ok(!JSON.stringify(out.mcpServers).includes('"type"'),
+      '(c15) ...and the standard-only `type` field is dropped, because carrying a field the client does not read is a manifest lying about what it configures');
+
+    /* The marketplace self-hosts, so install needs nothing published first. */
+    const mkt = JSON.parse(fs.readFileSync(path.join(__dirname, '.claude-plugin', 'marketplace.json'), 'utf8'));
+    ok(mkt.plugins && mkt.plugins.length === 1 && mkt.plugins[0].source === './',
+      '(c15) the marketplace points at this repo itself — install is two commands against something that already exists');
+    ok(mkt.name && mkt.owner && mkt.owner.name,
+      '(c15) ...and carries the fields the marketplace format requires');
+  }
+
   // ---- (d) rollout smoke: 10 forwarders under load across a restart, zero lost writes ----
   {
     const home = tmpHome();

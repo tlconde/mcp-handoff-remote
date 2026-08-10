@@ -185,33 +185,67 @@ function checkRecord() {
  * sender's label verbatim, so the store already holds what each record has been calling itself. */
 function checkNames() {
   if (!fs.existsSync(SESSIONS)) { report('NAMES', true, 'skipped — no live store'); return; }
-  const titles = new Map(), calls = new Map();
   const recs = [];
   for (const f of fs.readdirSync(SESSIONS)) {
     const r = readJson(path.join(SESSIONS, f));
     if (!r || r.archived) continue;
-    recs.push(r); titles.set(r.id, r.title || '');
+    recs.push(r);
   }
+  /* Mirror the REAL resolver (handoff-tools.js filterByName): a record answers to its title AND to
+   * native_ref.name, exact before substring. The first version of this check compared against the
+   * title alone, so it flagged "tunnel" for calling itself "build" — which the resolver already
+   * matches. A drift detector measuring something other than what the code does produces false
+   * alarms, and a false alarm in a drift detector teaches people to ignore it. */
+  const namesOf = r => [r.title, r.native_ref && r.native_ref.name].filter(x => typeof x === 'string' && x);
+  const resolves = q => {
+    const t = String(q).trim().toLowerCase();
+    const exact = recs.filter(r => namesOf(r).some(n => n.trim().toLowerCase() === t));
+    return exact.length ? exact : recs.filter(r => namesOf(r).some(n => n.toLowerCase().includes(t)));
+  };
+
+  /* THREE label forms, not one. The first version matched only "[message from <surface> · <name>]"
+   * and missed the em-dash variant, the capitalised surface, and the whole handoff-envelope family
+   * — 21 messages on this store. A check that reads one shape of the data reports on one shape of
+   * the data. */
+  const LABEL = /^\[(?:message|handoff envelope) from ([A-Za-z ]+?)\s*(?:·|—)\s*"?([^\]"]+)"?\]/;
+  const attributed = new Map(); // record id -> Set(names it called itself)
+  const circulating = new Set(); // every name seen, attributable or not
   for (const r of recs) {
     for (const m of (r.messages || [])) {
-      const mm = /^\[message from ([a-z]+) · ([^\]]+)\]/.exec(m.text || '');
-      if (!mm || !m.from_session) continue;
-      if (!calls.has(m.from_session)) calls.set(m.from_session, new Set());
-      calls.get(m.from_session).add(mm[2].trim());
+      const mm = LABEL.exec(m.text || '');
+      if (!mm) continue;
+      const nm = mm[2].trim();
+      circulating.add(nm);
+      if (!m.from_session) continue;
+      if (!attributed.has(m.from_session)) attributed.set(m.from_session, new Set());
+      attributed.get(m.from_session).add(nm);
     }
   }
-  const diverged = [];
-  for (const [sid, names] of calls) {
-    const title = titles.get(sid);
-    if (title === undefined) continue; // archived or gone; not this check's business
-    // A label that CONTAINS the title is an annotation ("booty (handoff-remote)"), not a rename.
-    const unmatched = [...names].filter(n => n !== title && !n.includes(title) && !title.includes(n));
-    if (unmatched.length) diverged.push(`"${title}" also calls itself ${unmatched.map(n => `"${n}"`).join(', ')} — those names resolve to nothing`);
+
+  const findings = [];
+  const byId = new Map(recs.map(r => [r.id, r]));
+  for (const [sid, names] of attributed) {
+    const rec = byId.get(sid);
+    if (!rec) continue;
+    const own = namesOf(rec);
+    const unmatched = [...names].filter(n => !own.some(o => n === o || n.includes(o) || o.includes(n)));
+    if (unmatched.length) findings.push(`"${rec.title}" also calls itself ${unmatched.map(n => `"${n}"`).join(', ')} — those resolve to nothing`);
   }
-  report('NAMES', diverged.length === 0,
-    diverged.length ? `${diverged.length} record(s) answer to a name they never use`
-                    : 'every record answers to the name it calls itself',
-    diverged);
+
+  /* THE CASE THAT MOTIVATED THIS CHECK WAS INVISIBLE TO ITS FIRST VERSION. A label whose
+   * from_session is null cannot be attributed to a record — 21 messages here, including the
+   * flagship: a chat renamed by the app to "Automating inbox check notifications", whose own
+   * message carries that name with no sender id. Unattributable is not the same as uninteresting:
+   * the name is in circulation and resolves to nothing, so anyone who types what they read gets
+   * RESOLVED: nothing. Report it as its own finding rather than discarding it. */
+  const orphaned = [...circulating].filter(n => resolves(n).length === 0).sort();
+  for (const n of orphaned.slice(0, 12)) findings.push(`a name in use resolves to NOTHING: "${n}"`);
+  if (orphaned.length > 12) findings.push(`…and ${orphaned.length - 12} more names in circulation that resolve to nothing`);
+
+  report('NAMES', findings.length === 0,
+    findings.length ? `${orphaned.length} name(s) in circulation resolve to nothing`
+                    : 'every name in circulation resolves to the record that uses it',
+    findings);
 }
 
 /* ── 5. REACH ──────────────────────────────────────────────────────────────────────────────

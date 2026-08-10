@@ -208,6 +208,51 @@ function unauthorized(res, reason, detail) {
   });
 }
 
+/* TRANSPORT SESSIONS — the streamable-HTTP contract, implemented WHOLE rather than half.
+ *
+ * WHY IT EXISTS AT ALL. The access log answered mcp-session=none on every request, which read as
+ * "the Claude client sends no transport session id" and would have killed an identity design. It
+ * was a fact about US: in this transport the SERVER assigns the id on the initialize response and
+ * the client echoes it back. We never assigned one, so there was nothing for any client to echo.
+ * The measurement was reading our own omission.
+ *
+ * WHOLE, NOT HALF, deliberately. Issuing an id we then ignore on receipt would be a fourth instance
+ * of the same mistake — a field that exists and means nothing, measurable and untrue. So: issue on
+ * initialize, honour it when echoed, and answer the spec's 404 for one we do not know, which tells
+ * a compliant client to re-initialize cleanly instead of wedging against a server that half-
+ * remembers it.
+ *
+ * WHAT IT IS EXPECTED TO SETTLE. 42 of 48 observed interactions were a complete initialize cycle,
+ * which looks like a client that holds no session. Two explanations fit and the log cannot separate
+ * them: the client is stateless by design, or it re-initializes because we never gave it a session
+ * to resume. Only issuing ids distinguishes them. If the client echoes, sessions are real and two
+ * conversations' ids answer whether identity can pin to a connection; if it does not, pinning dies
+ * and the conversation carries its own id, which is what the mint already says.
+ *
+ * WORTH DOING EITHER WAY: every one of those 48 interactions paid a full handshake (~180ms) before
+ * its first useful call. If the re-initialising is our omission, this is also a latency fix. If it
+ * is the client's design, this costs nothing and the change survives its own negative result.
+ *
+ * The id is opaque and random — it names a connection, not a person, and nothing is derived from
+ * it. Only an 8-char prefix is ever logged. */
+const SESSION_TTL_MS = 30 * 60 * 1000;
+const sessions = new Map(); // id -> last seen ms
+function newSessionId() { return require('crypto').randomBytes(16).toString('hex'); }
+function touchSession(id) { sessions.set(id, Date.now()); }
+function knownSession(id) {
+  const seen = sessions.get(id);
+  if (seen === undefined) return false;
+  if (Date.now() - seen > SESSION_TTL_MS) { sessions.delete(id); return false; }
+  return true;
+}
+/* Bounded so a long-running relay cannot accumulate ids forever. Pruning on write is enough: the
+ * table only grows when a client initialises, and an idle entry costs nothing until then. */
+function pruneSessions() {
+  if (sessions.size < 512) return;
+  const cutoff = Date.now() - SESSION_TTL_MS;
+  for (const [id, seen] of sessions) if (seen < cutoff) sessions.delete(id);
+}
+
 /* EXIT-ON-STALE, the same doctrine the daemon follows — added 2026-08-10 after this process
  * served pre-change code for ELEVEN HOURS while looking healthy.
  *
@@ -326,9 +371,29 @@ const server = http.createServer(async (req, res) => {
       // legible — one initialize followed by many tools/call on one Mcp-Session-Id is a persistent
       // connection; repeated initializes are a client reconnecting per request.
       if (rpc && typeof rpc.method === 'string') rpcMethod = rpc.method;
+
+      /* An echoed id we do not recognise gets the spec's 404, which is an INSTRUCTION rather than
+       * an error: it tells a compliant client to start a new session. Silently accepting an unknown
+       * id would be the half-implementation — a header that is read and means nothing. */
+      const echoed = req.headers['mcp-session-id'] ? String(req.headers['mcp-session-id']) : null;
+      if (echoed && rpc && rpc.method !== 'initialize' && !knownSession(echoed)) {
+        return send(res, 404, { error: 'session_not_found', detail: 'unknown or expired Mcp-Session-Id; re-initialize to start a new session' });
+      }
+      if (echoed && knownSession(echoed)) touchSession(echoed);
+
       const out = await handleMcp(rpc, auth);
       // A notification carries no reply: 202, empty body, per JSON-RPC.
       if (out === null) return res.writeHead(202).end();
+
+      /* Issued on the initialize RESPONSE, which is the only place the transport defines for it.
+       * A client that keeps sessions will echo it on the next call; one that does not will simply
+       * initialize again — and THAT difference is the measurement. */
+      if (rpc && rpc.method === 'initialize') {
+        pruneSessions();
+        const sid = newSessionId();
+        touchSession(sid);
+        return send(res, 200, out, { 'mcp-session-id': sid });
+      }
       return send(res, 200, out);
     });
   }

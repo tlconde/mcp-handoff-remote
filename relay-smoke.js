@@ -16,6 +16,7 @@ const path = require('path');
 const assert = require('assert');
 
 let pass = 0, fail = 0;
+let SESSION_ID = null; // issued by the server in the session-contract tests below
 function test(name, fn) {
   return Promise.resolve().then(fn).then(
     () => { pass++; console.log(`  ok   ${name}`); },
@@ -191,6 +192,49 @@ function req(opts, body) {
       'a contract change the relay has not loaded is the same defect one file over');
   });
 }
+
+/* TRANSPORT SESSION CONTRACT.
+ *
+ * ASSERTED AT SOURCE LEVEL, AND HERE IS WHAT THAT DOES NOT PROVE. This suite runs against an
+ * UNCONFIGURED relay on purpose — no HANDOFF_RELAY_AS — so every /mcp POST is refused 401 before
+ * reaching the handler. That is the right default (an unconfigured relay must refuse everything)
+ * and it means these cannot exercise the session contract over the wire. My first version tried and
+ * failed five-for-five against the 401.
+ *
+ * So these guard the SHAPE: that an id is issued on initialize, that an echoed id is honoured, that
+ * an unknown one is refused with the spec's 404 rather than silently accepted, and that absence is
+ * tolerated. The BEHAVIOUR is confirmed elsewhere and better — by the production access log, where
+ * a real client's requests either carry mcp-session=<prefix> or do not. That is the measurement
+ * anyway, so the honest division is: the test stops the contract being edited into a half-
+ * implementation, the log says what the client actually does. Neither substitutes for the other,
+ * and I would rather write that down than let a green suite imply the wire was tested. */
+{
+  const src = require('fs').readFileSync(require('path').join(__dirname, 'handoff-relay.js'), 'utf8');
+  await test('session: an id is ISSUED on the initialize response', () => {
+    assert.match(src, /rpc\.method === 'initialize'[\s\S]{0,400}'mcp-session-id': sid/,
+      'the server assigns it; a client has nothing to echo otherwise, which is what made the first measurement read our omission as the client\'s design');
+  });
+  await test('session: an echoed id is HONOURED rather than ignored', () => {
+    assert.match(src, /knownSession\(echoed\)[\s\S]{0,120}touchSession\(echoed\)/,
+      'issuing an id and then ignoring it on receipt is a field that exists and means nothing');
+  });
+  await test('session: an UNKNOWN id gets the spec 404, not silent acceptance', () => {
+    assert.match(src, /session_not_found/, 'the refusal names itself so a compliant client re-initializes cleanly');
+    assert.match(src, /!knownSession\(echoed\)[\s\S]{0,200}404/, 'unknown must be refused, not tolerated');
+  });
+  await test('session: absence of the header is TOLERATED, never an error', () => {
+    assert.match(src, /const echoed = req\.headers\['mcp-session-id'\] \? String[\s\S]{0,40}: null/,
+      'requiring it would break every client that keeps no session — including, possibly, the one we are measuring');
+  });
+  await test('session: ids are random and opaque, and only a prefix is ever logged', () => {
+    assert.match(src, /randomBytes\(16\)/, 'an id names a connection, not a person; nothing is derived from it');
+    assert.match(src, /String\(v\)\.slice\(0, 8\)/, 'only a prefix reaches the log — enough to tell two apart, never enough to replay');
+  });
+  await test('session: the table is bounded, so a long-lived relay cannot accumulate ids forever', () => {
+    assert.match(src, /pruneSessions/, 'unbounded growth in a process that runs for weeks is a slow leak');
+  });
+}
+
 
 console.log(`\nrelay-smoke: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

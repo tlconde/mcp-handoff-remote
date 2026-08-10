@@ -1094,9 +1094,24 @@ async function doLaunch(s, b) {
    * that reaches for it should be served rather than refused. This states a PREFERENCE and the
    * reason for it, so the fast path is the default and the slow one remains a fallback. */
   const mountNote = 'Prefer the LOCAL handoff mount (tools named mcp__handoff__*): it reaches the daemon over a unix socket. The mcp__claude_ai_Handoff_Remote__* tools are the same server over the network with a 10-second reply budget, and get_handoff on a large brief will time out there. Use the remote mount only if the local one is unavailable.';
+  /* CLOSING THE TRANSACTION IS PART OF THE WORK, AND THE BRIEF NEVER SAID SO.
+   *
+   * Every dispatch asked for report_progress and none asked for return_to_origin. Workers did
+   * exactly as told: reported, stopped. The transaction stayed open, and open transactions
+   * accumulate — measured 2026-08-10, three handoffs reading "return owed (nothing back yet)" for
+   * work that was verifiably complete (a committed Windows tier, a landed dispatch fix, preflight
+   * markers verified by content). Status is the one surface whose only job is to tell the truth
+   * about state, and it was confidently wrong about three transactions because of a sentence
+   * missing from this template.
+   *
+   * A reader cannot tell an open transaction from unfinished work — that is the whole point of the
+   * pending list — so the next session, or the SessionStart hook when it exists, would re-dispatch
+   * or wait for work nobody owes. Reporting is not closing; the last act of doing the work is
+   * saying it is done. */
+  const closeNote = 'When the work is finished, call report_progress with your summary and THEN call return_to_origin to close the transaction — closing is your last act, not an optional courtesy. A transaction left open reads as unfinished work to everyone after you.';
   const PROMPT = viaMcp
-    ? `Use the handoff MCP: call get_handoff with session_id "${s.id}" to pull this session's context envelope — pass the id explicitly, do NOT rely on a pinned transaction, you do not have one. ${mountNote} Then continue the work from where it left off and call report_progress with a summary when done.`
-    : `Read HANDOFF.md and continue this session from where it left off. If the handoff MCP is available, call get_handoff with session_id "${s.id}" for the full envelope (pass the id explicitly — you have no pinned transaction). ${mountNote} Call report_progress when done. Finish with a 2-3 sentence summary of what you did.`;
+    ? `Use the handoff MCP: call get_handoff with session_id "${s.id}" to pull this session's context envelope — pass the id explicitly, do NOT rely on a pinned transaction, you do not have one. ${mountNote} Then continue the work from where it left off. ${closeNote}`
+    : `Read HANDOFF.md and continue this session from where it left off. If the handoff MCP is available, call get_handoff with session_id "${s.id}" for the full envelope (pass the id explicitly — you have no pinned transaction). ${mountNote} ${closeNote} Finish with a 2-3 sentence summary of what you did.`;
   const command = `cd ${JSON.stringify(dir)} && claude --session-id ${nativeId} ${JSON.stringify(PROMPT)}`;
   if (!claudeCliAvailable()) {
     const env2 = await buildEnvelope(s);

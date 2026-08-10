@@ -177,6 +177,16 @@ async function main() {
   link('worker reported progress back to the store', progressed,
     progressed ? '' : 'no progress message after 45s — report_progress may be ungranted or unreachable');
 
+  /* REPORTING IS NOT CLOSING, and scoring only the report is what let the leak run. Three
+   * transactions sat reading "return owed" for finished work because every brief asked for
+   * report_progress and none asked for return_to_origin — and this checker, which exists to notice
+   * exactly that kind of gap, was asking the same incomplete question. A worker that reports and
+   * never closes leaves a pending list that lies to every later reader, so the close is its own
+   * link. */
+  const closed = await waitFor(() => workerClosed(workerId), 30000);
+  link('worker CLOSED its transaction (return_to_origin)', closed,
+    closed ? '' : 'still open after 30s — a transaction nobody closes reads as unfinished work forever');
+
   return finish(!!content);
 }
 
@@ -192,6 +202,16 @@ async function briefViaProtocol(workerId) {
 /** The disk path, reported separately and never allowed to stand in for the one above. */
 function readBriefFile(dir) {
   try { return fs.readFileSync(path.join(dir, 'HANDOFF.md'), 'utf8'); } catch (_) { return ''; }
+}
+
+/** Closed = the link carrying this worker's transaction is resolved. Read from the LINK, not from
+ *  the worker's own say-so: a worker claiming it closed is a report, the resolved link is the fact. */
+async function workerClosed(workerId) {
+  try {
+    const r = await core.handleApi('GET', '/api/state', {}, {});
+    const links = (r && r.payload && r.payload.links) || {};
+    return Object.values(links).some(l => l && l.dest === workerId && (l.status === 'resolved' || l.resolved_at));
+  } catch (_) { return false; }
 }
 
 async function workerReported(workerId) {

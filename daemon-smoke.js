@@ -493,6 +493,14 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     ok(/claude_ai_Handoff_Remote/.test(cmd) && /unavailable|fallback|only if/i.test(cmd),
       '(c6) ...and still names the remote mount as the fallback, because denying it outright is what caused barrier 4');
 
+    /* Every dispatch asked for report_progress and none asked for return_to_origin, so workers
+     * reported and stopped and the transactions stayed open — three of them reading "return owed"
+     * for verifiably finished work. Reporting is not closing. */
+    ok(/return_to_origin/.test(cmd),
+      '(c6) the prompt tells the worker to CLOSE the transaction, not just report — an open transaction reads as unfinished work to every later reader');
+    ok(/report_progress/.test(cmd) && cmd.indexOf('report_progress') < cmd.indexOf('return_to_origin'),
+      '(c6) ...and in that order, so the summary is recorded before the transaction settles');
+
     /* The grant is built from verbs × mounts. The bug it replaced was a NAME assumed unique: the
      * same server is mounted as `handoff` and as `claude_ai_Handoff_Remote`, and granting one
      * spelling denied every worker that resolved the other. */

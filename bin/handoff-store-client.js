@@ -43,6 +43,37 @@ const https = require('https');
 const http = require('http');
 const { URL } = require('url');
 
+/* LOCAL VALUES, NEVER COMMITTED. The relay host and the repo URL are personal identifiers — one
+ * carries a domain, the other an account handle — and this repo is intended to go public, so they
+ * cannot live in a tracked file. They also cannot live only in a shell variable, because that dies
+ * with the window and an operator then re-pastes a credential to get it back.
+ *
+ * So the same pattern the mirroring instructions already use: a gitignored KEY=VALUE file the
+ * process reads at startup. Real environment variables WIN over it, so a one-off override needs no
+ * edit, and nothing here writes the file or echoes its contents.
+ *
+ * A token may live here too, but Credential Manager is better on Windows and the operator package
+ * says so — a file is only as private as the backup that copies it. */
+function loadLocalEnv() {
+  const fs = require('fs'), path = require('path');
+  for (const p of [path.join(process.cwd(), '.agent-env'), path.join(__dirname, '..', '.agent-env')]) {
+    let raw;
+    try { raw = fs.readFileSync(p, 'utf8'); } catch (_) { continue; }
+    for (const line of raw.split('\n')) {
+      const t = line.trim();
+      if (!t || t.startsWith('#')) continue;
+      const eq = t.indexOf('=');
+      if (eq < 1) continue;
+      const k = t.slice(0, eq).trim();
+      const v = t.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
+      if (process.env[k] === undefined) process.env[k] = v;   // a real env var always wins
+    }
+    return p;
+  }
+  return null;
+}
+const LOCAL_ENV_FILE = loadLocalEnv();
+
 const TIMEOUT_MS = Number(process.env.HANDOFF_REMOTE_TIMEOUT_MS) || 15000;
 
 /** One JSON-RPC tools/call to the relay. Returns the parsed tool result text, or throws. */
@@ -169,4 +200,4 @@ function makeStoreClient(opts) {
   };
 }
 
-module.exports = { makeStoreClient, rpc };
+module.exports = { makeStoreClient, rpc, LOCAL_ENV_FILE };

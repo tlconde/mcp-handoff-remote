@@ -25,3 +25,6 @@ HANDOFF.md
 .scrub-values
 # Local path values for AGENTS.md's mirroring instructions. Values only, never ships.
 .repo-paths
+# Local values for the wake agent. Gitignored: personal identifiers never enter the repo.
+# Real environment variables override anything here.
+.agent-env

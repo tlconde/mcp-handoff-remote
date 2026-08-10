@@ -39,14 +39,39 @@ PowerShell window so `PATH` refreshes.
 
 ## Step 2 — Get the code onto the laptop
 
+**The repo is private**, so a bare `git clone` will fail with an auth prompt you cannot satisfy.
+Use the GitHub CLI, which does a browser login and needs no token to manage:
+
 ```powershell
-cd $HOME
-git clone <this repo's URL> handoff
+winget install GitHub.cli
+gh auth login          # choose GitHub.com -> HTTPS -> login with a web browser
+gh repo clone <owner>/<repo> handoff
 cd handoff
 ```
 
+If you would rather not install `gh`: create a fine-grained personal access token with read access
+to this one repo and clone with `git clone https://<token>@github.com/<owner>/<repo>.git handoff`.
+The CLI route is easier to revoke later.
+
 Nothing is installed globally and nothing runs at login yet. That comes after it has been seen to
 work once.
+
+### Carrying the two values without putting them in the repo
+
+The relay host and the repo URL are personal identifiers, so they are placeholders in this file on
+purpose — writing them in would put a domain and an account handle into a repo intended to go
+public. Put them in a **gitignored** `.agent-env` beside the code instead:
+
+```powershell
+@"
+HANDOFF_REMOTE_URL=https://<relay-host>/mcp
+HANDOFF_HOST_ID=windows-laptop
+"@ | Set-Content .agent-env
+```
+
+The agent reads it at startup, and a real environment variable always overrides it — so a one-off
+test needs no edit. Keep the **token** out of this file: Credential Manager (step 3) is the right
+place, because a file is only as private as the backup that copies it.
 
 ## Step 3 — The credential
 
@@ -76,10 +101,10 @@ for the acceptance test above, not for convenience.
 Read the token out of Credential Manager into the process environment for this session only:
 
 ```powershell
-$cred = cmdkey /list:handoff-relay      # confirms it exists; does not print the secret
-$env:HANDOFF_REMOTE_URL   = "https://<relay-host>/mcp"
-$env:HANDOFF_REMOTE_TOKEN = Read-Host -AsSecureString -Prompt "paste token" | ConvertFrom-SecureString -AsPlainText
-$env:HANDOFF_HOST_ID      = "windows-laptop"   # must match how records name this machine
+cmdkey /list:handoff-relay      # confirms it exists; does not print the secret
+
+# URL and host id come from .agent-env; only the token is pasted, and only into this window
+$env:HANDOFF_REMOTE_TOKEN = Read-Host -Prompt "paste token"
 node bin/handoff-wake-agent.js --once
 ```
 

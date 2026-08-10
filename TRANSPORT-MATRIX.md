@@ -113,15 +113,34 @@ terminal that was never spawned by this session, and `ListAgents` describes exac
 `deploy/install.sh`: *"Native cross-session messaging (and this daemon) run on macOS + Linux/WSL2
 only."*
 
-**The consequence for a Windows peer, plainly: `@peer` will never work there.** No amount of
-configuration reaches a surface the platform does not expose. The store plus the relay is the
-carrier, and the only way to *push* to a Windows peer is the wake agent running on that machine
-delivering locally — which is why that slice, not a peer fix, is what ends manual `check_inbox`.
+**WHAT THIS DOES NOT ESTABLISH — and an earlier revision of this section got it wrong.** It said
+"`@peer` will never work there". **That was an overclaim, retracted.** Everything measured above is
+the **model's tool surface inside a session**. That is *not* the surface this system uses.
 
-**One thing this does NOT settle:** whether a *human typing* `@peer` in the prompt is a different
-affordance handled by the CLI before a model sees it. Every measurement above is of the model's tool
-surface. `peerProtocol: 1` with no published address is consistent with a wire addressed by
-something the registry does not expose. Testing that needs a human typing it on Windows.
+**This project never calls peer messaging from a model's tools.** The wake tier spawns the CLI:
+
+```
+claude -p "<wake line>" --allowedTools ListAgents SendMessage --output-format text
+```
+
+`bin/handoff-wake.js` states the rule outright — *"the relay invokes the `claude` CLI as a product
+and lets native's own SendMessage/ListAgents carry the frame. We never hand-roll native's private,
+peerProtocol-versioned wire."* A **spawned one-shot is a different process with an explicitly
+granted tool set**, and nothing measured so far says anything about what it can see on Windows.
+
+**So the open question is precise and cheap to answer:** does `claude -p --allowedTools ListAgents
+SendMessage` on Windows discover and reach a local session? Until someone runs that, the honest
+status of Windows peer delivery is **UNKNOWN**, not impossible. Two further reasons not to close it:
+
+- `peerProtocol: 1` is declared on the Windows rows *with no address published* — consistent with a
+  wire addressed by something the session registry does not expose.
+- A **human typing** `@peer` may be an affordance the CLI resolves before a model is involved.
+
+**And a naming hazard sits underneath all of it.** That machine reports **three** identities:
+`COMPUTERNAME=HP_LAPTOP`, `os.hostname()=HP_laptop` (differing only in case), and the canonical
+`windows-laptop`. Anything that matches hosts or names by string equality can split that machine in
+half without a word — and peer discovery is exactly such a match. A negative peer result on that box
+is not trustworthy until the name it searched under is known.
 
 ## code → code — cross-machine · **UNVERIFIED**
 

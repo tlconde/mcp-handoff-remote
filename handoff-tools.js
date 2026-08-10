@@ -486,8 +486,23 @@ async function callTool(name, args, ctx, core) {
     const r = await call('POST', '/api/agents/heartbeat', {}, {
       host, sessions: merged, agent_version: (args && args.agent_version) || null, owns: (args && args.owns) || Object.keys(merged).length,
     });
-    const a = r.agent || {};
-    return `Heartbeat recorded for "${host}": ${Object.keys(a.sessions || {}).length} record(s) carry a host-asserted verdict, agent ${a.agent_version || 'unversioned'}. ` +
+    /* CHECK THE EFFECT, NOT THE CALL — and this verb failed its own repo's rule on its first real
+     * use. It reported "Heartbeat recorded" against a store whose route returned 404: the notebook
+     * build has no /api/agents/heartbeat at all, never mirrored from the S2 work, so the write went
+     * nowhere and the caller was congratulated. An agent polling that build would have reported a
+     * healthy cycle forever while every record it owned stayed 'unknown'.
+     *
+     * So the response is verified rather than assumed: an agent record must come back carrying the
+     * verdicts we sent. Anything else is reported as the failure it is, naming what came back. */
+    const a = (r && r.agent) || null;
+    const wrote = a && a.sessions && Object.keys(a.sessions).length;
+    if (!a) {
+      return `Heartbeat FAILED for "${host}": the store did not return an agent record — ${r && r.error ? r.error : 'no route or no reply'}. NOTHING was recorded, and reachability for this host's records still reads "unknown". This is a store-side gap, not a caller error.`;
+    }
+    if (Object.keys(merged).length && !wrote) {
+      return `Heartbeat FAILED for "${host}": ${Object.keys(merged).length} verdict(s) were sent and the store recorded none. Nothing flipped; do not treat this as a delivered heartbeat.`;
+    }
+    return `Heartbeat recorded for "${host}": ${wrote || 0} record(s) carry a host-asserted verdict, agent ${a.agent_version || 'unversioned'}. ` +
       'Reachability for those records now reads what THIS host observed, not "unknown".';
   }
   if (name === 'get_handoff') {

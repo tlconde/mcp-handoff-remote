@@ -228,6 +228,47 @@ function req(opts, body) {
     assert.ok(typeof boot === 'number' && boot > 0,
       `boot mtime was ${boot} — relayMtime is swallowing an error and returning a value that means "unchanged" forever`);
   });
+  /* THE EXIT CODE IS A CONTRACT WITH THE PLIST, AND IT WAS BROKEN IN THE SAFE-LOOKING DIRECTION.
+   *
+   * com.handoff.relay.plist sets KeepAlive = SuccessfulExit:false on purpose: restart on a CRASH,
+   * stay stopped on a CLEAN exit, so `bootout` means stopped. The stale path exited 0 — clean —
+   * while announcing "exiting for restart with current code". launchd read that as "finished, leave
+   * it down", and the first time the guard actually worked it took the remote door down permanently.
+   * Fixing the guard made the outcome WORSE than the broken guard, which is the kind of thing only
+   * running it can tell you.
+   *
+   * Asserted by SPAWNING A REAL RELAY and reading its exit status, because the previous four
+   * assertions here were all source-level and all green while the behaviour was dead. The whole
+   * point is that this file stops trusting its own reading of the code. */
+  await test('stale: the process exits NON-ZERO, because the plist only restarts abnormal exits', async () => {
+    const { spawn } = require('child_process');
+    const fs2 = require('fs'), p2 = require('path'), os2 = require('os');
+    const dir = fs2.mkdtempSync(p2.join(os2.tmpdir(), 'relay-exit-'));
+    // A private copy so touching it cannot disturb the working tree or a live relay.
+    for (const f of ['handoff-relay.js', 'handoff-contract.js', 'handoff-jwt.js', 'handoff-tool-schemas.js']) {
+      try { fs2.copyFileSync(p2.join(__dirname, f), p2.join(dir, f)); } catch (_) {}
+    }
+    const port = 8900 + Math.floor(Math.random() * 90);
+    const child = spawn(process.execPath, [p2.join(dir, 'handoff-relay.js')], {
+      env: { ...process.env, HANDOFF_RELAY_PORT: String(port), HANDOFF_RELAY_ACCESS_LOG: '' },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const exited = new Promise(res => child.on('exit', code => res(code)));
+    await new Promise(res => setTimeout(res, 700)); // let it bind
+    const future = new Date(Date.now() + 60000);
+    fs2.utimesSync(p2.join(dir, 'handoff-relay.js'), future, future);
+    await new Promise(res => {                       // one request is what triggers the check
+      const req = require('http').request({ host: '127.0.0.1', port, path: '/mcp', method: 'POST' }, r => { r.resume(); r.on('end', res); });
+      req.on('error', () => res());
+      req.end('{}');
+    });
+    const code = await Promise.race([exited, new Promise(res => setTimeout(() => res('did-not-exit'), 5000))]);
+    try { child.kill('SIGKILL'); } catch (_) {}
+    assert.notStrictEqual(code, 'did-not-exit', 'a stale relay must exit at all — this is the guard working');
+    assert.notStrictEqual(code, 0,
+      `exited ${code}: a clean exit tells launchd (KeepAlive SuccessfulExit:false) to LEAVE IT DOWN, so the remote door never comes back`);
+  });
+
   await test('stale: a file newer than boot is actually DETECTED, not merely watched', () => {
     const fs2 = require('fs'), p2 = require('path');
     const target = p2.join(__dirname, 'handoff-relay.js');

@@ -332,6 +332,10 @@ function pruneSessions() {
  * for our own file is proof the check is broken, and is refused loudly at startup rather than
  * silently disabling the only thing that keeps a long-running relay honest about its own code. */
 const fs = require('fs');
+/* 75 = EX_TEMPFAIL: "the request could not be completed, try again later", which is exactly what a
+ * relay carrying stale code is saying. Any non-zero value satisfies the plist's SuccessfulExit:false
+ * contract; a named one says WHY to whoever reads the exit status. */
+const RELAY_STALE_EXIT_CODE = 75;
 const RELAY_WATCHED = [__filename, require.resolve('./handoff-contract')];
 const relayMtime = f => {
   try { return fs.statSync(f).mtimeMs; }
@@ -361,7 +365,26 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '2' });
       res.end(JSON.stringify({ error: 'relay_stale', detail: `${staleRelay} changed since this relay booted; it is restarting with current code` }));
     } catch (_) {}
-    setImmediate(() => { try { server.close(); } catch (_) {} process.exit(0); });
+    /* EXIT NON-ZERO, AND THE PLIST IS THE REASON — this is a contract between two files.
+     *
+     * com.handoff.relay.plist sets KeepAlive = SuccessfulExit:false, deliberately and with its own
+     * comment: restart the relay if it CRASHES, leave it stopped when it exits CLEANLY, so that
+     * `bootout` means stopped rather than "restarted in a second". The relay is the remote door and
+     * must not reopen itself.
+     *
+     * This path used to exit(0) — a clean exit — while printing "exiting for restart with current
+     * code". To launchd that reads as "it finished, leave it down". So the moment the stale guard
+     * started working (bee839b, after being inert since it shipped), it took the remote door down
+     * PERMANENTLY on the first code change. Measured 2026-08-10: the guard fired correctly, logged
+     * correctly, exited — and nothing brought it back. Fixing the guard made the failure worse than
+     * the guard being broken, because a dead door is louder than a stale one but no more usable.
+     *
+     * The daemon's identical guard is safe only because ITS plist is KeepAlive:true unconditionally.
+     * Same code, opposite outcome, decided in a file the code never mentions.
+     *
+     * A non-zero status makes the log line true: stale code is an abnormal exit and launchd restarts
+     * it with current code, while a deliberate bootout or SIGTERM still leaves it stopped. */
+    setImmediate(() => { try { server.close(); } catch (_) {} process.exit(RELAY_STALE_EXIT_CODE); });
     return;
   }
 

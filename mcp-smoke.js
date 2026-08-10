@@ -309,7 +309,7 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
   ok(/NOT pulling until one is chosen/.test(dupList) && (dupList.match(/session_id: sess_/g) || []).length >= 2,
     't11: continue_from with >1 titled matches lists candidates with session_ids and refuses');
   // ids are sess_<ULID> since the v1 store — Crockford base32 is UPPERCASE.
-  const sid = (dupList.match(/session_id: (sess_[A-Za-z0-9]+)/) || [])[1];
+  const sid = (dupList.match(/session_id: (sess_[A-Za-z0-9_]+)/) || [])[1];
   const rV = await rpc([init, call(1, 'continue_from', { surface: 'chat', title_contains: 'duet planning', session_id: sid })]);
   ok(/Pulled "duet planning"/.test(text(rV, 1)), 't11: continue_from with an explicit session_id pulls');
   // t11: routing telemetry — the decision path itself is in the ops log now.
@@ -613,7 +613,7 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
       call(2, 'pick_up', { surface: 'chat', title_contains: 'Receipt probe' }),
       call(3, 'resolve_conversation', { title_contains: 'Receipt probe conversation', surface: 'chat' })
     ]);
-    const rid = (text(rR, 3).match(/session_id: (sess_[A-Za-z0-9]+)/) || [])[1];
+    const rid = (text(rR, 3).match(/session_id: (sess_[A-Za-z0-9_]+)/) || [])[1];
     ok(!!rid, 'receipt: resolve_conversation yields a usable session_id');
     const rR2 = await rpc([init,
       call(1, 'send_message', { session_id: rid, message: 'Receipt probe payload.', from: 'code' }),
@@ -719,7 +719,7 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
     }
     ok(/Registered: code · /.test(text(rI1, 1)) && /flow tests/.test(text(rI1, 1)) && /11111111/.test(text(rI1, 1)),
       'identity: register_session mints a record keyed to the CLI uuid, handle shows cwd + role');
-    const rid2 = (text(rI1, 2).match(/session_id: (sess_[A-Za-z0-9]+)/) || [])[1];
+    const rid2 = (text(rI1, 2).match(/session_id: (sess_[A-Za-z0-9_]+)/) || [])[1];
     const rI2 = await rpc([init,
       call(1, 'send_message', { session_id: rid2, message: 'Attributed payload.', from: 'code' }),
       call(2, 'check_inbox', { surface: 'chat', title_contains: 'Receipt probe' }),
@@ -759,7 +759,7 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
     ok(!/✓✓ read/.test(text(rS2, 1)),
       'two-tier: ambient state is settled on display — a second status shows it once, not forever');
     // Hook recap counts attention items: queue a message to this terminal's own record.
-    const ridSelf = (text(rI1, 1).match(/protocol record (sess_[A-Za-z0-9]+)/) || [])[1];
+    const ridSelf = (text(rI1, 1).match(/protocol record (sess_[A-Za-z0-9_]+)/) || [])[1];
     if (ridSelf) {
       await rpc([init, call(1, 'send_message', { session_id: ridSelf, message: 'Recap attention probe.', from: 'chat' })]);
       const recap2 = require('child_process').execFileSync(process.execPath,
@@ -837,7 +837,7 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
       call(2, 'send_to_surface', { to: 'code', from: 'code', title: 'Peer code terminal', context: 'a code peer to target', open_in: 'none' }),
       call(3, 'resolve_conversation', { title_contains: 'Peer code terminal', surface: 'code' })
     ]);
-    const peerCodeId = (text(rC3, 3).match(/session_id: (sess_[A-Za-z0-9]+)/) || [])[1];
+    const peerCodeId = (text(rC3, 3).match(/session_id: (sess_[A-Za-z0-9_]+)/) || [])[1];
     // give the peer a native_ref name so it is natively reachable
     const peerFile = fs.readdirSync(sdir).find(f => { try { return JSON.parse(fs.readFileSync(path.join(sdir, f), 'utf8')).id === peerCodeId; } catch (_) { return false; } });
     if (peerFile) {
@@ -869,7 +869,7 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
       'remote mint: says plainly it is asserted and not CLI-verified — attestation is transport provenance, not a stronger identity');
     ok(/Reachability: unknown/.test(m1) && /nobody has looked recently/.test(m1),
       'remote mint: claims no liveness, and explains unknown rather than letting it read as unreachable');
-    const lulu = (m1.match(/session_id: (sess_[A-Za-z0-9]+)/) || [])[1];
+    const lulu = (m1.match(/session_id: (sess_[A-Za-z0-9_]+)/) || [])[1];
 
     const sdir3 = path.join(process.env.HANDOFF_HOME, 'store', 'v1', 'sessions');
     const lf = fs.readdirSync(sdir3).find(f => { try { return JSON.parse(fs.readFileSync(path.join(sdir3, f), 'utf8')).id === lulu; } catch (_) { return false; } });
@@ -937,7 +937,7 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
       call(1, 'send_to_surface', { to: 'code', from: 'code', title: 'Peek target', context: 'holds unread mail', open_in: 'none' }),
       call(2, 'resolve_conversation', { title_contains: 'Peek target', surface: 'code' })
     ]);
-    const peekId = (text(rSetup, 2).match(/session_id: (sess_[A-Za-z0-9]+)/) || [])[1];
+    const peekId = (text(rSetup, 2).match(/session_id: (sess_[A-Za-z0-9_]+)/) || [])[1];
     await rpc([init, call(1, 'send_message', { session_id: peekId, message: 'first', from: 'chat' })]);
     await rpc([init, call(1, 'send_message', { session_id: peekId, message: 'second', from: 'chat' })]);
 
@@ -1006,7 +1006,7 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
       call(2, 'send_to_surface', { to: 'code', from: 'code', title: 'Claude desktop app POC — protocol build session (returned from Code)', context: 'decoy: title merely CONTAINS the word', open_in: 'none' }),
       call(3, 'resolve_conversation', { title_contains: 'tunnel', surface: 'code' })
     ]);
-    const tunnelId = (text(rN, 3).match(/session_id: (sess_[A-Za-z0-9]+)/) || [])[1];
+    const tunnelId = (text(rN, 3).match(/session_id: (sess_[A-Za-z0-9_]+)/) || [])[1];
     // Only the tunnel record gets a native handle — and the name on it is what the user types.
     const tFile = fs.readdirSync(sdir).find(f => {
       try { return JSON.parse(fs.readFileSync(path.join(sdir, f), 'utf8')).id === tunnelId; } catch (_) { return false; }
@@ -1074,7 +1074,7 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
       call(1, 'register_session', { title: 'Open terminal target' }),
       call(2, 'resolve_conversation', { title_contains: 'Open terminal target', surface: 'code' })
     ]);
-    const openId = (text(rOpen, 2).match(/session_id: (sess_[A-Za-z0-9]+)/) || [])[1];
+    const openId = (text(rOpen, 2).match(/session_id: (sess_[A-Za-z0-9_]+)/) || [])[1];
     delete process.env.CLAUDE_CODE_SESSION_ID;
     const rW = await rpc([init, call(1, 'send_message', { session_id: openId, message: 'A directive for the open terminal.', from: 'chat · design' })]);
     /* This assertion used to require the sentence "Started a turn in X — no tap needed",
@@ -1105,7 +1105,7 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
     // chat target: no wake at all.
     const wcount = (() => { try { return fs.readFileSync(wakeLog, 'utf8').trim().split('\n').filter(Boolean).length; } catch (_) { return 0; } })();
     const rProbe = await rpc([init, call(1, 'resolve_conversation', { title_contains: 'Receipt probe conversation', surface: 'chat' })]);
-    const chatDest = (text(rProbe, 1).match(/session_id: (sess_[A-Za-z0-9]+)/) || [])[1];
+    const chatDest = (text(rProbe, 1).match(/session_id: (sess_[A-Za-z0-9_]+)/) || [])[1];
     if (chatDest) {
       await rpc([init, call(1, 'send_message', { session_id: chatDest, message: 'A chat send, no wake owed.', from: 'code' })]);
       const wcount2 = (() => { try { return fs.readFileSync(wakeLog, 'utf8').trim().split('\n').filter(Boolean).length; } catch (_) { return 0; } })();
@@ -1128,8 +1128,8 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
       call(3, 'pick_up', { surface: 'chat', title_contains: 'Someone elses chat' }), // consume the offer so no pending steals Next
       call(4, 'resolve_conversation', { title_contains: 'Someone elses chat', surface: 'chat' })
     ]);
-    const myId = (text(rSetup, 1).match(/protocol record (sess_[A-Za-z0-9]+)/) || [])[1];
-    const foreignId = (text(rSetup, 4).match(/session_id: (sess_[A-Za-z0-9]+)/) || [])[1];
+    const myId = (text(rSetup, 1).match(/protocol record (sess_[A-Za-z0-9_]+)/) || [])[1];
+    const foreignId = (text(rSetup, 4).match(/session_id: (sess_[A-Za-z0-9_]+)/) || [])[1];
     // unread on a conversation that is NOT mine
     await rpc([init, call(1, 'send_message', { session_id: foreignId, message: 'mail for someone else', from: 'x' })]);
     const rStat = await rpc([init, call(1, 'status', {})]);
@@ -1220,7 +1220,7 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
       call(2, 'send_to_surface', { to: 'chat', from: 'code', title: 'CI target convo', context: 'somewhere to send', open_in: 'none' }),
       call(3, 'resolve_conversation', { title_contains: 'CI target convo', surface: 'chat' })
     ]);
-    const targetId = (text(rSetup, 3).match(/session_id: (sess_[A-Za-z0-9]+)/) || [])[1];
+    const targetId = (text(rSetup, 3).match(/session_id: (sess_[A-Za-z0-9_]+)/) || [])[1];
     // caller-named send: name my own conversation as the sender
     const rCN = await rpc([init, call(1, 'send_message', { session_id: targetId, message: 'From the review seat.', from: 'chat · review', from_title: 'Review seat convo', from_surface: 'chat' })]);
     ok(/ASSERTED provenance/.test(text(rCN, 1)) && /Review seat convo/.test(text(rCN, 1)),
@@ -1238,7 +1238,7 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
     // guard: a caller cannot ASSERT a CLI-verified terminal record (has native_ref).
     process.env.CLAUDE_CODE_SESSION_ID = '44444444-dddd-4eee-8fff-000011112222';
     const rReg = await rpc([init, call(1, 'register_session', { title: 'A terminal record' })]);
-    const termId = (text(rReg, 1).match(/protocol record (sess_[A-Za-z0-9]+)/) || [])[1];
+    const termId = (text(rReg, 1).match(/protocol record (sess_[A-Za-z0-9_]+)/) || [])[1];
     delete process.env.CLAUDE_CODE_SESSION_ID;
     const rGuard = await rpc([init, call(1, 'send_message', { session_id: targetId, message: 'impersonation attempt', from_session_id: termId })]);
     ok(/REFUSED sender|cannot be asserted/.test(text(rGuard, 1)),

@@ -85,7 +85,34 @@ function storeDirs() {
   for (const c of COLLECTIONS) fs.mkdirSync(path.join(STORE, c), { recursive: true });
 }
 function recordPath(c, rid) { return path.join(STORE, c, encodeURIComponent(rid) + '.json'); }
+/* NAMES MOVE, IDS DON'T — enforced here, at the choke point every write passes through, rather
+ * than as a convention each verb is trusted to honour.
+ *
+ * A rename, a nickname, an adoption, a repair, a merge: none of them may change a record's id. Only
+ * the title and the nickname move. The id is written once at mint and is dead thereafter.
+ *
+ * WHY IT IS AN INVARIANT AND NOT A RULE. Unstated id mutability is a candidate cause of the session
+ * mix-ups this project has spent two days chasing — a record whose id can change is a record every
+ * stored reference to which can silently point at nothing, or worse, at something else. Nothing in
+ * the current code deliberately rewrites an id; that is exactly why a convention would look like it
+ * was working right up until the one path that did. Enforcing at the write layer means a verb
+ * CANNOT violate it, including verbs nobody has written yet.
+ *
+ * ADOPTION IS THE ONLY IDENTITY-LINKING MECHANISM AND IT SUPERSEDES RATHER THAN REWRITES: succeeds
+ * creates a link, both records keep their ids forever, resolution follows the chain. An "id fix" is
+ * always a new record plus a link, never an edit. That is what makes the history append-only and
+ * every id that was ever handed out still resolvable.
+ *
+ * The refusal is loud and throws rather than silently correcting, because a caller that believes it
+ * changed an id and did not is worse off than one that fails. */
 function writeRecord(c, rid, rec) {
+  if (rec && rec.id !== undefined && rec.id !== rid) {
+    const err = new Error(
+      `refusing to write ${c} record "${rid}" whose payload carries id "${rec.id}" — a record's id is written once at mint and never changes. ` +
+      `Names move, ids do not: change the title or the nickname instead. To link two records use adoption (succeeds), which supersedes and never rewrites — both keep their ids and resolution follows the chain.`);
+    err.status = 409;
+    throw err;
+  }
   const p = recordPath(c, rid), tmp = p + '.tmp.' + process.pid;
   fs.writeFileSync(tmp, JSON.stringify(rec, null, 2));
   fs.renameSync(tmp, p);
@@ -1434,5 +1461,12 @@ async function handleApi(method, p, query, b) {
 module.exports = {
   handleApi, HOME, PREFS, OPS, FULL_THRESHOLD, SURFACES, NAMES,
   claudeCliAvailable, mcpRegistered, ops, autoReceipt, getPrefs, setPref, resolveAutosend,
-  artifactCap, artifactBlock, buildBrief, fencedBlock
+  artifactCap, artifactBlock, buildBrief, fencedBlock,
+  /* Exported ONLY so the suite can assert the id invariant FIRES. handleApi calls load() at the
+   * top of every operation, so an in-memory id mutation is wiped before any save can see it —
+   * which means the invariant is unreachable from outside and a test that goes through the API
+   * would pass while proving nothing. That is the vacuous-test shape this codebase keeps finding,
+   * so the seam is opened deliberately rather than the test written to fit what was reachable.
+   * Not a public verb; nothing but tests should call it. */
+  __writeRecordForTests: writeRecord
 };

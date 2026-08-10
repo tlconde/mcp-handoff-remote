@@ -292,6 +292,45 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     delete require.cache[require.resolve('./handoff-tools')];
   }
 
+  // ---- (c4) NAMES MOVE, IDS DON'T — the id invariant, asserted by making it FIRE ----
+  // A record whose id can change is a record every stored reference to which can silently point at
+  // nothing, or worse at something else. Unstated id mutability is a candidate cause of the session
+  // mix-ups this project spent two days chasing. Nothing in the code deliberately rewrites an id --
+  // which is exactly why a convention would look like it was working right up until the one path
+  // that did, so it is enforced at the write choke point every verb passes through.
+  //
+  // THE TEST HAD TO REACH PAST THE API TO BE REAL. handleApi calls load() at the top of every
+  // operation, so an in-memory id mutation is wiped before any save can observe it: a test driving
+  // this through a verb passes while proving nothing, which is the vacuous shape found twice this
+  // week. The write layer is exported for tests so the refusal can actually be provoked.
+  {
+    const c4 = require('./handoff-core');
+    let refused = null;
+    try { c4.__writeRecordForTests('sessions', 'sess_chat_REAL', { id: 'sess_chat_IMPOSTOR', title: 'x' }); }
+    catch (e) { refused = e; }
+    ok(refused !== null, '(c4) a write whose payload id differs from the record it targets is REFUSED');
+    ok(refused && refused.status === 409, '(c4) ...as a conflict, not a generic failure');
+    ok(refused && /never changes/.test(refused.message) && /adoption/.test(refused.message),
+      '(c4) ...and the refusal names the remedy: change the name, or link with adoption which supersedes rather than rewrites');
+
+    /* The invariant must not fire on legitimate writes, or every save breaks. Note STORE is
+     * resolved at module load, so the store directories have to exist for the real path — an
+     * earlier version swapped HANDOFF_HOME here and failed with ENOENT, which would have read as
+     * "the guard rejects valid writes" when it was the test writing to a directory that was never
+     * created. Drive one normal API call first so the dirs exist. */
+    await c4.handleApi('POST', '/api/sessions', {}, { surface: 'chat', title: 'invariant probe' });
+    let ok2 = true, why2 = '';
+    try { c4.__writeRecordForTests('sessions', 'sess_chat_REAL', { id: 'sess_chat_REAL', title: 'x' }); }
+    catch (e) { ok2 = false; why2 = e.message; }
+    ok(ok2, '(c4) a matching id writes normally — the guard blocks mutation, not persistence' + (why2 ? ' :: ' + why2.slice(0, 80) : ''));
+
+    // A record with no id field at all (links, agents) must still write.
+    let ok3 = true, why3 = '';
+    try { c4.__writeRecordForTests('agents', 'some-host', { host: 'some-host', last_seen: 'x' }); }
+    catch (e) { ok3 = false; why3 = e.message; }
+    ok(ok3, '(c4) records that carry no id field are unaffected — agents and links still persist' + (why3 ? ' :: ' + why3.slice(0, 80) : ''));
+  }
+
   // ---- (d) rollout smoke: 10 forwarders under load across a restart, zero lost writes ----
   {
     const home = tmpHome();

@@ -136,6 +136,25 @@ function req(opts, body) {
     const r = await relay.handleMcp({ jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'status', arguments: {} } });
     assert.strictEqual(r.result.isError, true);
     assert.match(r.result.content[0].text, /home-offline/, 'the Mac being asleep is an ANSWER; a hang is not');
+    assert.match(r.result.content[0].text, /did not run|Safe to retry/i,
+      'offline means NOTHING was delivered — say so, because the caller\'s next move depends on it');
+    assert.doesNotMatch(r.result.content[0].text, /MAY HAVE LANDED/,
+      'offline must NOT carry the timeout\'s warning — the two are opposite facts');
+  });
+
+  /* A TIMEOUT IS NOT AN OFFLINE, AND SAYING SO IS THE WHOLE FIX. Both used to render as
+   * "home-offline", which reads as "nothing happened". Measured 2026-08-10: three send_to_worker
+   * calls returned that error having ALREADY DISPATCHED — record written, process running, access
+   * log showing 200 in 10004ms. A caller that believes it and retries creates duplicate workers.
+   * Exit-status-is-not-effect, living in the last place anyone looks for it: the error path. */
+  await test('a home TIMEOUT says the request may have landed, and refuses to imply otherwise', async () => {
+    const t = relay.homeErrorText({ error: 'home_timeout', detail: 'no reply from home within 10000ms' });
+    assert.match(t, /MAY HAVE LANDED/, 'a delivered-but-unanswered request may have completed — the caller must be told');
+    assert.match(t, /verify by effect/i, '...and told what to do instead of retrying blind');
+    assert.doesNotMatch(t, /^home-offline/, 'it must not claim the opposite fact');
+    const off = relay.homeErrorText({ error: 'home_offline', detail: 'daemon socket refused' });
+    assert.doesNotMatch(off, /MAY HAVE LANDED/, 'and offline must not borrow the timeout\'s warning');
+    assert.notStrictEqual(off, t, 'two opposite facts must not render as the same sentence — that was the bug');
   });
 
   /* The NAMED DEVIATION, pinned as behaviour so it cannot quietly drift back.

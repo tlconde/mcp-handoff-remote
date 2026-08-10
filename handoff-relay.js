@@ -146,6 +146,33 @@ function relayToDaemon(envelope, timeoutMs = 10000) {
 const { TOOLS } = require('./handoff-tool-schemas');
 const PROTOCOL_VERSION = '2025-06-18';
 
+/* OFFLINE AND TIMED-OUT ARE OPPOSITE FACTS AND WERE THE SAME SENTENCE.
+ *
+ * Both rendered as "home-offline", which reads as "nothing happened". For a timeout that is a LIE
+ * with consequences: the request was delivered and may have completed. Measured 2026-08-10 — three
+ * send_to_worker calls returned this error having ALREADY DISPATCHED, worker record written and
+ * process running; the access log shows `tools/call -> 200 10004ms` for one of them. A caller that
+ * believes the error and retries creates duplicate workers.
+ *
+ * This is exit-status-is-not-effect living in the error path, which is the last place anyone looks
+ * for it: an error is assumed to mean the absence of an effect. The copy now carries what we
+ * actually know, and the two cases are told apart:
+ *   offline - nothing reached home. Nothing ran. Retrying is safe.
+ *   timeout - it reached home and we stopped waiting. It MAY HAVE LANDED. Verify by effect.
+ * No budget makes a blind retry safe; only saying the true thing does.
+ *
+ * A pure function so the copy is testable without faking a request path — the seam is the text,
+ * which is the thing under test. */
+function homeErrorText(reply) {
+  if (!reply || !reply.error) return null;
+  if (reply.error === 'home_offline') {
+    return `home-offline: ${reply.detail}\nNothing was delivered — the request did not reach home, so it did not run. Safe to retry.`;
+  }
+  if (reply.error === 'home_timeout') {
+    return `home-timeout: ${reply.detail}\nThe request WAS delivered and we stopped waiting for the reply — it may still be executing and MAY HAVE LANDED. Do not retry blind: verify by effect first (status, peek_inbox, or the record the call would have written). Retrying a call that landed creates duplicates.`;
+  }
+  return null;
+}
 async function handleMcp(msg, identity) {
   const id = msg && msg.id;
   const ok = result => ({ jsonrpc: '2.0', id, result });
@@ -172,11 +199,22 @@ async function handleMcp(msg, identity) {
        * vocabulary (I12); we do not mint a stronger claim than we hold. */
       ctx: { remote: true, sender_class: 'asserted', account_sub: (identity && identity.sub) || null }
     });
-    if (reply && (reply.error === 'home_offline' || reply.error === 'home_timeout')) {
-      // Surfaced as a TOOL error, not a transport error: the call reached us and we know
-      // precisely why it cannot be served. "The Mac is asleep" is an answer; a hang is not.
-      return ok({ content: [{ type: 'text', text: `home-offline: ${reply.detail}` }], isError: true });
-    }
+    /* OFFLINE AND TIMED-OUT ARE OPPOSITE FACTS AND WERE THE SAME SENTENCE.
+     *
+     * Both rendered as "home-offline", which reads as "nothing happened". For a timeout that is a
+     * LIE with consequences: the request was delivered and may have completed. Measured 2026-08-10
+     * — three send_to_worker calls returned this error having ALREADY DISPATCHED, worker record
+     * written and process running; the access log shows `tools/call → 200 10004ms` for one of them.
+     * A caller that believes the error and retries creates duplicate workers.
+     *
+     * This is exit-status-is-not-effect living in the error path, which is the last place anyone
+     * thinks to look for it: an error is assumed to mean the absence of an effect. So the copy now
+     * carries what we actually know, and the two cases are told apart:
+     *   offline — nothing reached home. Nothing ran. Retrying is safe.
+     *   timeout — it reached home and we stopped waiting. It may have landed. VERIFY BY EFFECT.
+     * No budget makes a retry safe; only saying the true thing does. */
+    const unreachable = homeErrorText(reply);
+    if (unreachable) return ok({ content: [{ type: 'text', text: unreachable }], isError: true });
     if (reply && reply.error) return ok({ content: [{ type: 'text', text: `Error: ${reply.error}${reply.detail ? ' — ' + reply.detail : ''}` }], isError: true });
     const text = (reply && (reply.result || reply.text)) || '';
     return ok({ content: [{ type: 'text', text: typeof text === 'string' ? text : JSON.stringify(text) }], isError: false });
@@ -424,4 +462,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { server, protectedResourceMetadata, verifyToken, relayToDaemon, handleMcp, PORT };
+module.exports = { server, protectedResourceMetadata, verifyToken, relayToDaemon, handleMcp, homeErrorText, PORT };

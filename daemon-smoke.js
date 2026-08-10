@@ -550,6 +550,60 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     delete require.cache[require.resolve('./handoff-core')];
   }
 
+  /* ---- (c8) a dispatched worker can PROVE its identity locally ----
+   * Barrier 7. The child got HANDOFF_SESSION_ID and no CLAUDE_CODE_SESSION_ID, so the local mount
+   * — which mints from a CLI uuid and refuses without one — could not identify it, and every
+   * protocol call fell through to the relay and a 10-second budget. A worker with a record in the
+   * store and no way to prove it owned one.
+   *
+   * The env is captured from a REAL SPAWN rather than read off the source, because the value under
+   * test is what the child receives, and a spread of process.env is exactly the kind of thing that
+   * looks right and delivers something else. */
+  {
+    const home = tmpHome();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'workerenv-'));
+    const prev = process.env.HANDOFF_HOME, prevBin = process.env.HANDOFF_CLAUDE_BIN;
+    const prevCli = process.env.HANDOFF_NO_CLI, prevOwn = process.env.CLAUDE_CODE_SESSION_ID;
+    const envDump = path.join(home, 'child-env.txt');
+    const fake = path.join(home, 'env-claude.sh');
+    /* Only the `-p` LAUNCH may write the dump. claudeCliAvailable() probes --version and
+     * mcpRegistered() runs `mcp list` through this same binary; an earlier version let `mcp list`
+     * write the file and the assertion then read the env of the wrong invocation — reporting a
+     * borrowed identity that the launch did not actually have. The probe you forgot about is still
+     * a process. */
+    fs.writeFileSync(fake, `#!/bin/sh\ncase "$1" in\n  --version) echo "1.0.0"; exit 0;;\n  mcp) exit 0;;\n  -p) env > ${JSON.stringify(envDump)}; exit 0;;\nesac\nexit 0\n`);
+    fs.chmodSync(fake, 0o755);
+    process.env.HANDOFF_HOME = home;
+    process.env.HANDOFF_CLAUDE_BIN = fake;
+    delete process.env.HANDOFF_NO_CLI;
+    // A parent identity that must NOT be inherited by the child.
+    process.env.CLAUDE_CODE_SESSION_ID = 'PARENT-UUID-MUST-NOT-LEAK';
+    delete require.cache[require.resolve('./handoff-core')];
+    const c8 = require('./handoff-core');
+
+    const r = await c8.handleApi('POST', '/api/workers', {}, {
+      task: 'env capture', context: 'env capture', dir, mode: 'headless'
+    });
+    const native = r.payload && r.payload.launch && r.payload.launch.native_ref && r.payload.launch.native_ref.session_id;
+    for (let i = 0; i < 40 && !fs.existsSync(envDump); i++) await new Promise(res => setTimeout(res, 100));
+    const dump = fs.existsSync(envDump) ? fs.readFileSync(envDump, 'utf8') : '';
+    const childUuid = (dump.match(/^CLAUDE_CODE_SESSION_ID=(.*)$/m) || [])[1];
+
+    ok(!!childUuid && childUuid === native,
+      '(c8) the spawned worker carries its OWN CLI uuid as CLAUDE_CODE_SESSION_ID — the local mount can mint, so the relay is not its only door'
+      + ` (child=${childUuid || 'unset'} native=${native})`);
+    ok(childUuid !== 'PARENT-UUID-MUST-NOT-LEAK',
+      '(c8) ...and never inherits the parent\'s uuid through the process.env spread — a borrowed identity is the stored-address disease with a stolen address');
+    ok(/^HANDOFF_SESSION_ID=/m.test(dump),
+      '(c8) the protocol record id still travels too — one identity in two places, both the worker\'s own');
+
+    if (prev === undefined) delete process.env.HANDOFF_HOME; else process.env.HANDOFF_HOME = prev;
+    if (prevBin === undefined) delete process.env.HANDOFF_CLAUDE_BIN; else process.env.HANDOFF_CLAUDE_BIN = prevBin;
+    if (prevCli === undefined) delete process.env.HANDOFF_NO_CLI; else process.env.HANDOFF_NO_CLI = prevCli;
+    if (prevOwn === undefined) delete process.env.CLAUDE_CODE_SESSION_ID; else process.env.CLAUDE_CODE_SESSION_ID = prevOwn;
+    delete require.cache[require.resolve('./handoff-core')];
+  }
+
   // ---- (d) rollout smoke: 10 forwarders under load across a restart, zero lost writes ----
   {
     const home = tmpHome();

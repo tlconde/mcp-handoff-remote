@@ -1111,7 +1111,24 @@ async function doLaunch(s, b) {
   // Resolved, not inherited — this is the actual worker LAUNCH, and a bare name here is what made
   // a dispatch come back "prepared but NOT auto-launched" while the binary sat in ~/.local/bin.
   const child = spawn(claudeBin() || 'claude', ['-p', '--session-id', nativeId, PROMPT, '--output-format', 'text', '--allowedTools', ALLOWED],
-    { cwd: dir, env: { ...process.env, HANDOFF_SESSION_ID: s.id } });
+    /* ONE IDENTITY, TWO PLACES, BOTH THE WORKER'S OWN — barrier 7 of seven.
+     *
+     * The child was given HANDOFF_SESSION_ID (its protocol record) and no CLAUDE_CODE_SESSION_ID.
+     * The local `handoff` mount mints from a CLI uuid and refuses without one, which is right — so
+     * a worker had a protocol identity in the store and NO WAY TO PROVE IT LOCALLY. Every handoff
+     * call fell through to the relay-backed mount and became a home round trip against a 10-second
+     * budget. Measured 2026-08-10: the sixth dispatch restated its brief correctly, then did
+     * nothing, and diagnosed itself — "set CLAUDE_CODE_SESSION_ID so the session has an identity
+     * the relay can route to." The preflight passed only because its task needs no MCP at all.
+     *
+     * nativeId is the uuid this launch already passes as --session-id, so the two now agree: the
+     * worker's own identity, in both places it is read from.
+     *
+     * IT ALSO CLOSES A BORROWED-IDENTITY HOLE. The spread of process.env carried the DAEMON's
+     * CLAUDE_CODE_SESSION_ID through to the child whenever the daemon had one — a worker asserting
+     * a uuid that belongs to another session, which is the stored-address disease with a stolen
+     * address. Setting it explicitly overwrites that inheritance rather than leaving it to luck. */
+    { cwd: dir, env: { ...process.env, HANDOFF_SESSION_ID: s.id, CLAUDE_CODE_SESSION_ID: nativeId } });
   let out = '';
   child.stdout.on('data', d => { out += d; if (out.length > 20000) out = out.slice(-20000); });
   const startedAt = Date.now();

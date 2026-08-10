@@ -54,19 +54,6 @@ Tokens must verify against the configured JWKS with matching issuer and audience
 algorithms only. The tunnel's ingress is path-scoped. Details and known limitations:
 [SECURITY.md](SECURITY.md).
 
-## Tests
-
-```bash
-node mcp-smoke.js        # protocol + tools
-node daemon-smoke.js     # the shared daemon
-node wake-smoke.js       # the wake tier
-node relay-smoke.js      # the remote relay — mostly refusals
-node jwt-smoke.js        # the auth door: alg confusion, key confusion, confused deputy
-```
-
-They are written as refusals rather than features, because the interesting behaviour of a door
-is what it turns away.
-
 ## Status
 
 Working software, young. Tier 1 has been in daily use; tier 2 is new. It is MIT licensed and

@@ -28,3 +28,16 @@ HANDOFF.md
 # Local values for the wake agent. Gitignored: personal identifiers never enter the repo.
 # Real environment variables override anything here.
 .agent-env
+
+docs-seed/
+# The `data` directory is used for storing data files that are too large to be committed to the repository.
+
+# Build/test surface — how the plugin was proven, not the plugin. Kept on disk for local
+# work; never ships. (gitignore stops FUTURE adds; untrack tracked copies separately.)
+*-smoke.js
+protocol-test.js
+drift-eval.js
+forwarder-runbook.js
+*-SPEC.md
+THREAT-MODEL.md
+mcp-roundtrip-evals/

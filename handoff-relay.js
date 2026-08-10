@@ -5,7 +5,7 @@
  *
  * Shape is the spike's (b847465) recommendation, unchanged:
  *   device → claude.ai custom connector (HTTPS + OAuth) → THIS relay → outbound tunnel
- *          → the Mac daemon's control socket → store/v1 on the Mac.
+ *          → the home daemon's control socket → store/v1 on the home device.
  * The relay holds NO store and NO session state. It is a wire, not a source of truth —
  * that is what preserves the daemon's one-store / single-writer invariant with a remote
  * leg attached. If this process dies, nothing is lost but reachability.
@@ -104,14 +104,14 @@ async function verifyToken(headers) {
 /* One JSON-RPC call, relayed to the daemon over its control socket, newline-delimited —
  * the framing the forwarder already speaks, so only the remote leg is new (spike §transport).
  * HOME OFFLINE IS AN EXPLICIT ERROR. A silent hang or a stale success would be the same
- * dishonesty the wake tier was just cured of: if the Mac is asleep, say so. */
+ * dishonesty the wake tier was just cured of: if the home device is asleep, say so. */
 function relayToDaemon(envelope, timeoutMs = 10000) {
   return new Promise(resolve => {
     let settled = false;
     const done = v => { if (!settled) { settled = true; resolve(v); } };
     let conn;
     try { conn = net.createConnection(SOCK); } catch (_) {
-      return done({ error: 'home_offline', detail: 'the home Mac is not reachable (daemon socket refused)' });
+      return done({ error: 'home_offline', detail: 'the home device is not reachable (daemon socket refused)' });
     }
     const timer = setTimeout(() => { try { conn.destroy(); } catch (_) {} done({ error: 'home_timeout', detail: `no reply from home within ${timeoutMs}ms` }); }, timeoutMs);
     let buf = '';
@@ -124,7 +124,7 @@ function relayToDaemon(envelope, timeoutMs = 10000) {
       try { done(JSON.parse(buf.slice(0, nl))); } catch (e) { done({ error: 'bad_reply', detail: e.message }); }
       try { conn.end(); } catch (_) {}
     });
-    conn.on('error', () => { clearTimeout(timer); done({ error: 'home_offline', detail: 'the home Mac is not reachable (daemon socket refused)' }); });
+    conn.on('error', () => { clearTimeout(timer); done({ error: 'home_offline', detail: 'the home device is not reachable (daemon socket refused)' }); });
     conn.on('close', () => { clearTimeout(timer); done({ error: 'home_offline', detail: 'the home connection closed before replying' }); });
   });
 }

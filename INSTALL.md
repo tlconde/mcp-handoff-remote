@@ -36,12 +36,6 @@ reach each other and wake each other:
 deploy/install.sh          # installs a launchd (macOS) or systemd (Linux) unit
 ```
 
-Run the tests if you want to see it prove itself:
-
-```bash
-node mcp-smoke.js && node daemon-smoke.js && node wake-smoke.js
-```
-
 ---
 
 ## Tier 2 — remote access from your other devices (opt in)

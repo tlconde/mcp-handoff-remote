@@ -24,7 +24,7 @@ machine speaks for itself.
 
 ## Before you start — what "working" will look like
 
-Two things are outstanding until this runs, and both are checks nobody can perform from the Mac:
+Two things are outstanding until this runs, and both are checks nobody can perform from the home device:
 
 1. A record minted for the laptop currently reads `reachable: unknown`. Not *unreachable* — nobody
    has ever looked. After a successful first run it reads a verdict that machine observed.
@@ -89,7 +89,7 @@ Access application will accept.
 
 **Get the token** (browser, on the laptop):
 
-1. Visit the relay URL — the same host the Mac's connector uses, path `/mcp`.
+1. Visit the relay URL — the same host the home device's connector uses, path `/mcp`.
 2. Log in through the Access prompt.
 3. After the redirect, copy the `CF_Authorization` cookie value. That is the token.
 
@@ -153,14 +153,14 @@ On the store's own host the same command prints instead:
 | `relay refused the credential (HTTP 401/403)` | Token missing, expired, or minted for another app | Redo step 3; Access tokens expire |
 | `cannot start: HANDOFF_REMOTE_URL is set but HANDOFF_REMOTE_TOKEN is not…` | The env var did not survive | Re-run the export line in the same window. It stops rather than polling blind |
 | `Refused: this heartbeat names N record(s) that do not belong to…` | `HANDOFF_HOST_ID` does not match how records name this machine | Fix the host id — do not change the records |
-| `peek says: (nothing waiting)` | Nothing is addressed to this machine yet | Fine. The heartbeat still goes; ask the Mac side to send one, then re-run |
+| `peek says: (nothing waiting)` | Nothing is addressed to this machine yet | Fine. The heartbeat still goes; ask the home side to send one, then re-run |
 
 **A refusal here is the system working.** The heartbeat is refused *whole* rather than partly
 applied, so nothing is half-written and nothing needs undoing.
 
-## Step 5 — Confirm the flip, from the Mac side
+## Step 5 — Confirm the flip, from the home device
 
-This is the acceptance test. On the Mac, after your first run:
+This is the acceptance test. On the home device, after your first run:
 
 ```bash
 node -e "const c=require('./handoff-core');c.handleApi('GET','/api/state',{},{}).then(r=>{
@@ -172,7 +172,7 @@ today there was no way for that entry to exist.
 
 ## Step 6 — Deliver one toast, and look at the screen
 
-Ask the Mac side to send a message to a session that names this laptop, then:
+Ask the home side to send a message to a session that names this laptop, then:
 
 ```powershell
 node bin/handoff-wake-agent.js --once

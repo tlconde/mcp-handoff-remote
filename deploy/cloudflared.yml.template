@@ -15,7 +15,7 @@
 tunnel: <TUNNEL-ID>            # cloudflared tunnel create handoff-store
 credentials-file: $HOME/.cloudflared/<TUNNEL-ID>.json
 
-# Outbound-only: the Mac dials Cloudflare, Cloudflare never dials the Mac. No inbound
+# Outbound-only: the home device dials Cloudflare, Cloudflare never dials it. No inbound
 # firewall hole, no port forwarding, nothing listening on the LAN — the relay itself binds
 # 127.0.0.1 only, so this tunnel is the ONLY route in, by construction.
 originRequest:

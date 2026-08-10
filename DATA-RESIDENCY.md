@@ -28,7 +28,7 @@ to trust: the data never touches a network interface.
 
 **Tier 2 — remote (opt in).** You add a tunnel so your *other* devices can reach the same
 store. The store still lives only on the home machine. A request from your phone travels:
-phone → Claude → the CDN edge → the tunnel → the relay on your Mac → the store. The reply
+phone → Claude → the CDN edge → the tunnel → the relay on your home device → the store. The reply
 comes back the same way. Nothing is cached at any hop.
 
 **Tier 3 — hosted.** Not built, and not by us. A hosted model would mean someone else's

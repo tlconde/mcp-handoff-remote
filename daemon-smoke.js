@@ -392,6 +392,37 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
       '(c5) worker brief carries the caller-supplied CONTEXT, which rides separately so compaction cannot reach it');
     ok(!/1 messages travel whole/.test(md),
       '(c5) the brief is not the dest\'s lone handoff_card described as "full context attached"');
+
+    /* (c5b) BOTH CHANNELS, barrier 6. The task rides the transcript and the context rides
+     * supplied_context, and the renderer returned the second early — so a brief that had a context
+     * lost its task, every time. Found by the preflight on its first run, where a worker was told
+     * to "continue the work described in Context" and Context described no work.
+     *
+     * The markers are per-run rather than fixed strings, on the preflight's own standard: a
+     * hardcoded needle can match a leftover artifact, and this file has already shipped one
+     * assertion that matched the wrong text and reported green. */
+    const runTag = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'bothchannels-'));
+    /* THE MARKER MUST NOT BE ABLE TO RIDE THE TITLE. The brief's heading is `# Task brief —
+     * <session.title>`, and the title is the task's opening truncated to ~60 chars — so a marker at
+     * the front of the task appears in the brief whether or not the renderer keeps the transcript.
+     * The first version of this assertion did exactly that and passed against a deliberately broken
+     * renderer: vacuous, caught only by running it against the bug it was written for. The marker
+     * now sits past the truncation, and the assertion reads the ## Context SECTION rather than the
+     * whole document, because that section is the thing under test. */
+    const pad = 'the specific work, which rides the transcript. '.repeat(4);
+    await c5.handleApi('POST', '/api/workers', {}, {
+      task: `Do the work described here. ${pad}TASK-${runTag}`,
+      context: `CTX-${runTag}: the surrounding facts, which ride supplied_context`,
+      dir: dir2, mode: 'headless'
+    });
+    let md2 = '';
+    try { md2 = fs.readFileSync(path.join(dir2, 'HANDOFF.md'), 'utf8'); } catch (_) {}
+    const ctxSection = (md2.split('\n## Context')[1] || '').split('\n## ')[0];
+    ok(ctxSection.includes(`TASK-${runTag}`),
+      '(c5b) the CONTEXT SECTION carries the TASK — supplied_context must not return early over the transcript');
+    ok(ctxSection.includes(`CTX-${runTag}`),
+      '(c5b) ...and the caller\'s context verbatim — two payload channels, one brief, neither shadowing the other');
     if (prev === undefined) delete process.env.HANDOFF_HOME; else process.env.HANDOFF_HOME = prev;
     if (prevCli === undefined) delete process.env.HANDOFF_NO_CLI; else process.env.HANDOFF_NO_CLI = prevCli;
     delete require.cache[require.resolve('./handoff-core')];

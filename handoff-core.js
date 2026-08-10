@@ -431,6 +431,12 @@ async function buildEnvelope(session) {
     session_id: session.id,
     origin: { surface: session.surface, title: session.title, deep_link: `/api/sessions/${session.id}` },
     context_mode: full ? 'full' : 'compacted',
+    /* THE CALLER'S OWN WORDS, CARRIED VERBATIM SO COMPACTION CANNOT REACH THEM. A summariser is
+     * allowed to paraphrase a transcript; it is not allowed to paraphrase the brief a human wrote.
+     * Ported from the notebook 2026-08-10, where it had shipped as a hotfix that skipped this repo
+     * — the anomaly the (b) ruling exists to repair, since one direction of travel is a structural
+     * invariant and every mirror failure this week was a mirror-model failure. */
+    supplied_context: (session.messages || []).filter(m => m.kind === 'context').map(m => m.text).filter(Boolean),
     transcript: full ? session.messages : undefined,
     summary: full
       ? `Full context attached — ${session.messages.length} messages travel whole (${size} chars, under compaction threshold).`
@@ -445,11 +451,38 @@ async function buildEnvelope(session) {
   };
 }
 function verbatimDecisions(env) { return env.decisions.map(d => `- "${d.text}"`).join('\n') || '- (none locked yet)'; }
+/* TWO PAYLOAD CHANNELS, AND THE CODE ASSUMED ONE.
+ *
+ * A dispatch carries the caller's TASK and the caller's CONTEXT, and they travel separately: the
+ * task rides the transcript (kind 'chat'), the context rides supplied_context (kind 'context').
+ * The notebook's version returned supplied_context EARLY, so every brief that had a context also
+ * lost its task. Measured 2026-08-10 by the preflight on its first run: the worker was handed a
+ * brief whose Goal said "continue the work described in Context" and whose Context described no
+ * work, and it correctly refused to invent the payload.
+ *
+ * That is barrier 2 one layer up. bca94aa fixed WHICH RECORD the envelope is built from; this
+ * fixes the renderer throwing the task away on the way out. The fix that guaranteed the caller's
+ * context would survive compaction is what hid the caller's task — a fix whose blind spot was the
+ * channel it was not written about.
+ *
+ * Both are rendered now, labelled, in the order a reader needs them: what to do, then what around
+ * it. Neither may return early over the other. */
 function contextBlock(env) {
-  if (env.context_mode === 'full' && env.transcript) {
-    const lines = env.transcript.filter(x => x.kind !== 'handoff_card').map(x => `> ${x.role}: ${x.text}`);
-    if (lines.length) return lines.join('\n');
+  const verbatim = (env.supplied_context || []).filter(Boolean);
+  const lines = (env.context_mode === 'full' && env.transcript)
+    ? env.transcript.filter(x => x.kind !== 'handoff_card' && x.kind !== 'context').map(x => `> ${x.role}: ${x.text}`)
+    : [];
+  const parts = [];
+  if (lines.length) parts.push(lines.join('\n'));
+  if (verbatim.length) parts.push(verbatim.join('\n\n'));
+  /* When history was compacted the summary rides ALONGSIDE the verbatim context rather than
+   * standing in for it — nothing the caller wrote is ever replaced by a paraphrase of itself. */
+  if (env.context_mode === 'compacted' && env.summary) {
+    parts.push(verbatim.length
+      ? `_(conversation history beyond this was compacted: ${env.summary})_`
+      : env.summary);
   }
+  if (parts.length) return parts.join('\n\n');
   return env.summary; // sparse sessions (cards only) fall back — never an empty section
 }
 /** Fence artifact bodies so inner ``` / ~~~ (e.g. GETTING-STARTED.md bash blocks)

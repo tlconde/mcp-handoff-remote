@@ -214,13 +214,31 @@ const server = http.createServer(async (req, res) => {
    * know whether requests ARRIVE at all — the difference between a routing problem upstream
    * and a refusal here is the whole diagnosis, and without this you are guessing. Logs the
    * request line, whether a token was present, and the status; never the token itself. */
+  let rpcMethod = '-'; // set once the body is parsed; harmless when the request carries none
   if (process.env.HANDOFF_RELAY_ACCESS_LOG) {
     const started = Date.now();
     const auth = req.headers.authorization ? 'bearer' : (req.headers['cf-access-jwt-assertion'] ? 'cf-access' : 'none');
+    /* Mcp-Session-Id, logged to answer ONE question that gates a design decision: does the Claude
+     * app open a DISTINCT transport session per conversation, or one shared across all of them?
+     *
+     * It decides whether identity can be pinned to a connection. Distinct per conversation → the
+     * pin is very nearly conversation identity, and a chat stops having to remember and re-assert
+     * its own record id on every call. Shared → pinning cannot tell two concurrent chats apart and
+     * must NOT auto-attach, or one conversation inherits another's identity, which is the wrong-
+     * match class with a much larger blast radius than a mis-resolved name.
+     *
+     * A HEADER VALUE IS AN OPAQUE HANDLE, NOT A SECRET, but it is still someone's session, so only
+     * a short prefix is written — enough to tell two sessions apart and to see one persist across
+     * calls, never enough to replay. Absent is logged as "none", which is itself the answer if this
+     * client does not use streamable-HTTP session ids at all. */
+    const mcpSession = (() => {
+      const v = req.headers['mcp-session-id'];
+      return v ? String(v).slice(0, 8) : 'none';
+    })();
     res.on('finish', () => {
       try {
         require('fs').appendFileSync(process.env.HANDOFF_RELAY_ACCESS_LOG,
-          `${new Date().toISOString()} ${req.method} ${url.pathname} token=${auth} → ${res.statusCode} ${Date.now() - started}ms ua=${(req.headers['user-agent'] || '-').slice(0, 60)}\n`);
+          `${new Date().toISOString()} ${req.method} ${url.pathname} token=${auth} → ${res.statusCode} ${Date.now() - started}ms ua=${(req.headers['user-agent'] || '-').slice(0, 60)} mcp-session=${mcpSession} rpc=${rpcMethod}\n`);
       } catch (_) {}
     });
   }
@@ -260,6 +278,10 @@ const server = http.createServer(async (req, res) => {
     return req.on('end', async () => {
       let rpc;
       try { rpc = JSON.parse(body); } catch (_) { return send(res, 400, { error: 'invalid_json' }); }
+      // For the access log only: initialize vs tools/call is what makes a session's lifecycle
+      // legible — one initialize followed by many tools/call on one Mcp-Session-Id is a persistent
+      // connection; repeated initializes are a client reconnecting per request.
+      if (rpc && typeof rpc.method === 'string') rpcMethod = rpc.method;
       const out = await handleMcp(rpc, auth);
       // A notification carries no reply: 202, empty body, per JSON-RPC.
       if (out === null) return res.writeHead(202).end();

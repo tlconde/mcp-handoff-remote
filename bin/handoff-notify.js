@@ -129,7 +129,7 @@ function notifyTarget(ev) {
 
 /* FIRE-AND-FORGET IS NOT FIRE-AND-IGNORE. Every rung here dispatched with an empty callback,
  * so a command that failed outright looked exactly like one that rendered: notify() returned
- * fired:true either way. Measured 2026-08-09 on a real Windows laptop — the toast threw
+ * fired:true either way. Measured 2026-08-09 on a real Windows host — the toast threw
  * TypeNotFound before it ever built a notification, and the shipped code would have reported a
  * successful ping. That is the silent-success class this file's own comments spend paragraphs
  * on, reintroduced by the callback style rather than by the logic.
@@ -233,8 +233,8 @@ function notify(ev) {
      * toast.
      *
      * The corrected block then rendered and was SEEN: attributed to Windows PowerShell, title
-     * "lulu — Design review on the Windows laptop", body "From chat — open that window to pick it
-     * up." Exact shipped copy shape, and no claim that anything woke.
+     * "<session> — <conversation> on <device>", body "From <sender> — open that window to pick it
+     * up." The copy SHAPE is the point, and no claim that anything woke.
      *
      * Windows exposes no delivered-list, unlike macOS where terminal-notifier -list reads the
      * notification centre's own records. So a human's eyes are the receipt here and always will be:

@@ -662,6 +662,58 @@ function createSession({ surface, title }) {
   db.sessions[s.id] = s;
   return s;
 }
+/* NICKNAME — R3. THE HUMAN'S RECOVERY PATH, WHICH IS WHY IT REFUSES AT SET TIME.
+ *
+ * A title is what a record is called; a NICKNAME is what a person types from memory to repair an
+ * identity the model has lost. That is layer 2 of the four-layer design and it only works if the
+ * name resolves to exactly one live record — so uniqueness is enforced WHEN THE NAME IS CLAIMED,
+ * not when it is used. A collision discovered at use time is discovered by someone who has already
+ * lost their identity and is now being asked to disambiguate: the worst possible moment.
+ *
+ * Unique PER SURFACE, because that is the scope a human addresses in ("the code one called build"),
+ * and because two surfaces can genuinely hold unrelated conversations of the same name without
+ * ambiguity for the person typing.
+ *
+ * A SUPERSEDED RECORD DOES NOT BLOCK A NAME, but shadowing one is stated rather than silent:
+ * adoption is append-only and the old record keeps its history forever, so its nickname would
+ * otherwise squat the name for good. The grant names what it shadows, so a later reader can follow
+ * the chain instead of wondering why a familiar name points somewhere unexpected. Refusing here
+ * would punish exactly the recovery adoption exists to serve.
+ *
+ * SHARED BY BOTH CALLERS ON PURPOSE. A terminal names ITSELF at register; a human names ANOTHER
+ * record (a chat conversation, which has no CLI and can never register). Step 2 shipped with only
+ * the first, and the very first field use — an operator naming the review seat — could not be
+ * executed at all. Two call sites, one rule: if the check lived in the route, the second route
+ * would have grown its own slightly-different copy, which is how "unique per surface" quietly stops
+ * being true.
+ *
+ * Returns null on success, or {code, error, held_by} — the caller decides what to do with a
+ * refusal, because at register time the registration must still stand. */
+function applyNickname(s, raw) {
+  const nick = raw === null || raw === '' ? null : String(raw).trim().slice(0, 40);
+  if (nick && !/^[a-z0-9][a-z0-9_-]*$/i.test(nick)) {
+    return { code: 400, error: `nickname "${nick}" must be one word — letters, digits, hyphen or underscore. A name a human types under pressure cannot need quoting.` };
+  }
+  if (!nick) {
+    if (s.nickname) ops('nickname_cleared', { session: s.id, nickname: s.nickname });
+    s.nickname = null;
+    delete s.nickname_shadows;
+    return null;
+  }
+  const rivals = Object.values(db.sessions).filter(x =>
+    x && x.id !== s.id && x.surface === s.surface && !x.archived &&
+    String(x.nickname || '').toLowerCase() === nick.toLowerCase());
+  const live = rivals.filter(x => !x.superseded_by);
+  if (live.length) {
+    return { code: 409, held_by: live[0].id,
+      error: `nickname "${nick}" is already held on ${s.surface} by ${live[0].id}${live[0].title ? ` ("${live[0].title}")` : ''} — the nickname was NOT set. A nickname is how a human recovers an identity, so it must resolve to one record; pick another name, or retire that one first.` };
+  }
+  const shadowed = rivals.filter(x => x.superseded_by).map(x => x.id);
+  s.nickname = nick;
+  ops('nickname_set', { session: s.id, nickname: nick, surface: s.surface, shadows: shadowed.length ? shadowed : undefined });
+  if (shadowed.length) s.nickname_shadows = shadowed;
+  return null;
+}
 /* PARTICIPATION — R1 as amended. Every record starts 'passive' and becomes 'active' at its first
  * write-shaped act. One transition, one direction, recorded as an event.
  *
@@ -1453,55 +1505,14 @@ async function handleApi(method, p, query, b) {
       if (b.title) s._title_explicit = true;
       if (b.role !== undefined) s.role = b.role ? String(b.role).slice(0, 40) : null;
 
-      /* NICKNAME — R3. THE HUMAN'S RECOVERY PATH, WHICH IS WHY IT REFUSES AT SET TIME.
-       *
-       * A title is what a record is called; a NICKNAME is what a person types from memory to
-       * repair an identity the model has lost. That is layer 2 of the four-layer design and it
-       * only works if the name resolves to exactly one live record — so uniqueness is enforced
-       * WHEN THE NAME IS CLAIMED, not when it is used. A collision discovered at use time is
-       * discovered by someone who has already lost their identity and is now being asked to
-       * disambiguate; that is the worst possible moment to find out.
-       *
-       * Unique PER SURFACE, because that is the scope a human addresses in ("the code one called
-       * build"), and because two surfaces genuinely can hold unrelated conversations of the same
-       * name without ambiguity for the person typing.
-       *
-       * A SUPERSEDED RECORD DOES NOT BLOCK A NAME, but shadowing one is stated rather than
-       * silent: adoption is append-only and the old record keeps its history forever, so its
-       * nickname would otherwise squat the name for good. The grant names what it shadows, so a
-       * later reader can follow the chain instead of wondering why a familiar name points somewhere
-       * unexpected. Refusing here would punish exactly the recovery adoption exists to serve. */
-      /* A REFUSED NICKNAME MUST NOT DISCARD THE REGISTRATION. The first version of this returned
-       * 409 before save(), so the mint and the title went with it — the caller asked for identity
-       * plus a name, was refused the name, and silently lost the identity too. "Nothing was
-       * changed" has to mean the NICKNAME was not set, never "your registration was thrown away";
-       * a terminal that registers and ends up with no record is worse off than one that never
-       * called. So the refusal is collected here, the rest of the registration is applied and
-       * saved below, and the 409 is returned at the end carrying both facts. */
+      /* A REFUSED NICKNAME MUST NOT DISCARD THE REGISTRATION. The first version returned 409
+       * before save(), so the mint and the title went with it — the caller asked for identity plus
+       * a name, was refused the name, and silently lost the identity too. "Nothing was changed"
+       * has to mean the NICKNAME was not set, never "your registration was thrown away". */
       let nickRefusal = null;
       if (b.nickname !== undefined) {
-        const nick = b.nickname === null || b.nickname === '' ? null : String(b.nickname).trim().slice(0, 40);
-        if (nick && !/^[a-z0-9][a-z0-9_-]*$/i.test(nick)) {
-          nickRefusal = { code: 400, error: `nickname "${nick}" must be one word — letters, digits, hyphen or underscore. A name a human types under pressure cannot need quoting.` };
-        } else if (nick) {
-          const rivals = Object.values(db.sessions).filter(x =>
-            x && x.id !== s.id && x.surface === s.surface && !x.archived &&
-            String(x.nickname || '').toLowerCase() === nick.toLowerCase());
-          const live = rivals.filter(x => !x.superseded_by);
-          if (live.length) {
-            nickRefusal = { code: 409, held_by: live[0].id,
-              error: `nickname "${nick}" is already held on ${s.surface} by ${live[0].id}${live[0].title ? ` ("${live[0].title}")` : ''} — the nickname was NOT set. Your registration stands and your record is ${s.id}. A nickname is how a human recovers an identity, so it must resolve to one record; pick another name, or retire that one first.` };
-          } else {
-            const shadowed = rivals.filter(x => x.superseded_by).map(x => x.id);
-            s.nickname = nick;
-            ops('nickname_set', { session: s.id, nickname: nick, surface: s.surface, shadows: shadowed.length ? shadowed : undefined });
-            if (shadowed.length) s.nickname_shadows = shadowed;
-          }
-        } else {
-          if (s.nickname) ops('nickname_cleared', { session: s.id, nickname: s.nickname });
-          s.nickname = null;
-          delete s.nickname_shadows;
-        }
+        const r = applyNickname(s, b.nickname);
+        if (r) nickRefusal = Object.assign({}, r, { error: r.error + ` Your registration stands and your record is ${s.id}.` });
       }
 
       markActive(s, 'register');
@@ -1590,6 +1601,30 @@ async function handleApi(method, p, query, b) {
       if (b && b.settle) msg.settled_at = now();
       save();
       return { code: 200, payload: msg };
+    }
+    /* NAME A RECORD THAT CANNOT NAME ITSELF.
+     *
+     * register carries a nickname for a TERMINAL, which has a CLI uuid and registers itself. A
+     * chat conversation has neither: it never registers, so under step 2 as shipped it could not
+     * be nicknamed at all — and a nickname is precisely the recovery path for the surfaces where
+     * identity is weakest. The gap surfaced on the FIRST field use, an operator naming the review
+     * seat, which is the right way to find it and one dispatch too late to be comfortable.
+     *
+     * Provenance is ASSERTED and labelled so (I12): whoever calls this is claiming the authority
+     * to name that record, exactly as a caller naming its own conversation asserts which one it
+     * is. The rule is unchanged — the same applyNickname, the same per-surface refusal — because
+     * the check belongs to the name, not to the caller. */
+    if ((m = p.match(/^\/api\/sessions\/([^/]+)\/nickname$/)) && method === 'POST') {
+      const s = db.sessions[m[1]];
+      if (!s) return { code: 404, payload: { error: `no record ${m[1]} — nothing was changed` } };
+      if (s.superseded_by) {
+        return { code: 409, payload: { error: `${s.id} is superseded by ${s.superseded_by} — name the successor instead, or the nickname would point at a record nothing resolves to` } };
+      }
+      const refusal = applyNickname(s, b && b.nickname !== undefined ? b.nickname : null);
+      if (refusal) return { code: refusal.code, payload: { error: refusal.error, held_by: refusal.held_by, id: s.id } };
+      ops('nickname_granted', { session: s.id, nickname: s.nickname, surface: s.surface, provenance: 'asserted', by: (b && b.by) || null });
+      save();
+      return { code: 200, payload: { id: s.id, nickname: s.nickname, surface: s.surface, shadows: s.nickname_shadows || null, provenance: 'asserted' } };
     }
     if ((m = p.match(/^\/api\/sessions\/([^/]+)\/envelope$/)) && method === 'GET') {
       const s = db.sessions[m[1]]; if (!s) return { code: 404, payload: { error: 'not found' } };

@@ -712,6 +712,26 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     const listedAll = await t9.callTool('list_conversations', { include_passive: true }, {}, c9);
     ok(listedAll.includes('"reader"'), '(c9) include_passive shows them — hidden is not the same as denied');
 
+    /* NAMING A RECORD THAT CANNOT NAME ITSELF. Step 2 shipped with the nickname only on register,
+     * so a chat conversation — which never registers, having no CLI uuid — could not be nicknamed
+     * at all. That is the surface where identity is WEAKEST and the recovery path matters most,
+     * and the gap surfaced on the first field use rather than in any test I wrote. Same rule from
+     * both doors: one applyNickname, one per-surface refusal, because the check belongs to the
+     * name and not to the caller. */
+    const chatRec = await c9.handleApi('POST', '/api/sessions', {}, { surface: 'chat', title: 'a conversation that cannot register' });
+    const chatId = chatRec.payload.id;
+    const named = await c9.handleApi('POST', `/api/sessions/${chatId}/nickname`, {}, { nickname: 'beta', by: 'operator' });
+    ok(named.code === 200 && named.payload.nickname === 'beta',
+      '(c9) a record with no CLI uuid CAN be named by someone else — chat is where identity is weakest and the recovery path matters most');
+    ok(named.payload.provenance === 'asserted',
+      '(c9) ...and the grant is labelled ASSERTED, because naming another record is a claim of authority, not a verification');
+    const clash = await c9.handleApi('POST', `/api/sessions/${chatId}/nickname`, {}, { nickname: 'beta' });
+    void clash;
+    const chat2 = await c9.handleApi('POST', '/api/sessions', {}, { surface: 'chat', title: 'another chat' });
+    const clash2 = await c9.handleApi('POST', `/api/sessions/${chat2.payload.id}/nickname`, {}, { nickname: 'BETA' });
+    ok(clash2.code === 409 && clash2.payload.held_by === chatId,
+      '(c9) ...and the SAME refusal applies from this door — one rule, two call sites, or "unique per surface" quietly stops being true');
+
     // One direction: passive is a claim about what a record has NEVER done.
     await c9.handleApi('POST', `/api/sessions/${passiveId}/messages`, {}, { role: 'user', kind: 'chat', text: 'now it speaks' });
     const st3 = (await c9.handleApi('GET', '/api/state', {}, {})).payload;

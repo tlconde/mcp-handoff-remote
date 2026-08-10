@@ -20,6 +20,26 @@ Before assuming the trees match, measure it:
 placeholder-value differences (both expected) from structural ones — the only kind that means
 the two copies would behave differently.
 
+**`git apply` from inside the notebook SILENTLY APPLIES NOTHING, and exits 0.** `handoff-poc` is a
+subdirectory of the `ai-product-sense` repo, and `git apply` resolves a patch's paths against the
+REPO ROOT — so a patch generated here looks for `ai-product-sense/handoff-core.js`, does not find
+it, prints `Skipped patch`, changes nothing, and **returns success**. `git apply --check`
+green-lights the same no-op. An exit-0 no-op inside the remedy for exit-0 no-ops is the most
+on-brand defect this project has produced; it cost two hand-mirrors on 2026-08-10 and was caught
+only by checking the file's size and mtime rather than the exit code.
+
+```bash
+cd ~/Dev/Github/ai-product-sense                        # the REPO ROOT, not the project dir
+git apply --directory=Projects/handoff-poc <patch>
+grep -c '<a symbol the patch adds>' Projects/handoff-poc/<file>   # 0 means it did not land
+```
+
+Then verify by effect, always: size and mtime changed, the new symbol present, the suite run. If a
+hunk rejects, hand-apply it and **say which hunks you hand-applied and why** — the two builds have
+diverged in places nobody has measured, and a rejected hunk is usually telling you something true
+about that divergence rather than being an obstacle. `--reject` is allowed, but check every hunk
+landed individually; its summary line is not evidence.
+
 Shared code means: `handoff-core.js`, `handoff-tools.js`, `handoff-daemon.js`,
 `handoff-contract.js`, `handoff-relay.js`, `handoff-jwt.js`, `handoff-tool-schemas.js`,
 `mcp-handoff.js`, `server.js`, everything in `bin/`, and every `*-smoke.js` / `protocol-test.js`.
@@ -196,3 +216,52 @@ self-installs slash commands under `.claude/`. Both are gitignored. If either sh
   honest value* and asserting a shape was the only thing standing between a fix and its own
   regression — and one anti-drift test found a real defect on its first run only because it
   compared against an exact expected set. Also: **check that the assertion can fail.**
+- **A source-level assertion is not a behaviour assertion.** It is a different thing wearing the
+  same green tick. `relay-smoke` held FOUR assertions about the relay's stale-code guard — that it
+  checks its own freshness, that it compares against boot mtimes rather than a threshold, that it
+  exits rather than hot-reloads, that it watches the contract file too. All four were green all day.
+  All four were true of the *source*. The guard had been **inert since it shipped**: `fs` was never
+  required in the file, so `fs.statSync` threw `ReferenceError`, a bare `catch (_) { return 0; }`
+  swallowed it, and every mtime read returned `0` — boot snapshot included. `0 === 0` forever
+  (`bee839b`).
+
+  The file's own comment justified testing at source level because exercising the guard "would mean
+  killing a server mid-test". That trade is reasonable and it is still how the coverage was lost, so
+  the rule is not "never assert on source" — it is: **if a guard can only be checked by reading the
+  code, record it as UNTESTED, never as covered.** Then either buy the behaviour test (spawn the
+  real thing into a temp dir; it costs less than a day of a dead guard) or say plainly in the test
+  file that this mechanism has no behavioural coverage. Both replacements here run the real thing,
+  and both were verified RED against the pre-fix code before being trusted green.
+
+  The catch-all is half the lesson: **a `catch` that returns a plausible value converts a
+  programming error into a confident wrong answer** — the same disease as an empty callback
+  reporting `fired: true`. Catch the condition you mean (`ENOENT`), let a bug propagate.
+- **When a process decides its own lifecycle, its exit status is part of the contract — and the
+  file that interprets it is not the file you are reading.** Fixing the inert guard above made the
+  outcome *worse than the bug*: the first time it fired for real, the relay exited `0` — a clean
+  exit — while printing `exiting for restart with current code`. `com.handoff.relay.plist` sets
+  `KeepAlive = SuccessfulExit:false`, deliberately and with its own comment, so that `bootout` means
+  stopped rather than "restarted in a second". launchd read exit `0` as *finished, leave it down*,
+  and the remote door stayed shut until a human ran `kickstart` (`b091016`, now exit `75`).
+
+  Two decisions, each correct alone, contradictory together, and neither file mentions the other.
+  The daemon's identical guard was safe the whole time purely because *its* plist is
+  `KeepAlive: true`. So: assert the exit status in the test, and when a mechanism spans a code file
+  and a config file, name the other file in a comment at the point that depends on it.
+
+  Three defects sat stacked in that one mechanism — inert guard, clean exit, log line contradicted
+  by the status — and **each was invisible until the one before it was fixed.** Expect that shape
+  when a mechanism has never once been observed working.
+- **A commit that changes behaviour says so in its subject; a doctrine or docs commit carries no
+  functional change.** Mirroring is by commit, and a mirror pass skips doctrine commits by design,
+  so a functional change hiding in one is invisible to the only process meant to carry it across.
+  Identity step 1 shipped as `ae6d1bf` — "surface-typed ids, **and** NAMES MOVE IDS DON'T enforced
+  at the write layer" — whose diff contains *only* the write-layer invariant. The surface-typed mint
+  itself rode in `7100038`, titled "Doctrine gloss: the habit is a question, not a virtue". The
+  notebook got half of identity step 1 and chat-side identity was inert in production for a day.
+
+  Corollary, because the near-miss is instructive: after mirroring `ae6d1bf` the invariant fired
+  correctly (409, refusal naming the remedy) and it would have been natural to call it done. Only
+  asserting the *mint* — the other half of that commit's own subject line — exposed the gap. **A
+  subject line that names two things is a two-item mirror checklist**, and a subject accurate about
+  intent but wrong about content is worse than a vague one.

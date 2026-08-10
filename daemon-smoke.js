@@ -865,6 +865,75 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     delete require.cache[require.resolve('./handoff-core')];
   }
 
+  /* ---- (c12) THE DETERMINISTIC CHECKPOINT — no model in the path, ever ----
+   * A checkpoint is read by a session that has LOST its context and therefore cannot check what it
+   * is told. So the whole design turns on one asymmetry: its failure mode must be TOO TERSE and can
+   * never be CONFIDENTLY WRONG. A summariser fails the other way round, which is exactly backwards
+   * for a reader with no way to verify — which is why the operator ruled no model in this path and
+   * why the parked summariser slice keeps its own gate.
+   *
+   * The hardest thing to test is an absence, so most of this block is about what the checkpoint
+   * does NOT do when it has nothing. */
+  {
+    const home = tmpHome();
+    const prev = process.env.HANDOFF_HOME;
+    process.env.HANDOFF_HOME = home;
+    delete require.cache[require.resolve('./handoff-core')];
+    const c12 = require('./handoff-core');
+
+    /* THE EMPTY CASE FIRST, because it is the one that matters. A record with nothing on it must
+     * produce a checkpoint that SAYS it has nothing — not a plausible sentence about a session. */
+    const bare = await c12.handleApi('POST', '/api/sessions', {}, { surface: 'chat', title: 'nothing happened here' });
+    const cpBare = (await c12.handleApi('GET', `/api/sessions/${bare.payload.id}/checkpoint`, {}, {})).payload;
+    ok(cpBare.deterministic === true && Array.isArray(cpBare.brief) && cpBare.brief.length === 0,
+      '(c12) an empty record yields an EMPTY brief — too terse, never a plausible summary of a session that did nothing');
+    ok(cpBare.absent.some(a => /brief/.test(a)) && cpBare.absent.some(a => /decisions/.test(a)),
+      '(c12) ...and every missing field is NAMED in absent — "we do not know" is a fact a successor can act on; a confident guess is not');
+    ok(cpBare.identity.id === bare.payload.id && cpBare.counts.messages === 0,
+      '(c12) ...while identity and counts are still exact, because those are known');
+
+    // A populated record: everything verbatim or hashed, nothing described.
+    /* Set through the API, NOT by mutating a /api/state snapshot: handleApi calls load() at the top
+     * of every operation, so an in-memory change to a returned object is wiped before the next
+     * call can see it. The id-invariant comment documents that same seam; my first version of this
+     * block hit it and two assertions failed for a reason that was mine, not the code's. */
+    const rich = await c12.handleApi('POST', '/api/sessions', {}, {
+      surface: 'code', title: 'real work',
+      artifacts: [{ name: 'PATCH.diff', content: 'diff --git a/x b/x\n+one line\n' }],
+      open_items: ['re-dispatch after the mirror lands'],
+    });
+    const rid = rich.payload.id;
+    const briefText = 'Context from the conversation: apply the fix to the notebook build, not this one.';
+    await c12.handleApi('POST', `/api/sessions/${rid}/messages`, {}, { role: 'user', kind: 'context', text: briefText });
+    await c12.handleApi('POST', `/api/sessions/${rid}/messages`, {}, { role: 'user', kind: 'chat', text: 'lock: mirror before dispatching', decision: true });
+
+    const cp = (await c12.handleApi('GET', `/api/sessions/${rid}/checkpoint`, {}, {})).payload;
+    ok(cp.brief.length === 1 && cp.brief[0] === briefText,
+      '(c12) the human-written brief travels VERBATIM and whole — the one field a summariser may never touch');
+    ok(cp.decisions.length === 1 && cp.decisions[0].text === 'lock: mirror before dispatching',
+      '(c12) decisions travel verbatim, not paraphrased');
+    ok(cp.artifacts.length === 1 && cp.artifacts[0].sha256 &&
+       cp.artifacts[0].sha256 === require('crypto').createHash('sha256').update('diff --git a/x b/x\n+one line\n').digest('hex'),
+      '(c12) artifacts travel BY HASH — the load-bearing half, proving which bytes were meant without carrying them');
+    ok(!JSON.stringify(cp.artifacts).includes('+one line'),
+      '(c12) ...and the BODY is not in the checkpoint, or it would be the bloat BLOB-SPLIT exists to prevent');
+    ok(cp.open_items.length === 1, '(c12) open items travel as written');
+
+    /* NO MODEL IN THE PATH. The strongest available check: a checkpoint built with the CLI made
+     * unavailable is byte-identical to one built with it available, apart from its timestamp. If
+     * anything in this path could reach a summariser, that equality would not hold. */
+    const prevNoCli = process.env.HANDOFF_NO_CLI;
+    process.env.HANDOFF_NO_CLI = '1';
+    const cpNoCli = (await c12.handleApi('GET', `/api/sessions/${rid}/checkpoint`, {}, {})).payload;
+    if (prevNoCli === undefined) delete process.env.HANDOFF_NO_CLI; else process.env.HANDOFF_NO_CLI = prevNoCli;
+    const strip = o => { const c = JSON.parse(JSON.stringify(o)); delete c.taken_at; return JSON.stringify(c); };
+    ok(strip(cp) === strip(cpNoCli),
+      '(c12) the checkpoint is IDENTICAL with the model unavailable — nothing in this path can reach a summariser');
+
+    if (prev === undefined) delete process.env.HANDOFF_HOME; else process.env.HANDOFF_HOME = prev;
+    delete require.cache[require.resolve('./handoff-core')];
+  }
+
   // ---- (d) rollout smoke: 10 forwarders under load across a restart, zero lost writes ----
   {
     const home = tmpHome();

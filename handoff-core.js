@@ -733,6 +733,93 @@ function applyNickname(s, raw) {
   if (shadowed.length) s.nickname_shadows = shadowed;
   return null;
 }
+/* ---------------- DETERMINISTIC CHECKPOINT ----------------
+ *
+ * WHAT A CHECKPOINT IS: everything a successor needs, assembled from fields that already travel
+ * verbatim or by hash. NO MODEL RUNS IN THIS PATH — not as a fallback, not for a nicety. That is
+ * the operator's ruling and it has a reason with teeth: a checkpoint is read by a session that has
+ * lost its context and cannot check what it is told, so its failure mode must be TOO TERSE and can
+ * never be CONFIDENTLY WRONG. A summariser fails the other way round, which is exactly backwards
+ * for a reader with no way to verify.
+ *
+ * The governing law, stated one level up by the review seat: summaries are cache-warming, the log
+ * is truth, and anything load-bearing travels verbatim or by hash, never only in summary form. So
+ * every field below is copied, counted, or hashed — never described.
+ *
+ * ABSENCE IS REPORTED, NEVER FILLED. A missing field is omitted and named in `absent`, because a
+ * checkpoint that quietly invents a plausible value is the failure this design exists to prevent.
+ * "We do not know" is a fact a successor can act on; a confident guess is not.
+ *
+ * A model narrative may LATER be attached as decoration alongside these fields. It may never be
+ * substituted for one. The parked summariser slice keeps its own acceptance gate. */
+function sha256(text) { return crypto.createHash('sha256').update(String(text)).digest('hex'); }
+
+function buildCheckpoint(session) {
+  const absent = [];
+  const msgs = Array.isArray(session.messages) ? session.messages : [];
+
+  /* The human-written brief, protected verbatim (the kind:'context' channel — see the task-rides-
+   * verbatim fix). This is the one field a summariser must never touch, so it is copied whole. */
+  const brief = msgs.filter(m => m.kind === 'context').map(m => m.text).filter(Boolean);
+  if (!brief.length) absent.push('brief (no kind:context message on this record)');
+
+  const decisions = (session.decisions || []).map(d => ({
+    text: String(d.text || ''),
+    // Marked, not repaired — the renderer's rule, carried into the checkpoint so a rehydrating
+    // reader inherits the same honesty rather than seeing a bare string.
+    possibly_truncated: String(d.text || '').length >= DECISION_LIMIT || undefined,
+  }));
+  if (!decisions.length) absent.push('decisions (none locked)');
+
+  const open = (session.open_items || []).slice();
+  if (!open.length) absent.push('open_items (none recorded)');
+
+  /* Artifacts BY HASH, never by body. A checkpoint that inlined artifact bodies would be the
+   * bloat BLOB-SPLIT-SPEC exists to prevent, and a hash is the load-bearing half: it proves which
+   * bytes were meant without carrying them. */
+  const artifacts = (session.artifacts || []).map(a => ({
+    name: a.name,
+    bytes: a.content ? String(a.content).length : 0,
+    sha256: a.content ? sha256(a.content) : null,
+    by_value_available: !!a.content,
+  }));
+  if (!artifacts.length) absent.push('artifacts (none attached)');
+
+  const ps = session.project_state || null;
+  if (!ps) absent.push('project_state (never set)');
+  const runBreakers = (ps && Array.isArray(ps.run_breakers)) ? ps.run_breakers.slice() : [];
+
+  const history = Array.isArray(session.history) ? session.history : [];
+
+  return {
+    checkpoint_version: 1,
+    deterministic: true,          // no model ran; assert it rather than leave it implied
+    taken_at: now(),
+    identity: {
+      id: session.id,
+      type: session.type || 'session',
+      surface: session.surface,
+      title: session.title || null,
+      nickname: session.nickname || null,
+      participation: session.participation || 'passive',
+      superseded_by: session.superseded_by || null,
+    },
+    brief,                        // verbatim, whole
+    decisions,                    // verbatim, with truncation marked
+    open_items: open,
+    artifacts,                    // by hash
+    run_breakers: runBreakers,
+    counts: {
+      messages: msgs.length,
+      decisions: decisions.length,
+      artifacts: artifacts.length,
+      history_events: history.length,
+    },
+    last_event_id: history.length ? history[history.length - 1].id : null,
+    absent,                       // what is NOT here, named — never filled in
+  };
+}
+
 /* ---------------- OBJECTS (v2 pilot) ----------------
  *
  * FIRST BUILD OF THE OBJECT TYPE, implementing OBJECT-RECORD-SPEC §13-§17 minimally. The spec is
@@ -1750,6 +1837,13 @@ async function handleApi(method, p, query, b) {
     /* THE THREE VERBS — §15. resolve is deliberately NOT a new route: an object is a record, so
      * resolution is the machinery that already exists, plus a type filter. A second resolver would
      * be the second identity implementation §13 rejected. */
+    /* The rehydration read. A SessionStart hook calls this and gets FIELDS, not a narrative — it
+     * can render them however it likes, but it never has to trust a paraphrase it cannot check. */
+    if ((m = p.match(/^\/api\/sessions\/([^/]+)\/checkpoint$/)) && method === 'GET') {
+      const s = db.sessions[m[1]];
+      if (!s) return { code: 404, payload: { error: `no record ${m[1]} — no checkpoint, and none invented` } };
+      return { code: 200, payload: buildCheckpoint(s) };
+    }
     if ((m = p.match(/^\/api\/objects\/([^/]+)\/events$/)) && method === 'POST') {
       const obj = db.sessions[m[1]];
       if (!obj) return { code: 404, payload: { error: `no object ${m[1]} — nothing was appended` } };

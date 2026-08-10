@@ -164,6 +164,19 @@ self-installs slash commands under `.claude/`. Both are gitignored. If either sh
   for the delivered receipt, ask a human whether the notification appeared. Where no receipt exists
   — Windows toasts, `osascript` — say so and name the human as the receipt rather than implying
   one.
+- **My repo is not the running system.** Every deployment claim names which build it is about, and
+  a claim about the *running* build is verified against the running process — pid, boot time,
+  capability grep — never against source. Three wrong "unblocked" reports in one day, all confident,
+  all the same cause: reasoning about this repo while production runs the notebook's build.
+  ```bash
+  pgrep -fl handoff-relay                 # which build, and is it the one you think?
+  ps -o lstart= -p <pid>                  # booted BEFORE or AFTER the change you are claiming?
+  grep -c '<new symbol>' <running file>   # can it even do the thing? 0 means no.
+  ```
+  The failures it catches are indistinguishable from success without it: a relay serving
+  eleven-hour-old code with a healthy growing log; a measurement reading `none` because *we* never
+  emitted the field; a "self-restarting" deploy whose self-restart lives only in the unmirrored
+  copy. Run the three lines before saying anything is live.
 - **A healthy artifact is not a live pipeline. Verify the producer, not the product.** A relay
   served eleven-hour-old code while its access log grew with well-formed lines of real traffic,
   missing the one field a decision depended on — absent, not malformed, which reads as "no data

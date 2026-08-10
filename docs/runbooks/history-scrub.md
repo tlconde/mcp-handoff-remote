@@ -76,16 +76,33 @@ what a fixture is supposed to look like, and **it must not be scrubbed**.
    line — the same file the pre-commit check reads. The checker must not contain the strings it
    searches for, which is why they are not written here.
 
-## Rehearsal status — what has and has not been proven
+## Rehearsal status — REHEARSED END TO END, 2026-08-10
 
-Rehearsed 2026-08-10 on a throwaway `git clone --mirror` of this repo:
+`git-filter-repo` was installed (`/opt/homebrew/bin/git-filter-repo`, `a40bce548d2c`) and the whole
+operation was run on a throwaway `git clone --mirror`. **The real repo and the real remote were
+never touched.** Results, verified on a FRESH CLONE of the rewritten mirror:
 
-- **Done:** the mirror clone; the baseline measurement reproduced on it (5 / 5 / 25); the residue
-  broken down by distinct value; every real id traced to its owning path; the gate greps shown to
-  FAIL against un-scrubbed history, which is what makes them worth running.
-- **NOT done:** the `filter-repo` invocations themselves and the post-rewrite verification —
-  blocked on precondition 3, the tool is not installed. **Nobody should read the numbers above as
-  proof that the operation works on this repo.** They are proof of what the operation must remove.
+| check | required | measured |
+|---|---|---|
+| real ids anywhere in history | 0 | **0** |
+| `mcp-roundtrip-evals/` commits | 0 | **0** |
+| `docs-seed/` commits | 0 | **0** |
+| `REDACTED-SESSION-ID` markers (proves step 2 ran) | > 0 | **8** |
+| the all-zeros fixture still present | preserved | **9** |
+| tracked files vs the real repo | identical | **identical** |
+| `handoff-core.js` parses in the clone | yes | **yes** |
+
+**One commit was pruned, and it is worth knowing which:** *"De-personalize the one docs-seed line
+that carried the owner's name"* — a commit whose only content was inside `docs-seed/`, so removing
+that path left it empty and `filter-repo` dropped it. 94 commits became 93. Nothing else changed
+shape.
+
+**Step 2 is confirmed load-bearing.** Path removal alone would have left the four ids in the
+history of this very runbook, which survives the scrub by design. The 8 `REDACTED` markers are
+where they were.
+
+**What is still NOT proven:** the force-push, the re-clone by every machine, and the post-push
+re-verification. Those touch the real remote and are the operator's to run.
 
 ## The operation
 

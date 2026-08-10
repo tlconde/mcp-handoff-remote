@@ -41,7 +41,7 @@ private wire — a violation of BROADLY-USED-ONLY and the dependency rule (t26 �
 daemon does NOT post native frames. Instead it emits a "mail landed for [conversation]"
 event; a relay spawn carries it where the target is open. There is NO notification rung:
 it was removed 2026-08-09 (see bin/handoff-wake.js). Everything degrades to
-the user. Her next turn in that conversation drains it: check THIS conversation's mail first,
+the user, whose next turn in that conversation drains it: check THIS conversation's mail first,
 surface one "while you were away" line, then answer. Live Code↔Code delivery stays with
 native `SendMessage` in the refactor, where a real MCP session exists.
 

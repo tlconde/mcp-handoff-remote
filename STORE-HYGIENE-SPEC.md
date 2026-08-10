@@ -115,7 +115,7 @@ payload says so explicitly and names when (`payload_dropped_at`); a present-but-
 payload is never described as absent, however inconvenient its size (§I15).
 
 **Corrections survive everything.** A record annotated as corrected — the t23 unwind wrote
-`[MISFILED — CORRECTED 2026-08-07]` into `sess_5f82c250` verbatim, with a `record_corrected`
+`[MISFILED — CORRECTED 2026-08-07]` into the affected record verbatim, with a `record_corrected`
 event in `ops.jsonl` and a backup at `data.json.bak-t23-unwind`, rather than deleting the
 misfiled summary — is the *only* trace of why some other record reads wrong for a reason
 that is not its own. Compaction may summarize such a record but must carry its annotation

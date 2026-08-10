@@ -52,6 +52,26 @@ Not shared, and must **never** travel from the notebook to here:
 - `EXPERIMENT-BRIEF.md`, `INTERVIEWS.md`, `VALIDATION.md`, `WORKER_PROOF.md` — pitch material
 - `deploy/ACCESS-SETUP.md` — the owner's personal deployment runbook
 
+**The rule was broken and the breach is still in history.** `mcp-roundtrip-evals/calibrations/`
+was TRACKED here, carrying real record ids and real CLI transcript uuids, and the notebook's own
+privacy-guard independently classes those files as personal content that must never be copied
+anywhere public. Untracked and gitignored 2026-08-10.
+
+**PUBLICATION GATE — untracking stops FUTURE commits only.** The ids are in the commit history and
+`git rm --cached` does not touch it, so a clone of this repo still carries them. Before this repo is
+ever made public, a history scrub (`git filter-repo` or equivalent) is REQUIRED, not advisable —
+and it must be verified by effect afterwards, on a fresh clone, with the same greps the pre-commit
+check runs:
+
+```bash
+git clone <repo> /tmp/pubcheck && cd /tmp/pubcheck
+git log --all -p | grep -nE "sess_[a-z]*_?[0-9A-HJKMNP-TV-Z]{20,}" | head   # must be empty
+```
+
+A repo that is clean at HEAD and dirty in history is not clean. This paragraph exists because the
+tracked-file breach was found by a commissioned sweep, not by the check — a `.gitignore` entry is a
+promise about tomorrow and says nothing about what already shipped.
+
 ## Nothing personal, ever, including comments
 
 No owner name, no real domain, no tunnel id, no audience tag, no `/Users/<name>` path —
@@ -90,9 +110,17 @@ done
 Prove it before every commit, do not assume it:
 
 ```bash
-# 1. named identifiers
+# 1. named identifiers. THE VALUES LIVE OUTSIDE THIS FILE, in .scrub-values (gitignored), one
+#    extended-regex alternation per line. They used to be written out here — which made the
+#    check itself the largest single leak in the repo: an owner name, a surname fragment, a real
+#    id, a real machine name and a real home path, in the document that ships. A checker must
+#    contain the strings it searches for, so this cannot be fixed by rewording; it is fixed by
+#    moving the values somewhere that never ships.
+#    The file MUST exist and be non-empty — a fresh clone that silently checks nothing is worse
+#    than no check, because it reports success.
+test -s .scrub-values || { echo "FAIL: .scrub-values missing or empty — this check is inert; see AGENTS.md"; exit 1; }
 git diff --cached --name-only | while read f; do
-  [ -f "$f" ] && grep -HinE "taissa|lconde|94da97ad|old-feather|/Users/dev" "$f"
+  [ -f "$f" ] && grep -HinEf .scrub-values "$f"
 done
 
 # 2. session ids. A uuid that names a transcript on this disk is a REAL session, and a
@@ -108,8 +136,8 @@ done
 
 Empty output from both, or do not commit.
 
-The first list only ever grows, one entry per escape that already happened. It caught `94da97ad`
-after that leak, and it did not catch the live session id committed in `forwarder-runbook.js`
+The list only ever grows, one entry per escape that already happened. It caught a real session-id
+fragment after that leak, and it did not catch the live session id committed in `forwarder-runbook.js`
 with the initial release — a uuid is not a name. Prefer a check that describes the class.
 
 **This bit on the very first mirror.** Copying `handoff-tools.js` across re-introduced three

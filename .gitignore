@@ -8,6 +8,10 @@ deploy/cloudflared.yml
 # Never commit credentials. They live outside the repo; this is belt and braces.
 *.pem
 *.json.credentials
+# Evaluation receipts: live calibration state carrying real record ids and transcript uuids.
+# AGENTS.md says they must never travel from the notebook to here; they did, and were tracked.
+# Untracked 2026-08-10. NOTE: this stops FUTURE commits only — see the publication gate in AGENTS.md.
+mcp-roundtrip-evals/calibrations/
 # Session state written before a deliberate /clear, for the reborn session to read.
 # Working memory, not product — present on disk, never shipped.
 CONTEXT-PACKAGE.md
@@ -15,3 +19,7 @@ CONTEXT-PACKAGE.md
 # and the bridge self-installs slash commands. Neither belongs in the repo.
 HANDOFF.md
 .claude/
+# Escaped-value list for the pre-commit named-identifier check. Values only, never ships.
+# The check REQUIRES this file to exist and be non-empty (see AGENTS.md); a fresh clone must
+# create it before committing, so an inert check fails loud instead of reporting success.
+.scrub-values

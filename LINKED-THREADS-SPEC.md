@@ -170,10 +170,10 @@ the subtler ones — they never touch disk, so nothing looks like state at all.
 | 1 | Reply socket path stored and reused (t26) | persisted | ENOENT on reply — the address outlived the listener. |
 | 2 | Orphaned bridges serving pre-fix code | cached | Four live bridges answered with retired logic; t9's wrong-surface routing. |
 | 3 | `native_ref` pinned at first registration | persisted | The wake tier asked about a dead uuid and reported an OPEN terminal CLOSED. |
-| 4 | `const NATIVE_ID = process.env.CLAUDE_CODE_SESSION_ID` | **cached** | Frozen at bridge start; served `798df246`, an id with no transcript anywhere. Identity, receipts and wake all inherited the dead pointer. |
+| 4 | `const NATIVE_ID = process.env.CLAUDE_CODE_SESSION_ID` | **cached** | Frozen at bridge start; served a stale uuid`, an id with no transcript anywhere. Identity, receipts and wake all inherited the dead pointer. |
 | 5 | `nativeReach` fallback to `native_ref.messaging_socket_path` when the file existed | **persisted + unvalidated** | The worst of both: a stored process address trusted with no liveness check at all. A recycled pid would have delivered to a stranger. Deleted, not repaired. |
 | 6 | Recap hook reading `process.env.CLAUDE_CODE_SESSION_ID` | *(claim WITHDRAWN — latent risk, not demonstrated failure)* | Originally recorded here as a demonstrated sixth instance. Retracted by its author the same day: a hook is spawned fresh per event and inherits the CLI's *current* env, so it resolved correctly in practice. Reading the authoritative stdin payload is still the correct ordering, and shipped — but the failure never happened. **The correction stands beside the claim, not in place of it**: overstating an instance is the same fault class as understating one. |
-| 7 | `status` rendering `ctx.identity` (the bridge's in-memory cache) | **cached** | The canonical case. After a resume, status announced "CLI 93ac44b0… not yet registered" about a terminal whose record was alive, correctly bound, and refreshing itself on every contact. A cached value reporting on live state, in the one surface whose entire job is truth about state. |
+| 7 | `status` rendering `ctx.identity` (the bridge's in-memory cache) | **cached** | The canonical case. After a resume, status announced "CLI <uuid>… not yet registered" about a terminal whose record was alive, correctly bound, and refreshing itself on every contact. A cached value reporting on live state, in the one surface whose entire job is truth about state. |
 
 **Measured facts that closed the identity question** (2026-08-09, live, CLI 2.1.226 — none
 of this is inferred):
@@ -181,7 +181,7 @@ of this is inferred):
 - `SessionStart` delivers `{session_id, transcript_path, cwd, hook_event_name, source}` on
   stdin; `source` is `startup` / `resume`.
 - **A real quit-and-reopen preserves the CLI uuid.** Measured on this terminal through the
-  bare `claude --resume` picker: uuid `93ac44b0…` unchanged, pid `78087 → 38088`.
+  bare `claude --resume` picker: uuid unchanged, pid changed.
 - **`/clear` is the fork**, inside the same living process: new session id, new transcript,
   `parentUuid` null, no lineage pointer anywhere.
 
@@ -349,7 +349,7 @@ already has a session id, so let identity ride it. **It does not work, and the r
 measured rather than argued.**
 
 **MCP sessions are per-interaction.** Two consecutive interactions in one app conversation
-produced two different transport ids — `fe0c295a`, then `e25d7676`. A transport id therefore
+produced two different transport ids across two consecutive interactions. A transport id therefore
 identifies a *request episode*, not a conversation and not a participant. Pinning identity to
 it would mint a new identity every turn, which is worse than the anonymity it was meant to
 cure: §I2b's stored-address disease, with a fresh address each time.

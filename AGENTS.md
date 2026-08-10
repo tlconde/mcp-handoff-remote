@@ -129,6 +129,31 @@ and the fresh-clone verification that must come back EMPTY rather than merely sm
 out in [`docs/runbooks/history-scrub.md`](docs/runbooks/history-scrub.md). It is prepared and
 deliberately NOT performed: the decision and the command are the operator's.
 
+## Delivery symptoms: read the delta series BEFORE theorising
+
+**Every message carries `queued-at` and `read_at`. Their difference, over the day, is the delivery
+record — and it already exists before anyone forms an opinion.** So when someone reports that mail
+stopped arriving, is slow, or is silently held, the FIRST move is not a hypothesis. It is:
+
+1. Compute `read_at − queued-at` for every message on the affected record, across the whole day.
+2. Split the series at each candidate event — a retirement, a reinstall, a restart, a commit — with
+   their real timestamps.
+3. Look for a **breakpoint**. Whatever changed at it is a suspect; **whatever did not change at it
+   is not the cause, no matter how good the story.**
+4. If there is no clean breakpoint, say so. That result falsifies every story that requires a stop,
+   including your own.
+
+**This is a named anti-pattern with a citation: on 2026-08-10 three separate causal stories — a
+monitor retirement, a held-message state, and a plugin version gate — were argued in detail before
+anyone read the series.** When it was finally read it showed 71 deliveries between 03:31 and 18:21
+with a median of 23s before the suspected event and 21s after, no discontinuity anywhere, and the
+only anomalies (seven waits over 120s) all sitting BEFORE the accused change and explained by the
+receiver being mid-turn. The infrastructure was acquitted by data that had been sitting in the store
+the entire time. Logging was built and then theorised over instead of read.
+
+Report the numbers before the conclusion: breakpoint time, the series either side, candidate changes
+in the window, and which one the evidence convicts — or that none of them do.
+
 ## Nothing personal, ever, including comments
 
 No owner name, no real domain, no tunnel id, no audience tag, no `/Users/<name>` path —

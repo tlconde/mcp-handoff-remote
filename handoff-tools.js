@@ -862,7 +862,32 @@ async function callTool(name, args, ctx, core) {
           thread: dest.title, conversation: dest.title, session_id: dest.id,
           native_ref: dest.native_ref, channels: false, from: args.from || 'your chat'
         });
-      } catch (_) { woke = null; }
+      } catch (e) { woke = { woke: false, tier: 'threw', error: (e && e.message) || String(e) }; }
+      /* WHICH RUNG CARRIED IT, WRITTEN DOWN AT THE MOMENT IT HAPPENS.
+       *
+       * The ops vocabulary had no wake event at all — 384 session_registered, zero wake — so the
+       * one question the wake tier exists to answer ("did this delivery start a turn, and by which
+       * leg?") could only be answered afterwards by inference. It cost a full forensic pass on
+       * 2026-08-10: the delta series could prove a turn STARTED within 20s but never which
+       * mechanism started it, and two causal stories survived purely because nothing contradicted
+       * them. A tier that chooses among four rungs and records none of them is asking to be
+       * theorised about.
+       *
+       * Deliberately at the CALL SITE rather than inside wake(): the module is owned by the
+       * wake-tier workstream and returns its verdict; recording what we did with that verdict is
+       * this layer's business, and it keeps the log honest if wake() ever throws — 'threw' is a
+       * rung outcome too, and it used to be swallowed into null.
+       *
+       * NEVER let logging break the send. Same rule as the wake call it follows. */
+      try {
+        core.ops('wake', {
+          dest: dest.id, surface: dest.surface,
+          tier: (woke && woke.tier) || 'none',
+          woke: !!(woke && woke.woke),
+          requested: args.mode === 'fyi' ? 'fyi' : 'attention',
+          error: (woke && woke.error) || undefined
+        });
+      } catch (_) {}
     }
     // Read-state attribution line, keyed to sender class (chat-side identity).
     let attribution;

@@ -101,9 +101,17 @@ async function main() {
   /* THE BRIEF IS CHECKED BEFORE THE MARKER. If the marker never lands we need to distinguish "the
    * worker never learned the task" (barrier 2) from "the worker knew and failed", and after the
    * fact the brief is the only place that answer lives. */
+  /* ASSERT THE PAYLOAD, NOT THE WORD. The first version of this check tested
+   * brief.includes('PREFLIGHT') and passed green while the brief carried no task at all — the word
+   * matched the context line. It reported "brief carries the task" on the exact run that proved it
+   * did not, which is the vacuous-assertion disease this file was written to catch, committed
+   * inside the catcher. The marker path and text are the payload; nothing else will do. */
   const brief = await readBrief(workerId, dir);
-  link('brief carries the task', brief.includes('PREFLIGHT'),
-    brief ? `${brief.length} chars` : 'brief unreadable — could not confirm the worker was told anything');
+  const carriesTask = brief.includes(MARKER_TEXT) && brief.includes(path.basename(markerPath));
+  link('brief carries the TASK payload (marker path + exact content)', carriesTask,
+    brief
+      ? `${brief.length} chars${carriesTask ? '' : ' — the brief reached the worker but the task was not in it'}`
+      : 'brief unreadable — could not confirm the worker was told anything');
 
   // ---- the only verdict that counts ----
   console.log(`\n  waiting up to ${Math.round(TIMEOUT_MS / 1000)}s for the effect…`);

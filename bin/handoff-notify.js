@@ -44,6 +44,27 @@
 'use strict';
 const { execFile } = require('child_process');
 
+/* SEAM GATING — deliberately duplicated from bin/handoff-wake.js rather than shared.
+ * These two modules are standalone by design and the dependency runs one way (wake requires
+ * notify), so importing it back would make the cycle this file exists to avoid. Twelve lines is
+ * the cheaper price. The rule they share: a seam that SUBSTITUTES for real delivery must be
+ * armed deliberately (HANDOFF_TEST=1) and must never report success it did not earn. */
+const seamAnnounced = new Set();
+function seamArmed(name) {
+  const raw = process.env[name];
+  if (!raw) return null;
+  const ok = process.env.HANDOFF_TEST === '1';
+  if (!seamAnnounced.has(name)) {
+    seamAnnounced.add(name);
+    try {
+      console.error(ok
+        ? `[handoff] TEST SEAM ACTIVE: ${name} — notifications are RECORDED, not shown`
+        : `[handoff] REFUSED test seam ${name}: it records instead of notifying and would report a notification nobody saw. Set HANDOFF_TEST=1 as well if this is genuinely a test process. Proceeding with the REAL path.`);
+    } catch (_) {}
+  }
+  return ok ? raw : null;
+}
+
 /* Where terminal-notifier lives, resolved once per process. Absence is normal and is a
  * degrade, never an error — the osascript rung still shows the ping. HANDOFF_TERMINAL_NOTIFIER
  * overrides for tests and for non-Homebrew installs. */
@@ -155,8 +176,15 @@ function notify(ev) {
     const title = String((ev && ev.title) || 'handoff');
     const body = String((ev && ev.body) || '');
 
-    // Test/CI: record, do not fire.
-    const logPath = process.env.HANDOFF_NOTIFY_LOG;
+    /* Test/CI: record, do not fire. GATED and SELF-LABELLING, same rule as the wake seam.
+     *
+     * This returned {fired:true} for a notification that never appeared on anyone's screen —
+     * the same shape that let the wake seam claim five deliveries it never made. `channel:'log'`
+     * hinted at the truth, but `fired:true` is the field callers branch on, and the wake tier
+     * branches on exactly that to decide whether it degraded to 'notify' or fell through to
+     * 'store'. So a notify seam armed in production could also flip the RECORDED RUNG of a real
+     * delivery. Gated behind HANDOFF_TEST=1, and fired is now false because nothing fired. */
+    const logPath = seamArmed('HANDOFF_NOTIFY_LOG');
     if (logPath) {
       require('fs').appendFileSync(logPath, JSON.stringify({
         at: new Date().toISOString(), title, body,
@@ -168,7 +196,8 @@ function notify(ev) {
         click: clickableRungEnabled() ? (notifyTarget(ev).activate || 'none') : 'none',
         click_target: notifyTarget(ev).name || null
       }) + '\n');
-      return { fired: true, channel: 'log' };
+      return { fired: false, seam: true, channel: 'log-seam',
+        note: 'SEAM: nothing was shown to anyone — HANDOFF_NOTIFY_LOG is a test double' };
     }
 
     // Channel 1: Dispatch push seam. A daemon sets HANDOFF_DISPATCH_HOOK to a command that

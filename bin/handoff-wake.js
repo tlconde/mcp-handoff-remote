@@ -88,6 +88,36 @@ const WAKE_LINE = (thread, from) => from
   ? `mail from ${from} on ${thread || 'a thread'} is waiting — checking the inbox will deliver it`
   : `mail waiting on ${thread || 'a thread'} — checking the inbox will deliver it`;
 
+/* SEAM GATING — a test double must not be armable in production by one environment variable.
+ *
+ * THE DISTINCTION THAT MATTERS is not "is it a test hook" but "does it report success it did not
+ * earn". HANDOFF_NO_WAKE returns {woke:false, tier:'disabled'} — honest, and a legitimate kill
+ * switch a user is entitled to set in production, so it stays UNGATED. HANDOFF_WAKE_LOG and
+ * HANDOFF_NOTIFY_LOG SUBSTITUTE for the real thing while reporting success, and those are gated:
+ * they now require HANDOFF_TEST=1 alongside, so a long-lived daemon cannot be converted into a
+ * simulator by a single variable somebody set while trying to observe it.
+ *
+ * A refused seam says so ONCE on stderr rather than failing quietly in either direction — the
+ * whole defect was a silent state change, and curing it with a second silent state change would
+ * be its own joke. */
+const seamAnnounced = new Set();
+function seamArmed(name) {
+  const raw = process.env[name];
+  if (!raw) return null;
+  if (process.env.HANDOFF_TEST === '1') {
+    if (!seamAnnounced.has(name)) {
+      seamAnnounced.add(name);
+      try { console.error(`[handoff] TEST SEAM ACTIVE: ${name} — real delivery is REPLACED by a log line; this must never be a production daemon`); } catch (_) {}
+    }
+    return raw;
+  }
+  if (!seamAnnounced.has(name)) {
+    seamAnnounced.add(name);
+    try { console.error(`[handoff] REFUSED test seam ${name}: it replaces real delivery with a log line and would report success for work never done. Set HANDOFF_TEST=1 as well if this is genuinely a test process. Proceeding with the REAL path.`); } catch (_) {}
+  }
+  return null;
+}
+
 function sessionsDir() {
   return process.env.HANDOFF_SESSIONS_DIR || path.join(os.homedir(), '.claude', 'sessions');
 }
@@ -336,9 +366,24 @@ function wake(delivery, opts) {
         '--model', model, '--allowedTools', 'ListAgents', 'SendMessage', '--output-format', 'text'];
       const cwd = rc.cwd || (d.native_ref && d.native_ref.cwd) || process.cwd();
 
-      // CI seam: record the dispatch, do not spawn a real relay.
-      if (process.env.HANDOFF_WAKE_LOG) {
-        const r = { woke: true, tier: 'relay', delivery: 'dispatched', target: rc.name, model, bin, argv, cwd, line: wakeLine, note: 'no-reply-expected; one call, no retries' };
+      /* CI seam: record the dispatch, do not spawn a real relay.
+       *
+       * IT USED TO RETURN {woke:true, tier:'relay', delivery:'dispatched'} — a sentence
+       * indistinguishable from a real delivery, in the tool result, in the ops log and in the
+       * store. On 2026-08-10 this variable was set in the production daemon's plist by someone
+       * instrumenting the wake path, and for thirty-one minutes every wake was a logged no-op
+       * that reported success: five terminals never moved, no notification fired (the notify rung
+       * only runs when relay DECLINES, and relay was claiming it had worked), and nothing errored.
+       * The same argv run by hand from a shell worked, because a shell has no such variable.
+       *
+       * Two things were wrong and both are fixed here. The seam ARMED SILENTLY in production, and
+       * it LIED IN THE VOCABULARY OF SUCCESS. A test double that claims delivery it did not
+       * perform is a correctness bug, not a matter of taste — so the result is now self-labelling
+       * and no reader, human or machine, can mistake it for a wake. */
+      if (seamArmed('HANDOFF_WAKE_LOG')) {
+        const r = { woke: false, seam: true, tier: 'relay-simulated', delivery: 'simulated',
+          target: rc.name, model, bin, argv, cwd, line: wakeLine,
+          note: 'SEAM: no process was spawned and nothing was delivered — HANDOFF_WAKE_LOG is a test double' };
         logChoice(r); return r;
       }
 

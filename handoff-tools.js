@@ -891,6 +891,10 @@ async function callTool(name, args, ctx, core) {
           tier: (woke && woke.tier) || 'none',
           woke: !!(woke && woke.woke),
           requested: args.mode === 'fyi' ? 'fyi' : 'attention',
+          /* seam:true travels INTO THE STORE, because the store is what a later investigator
+           * queries. Without it, a simulated dispatch and a real one are the same row, which is
+           * precisely how five non-deliveries read as successes for thirty-one minutes. */
+          seam: (woke && woke.seam) || undefined,
           reason: (woke && woke.reason) || undefined,
           notify_fired: woke && woke.notify ? !!woke.notify.fired : undefined,
           notify_channel: woke && woke.notify ? woke.notify.channel : undefined,

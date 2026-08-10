@@ -23,3 +23,5 @@ HANDOFF.md
 # The check REQUIRES this file to exist and be non-empty (see AGENTS.md); a fresh clone must
 # create it before committing, so an inert check fails loud instead of reporting success.
 .scrub-values
+# Local path values for AGENTS.md's mirroring instructions. Values only, never ships.
+.repo-paths

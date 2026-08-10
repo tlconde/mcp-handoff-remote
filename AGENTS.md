@@ -4,8 +4,8 @@
 
 | repo | role |
 |---|---|
-| `~/Dev/Github/handoff-remote` (**here**) | The **publishable** artifact. Private on GitHub today, intended to go public. |
-| `~/Dev/Github/ai-product-sense/Projects/handoff-poc` | The **lab notebook**: trials, evaluation receipts, pitch material, the owner's personal runbook. |
+| this repo (**here**) | The **publishable** artifact. Private on GitHub today, intended to go public. |
+| `$HANDOFF_NOTEBOOK` (see `.repo-paths`) | The **lab notebook**: trials, evaluation receipts, pitch material, the owner's personal runbook. |
 
 **Any change to shared code lands in BOTH.** They diverge silently otherwise, and the first
 symptom is a bug fixed in one place and still live in the other. Measured 2026-08-09: 15 of 23
@@ -16,22 +16,23 @@ version across" but "is the notebook's version a divergence to correct back". Ch
 first and the notebook follows. A change that exists only in the notebook is not yet real.
 
 Before assuming the trees match, measure it:
-`HANDOFF_MIRROR=<path-to-notebook> node drift-eval.js` separates comment-only and
+`HANDOFF_MIRROR=$HANDOFF_NOTEBOOK node drift-eval.js` separates comment-only and
 placeholder-value differences (both expected) from structural ones — the only kind that means
 the two copies would behave differently.
 
-**`git apply` from inside the notebook SILENTLY APPLIES NOTHING, and exits 0.** `handoff-poc` is a
-subdirectory of the `ai-product-sense` repo, and `git apply` resolves a patch's paths against the
-REPO ROOT — so a patch generated here looks for `ai-product-sense/handoff-core.js`, does not find
-it, prints `Skipped patch`, changes nothing, and **returns success**. `git apply --check`
+**`git apply` from inside the notebook SILENTLY APPLIES NOTHING, and exits 0.** The notebook is a
+subdirectory of a larger repo, and `git apply` resolves a patch's paths against the REPO ROOT — so
+a patch generated here looks for `<repo-root>/handoff-core.js`, does not find it, prints
+`Skipped patch`, changes nothing, and **returns success**. `git apply --check`
 green-lights the same no-op. An exit-0 no-op inside the remedy for exit-0 no-ops is the most
 on-brand defect this project has produced; it cost two hand-mirrors on 2026-08-10 and was caught
 only by checking the file's size and mtime rather than the exit code.
 
 ```bash
-cd ~/Dev/Github/ai-product-sense                        # the REPO ROOT, not the project dir
-git apply --directory=Projects/handoff-poc <patch>
-grep -c '<a symbol the patch adds>' Projects/handoff-poc/<file>   # 0 means it did not land
+source .repo-paths                                      # local paths, gitignored
+cd "$HANDOFF_NOTEBOOK_REPO"                              # the REPO ROOT, not the project dir
+git apply --directory="${HANDOFF_NOTEBOOK#$HANDOFF_NOTEBOOK_REPO/}" <patch>
+grep -c '<a symbol the patch adds>' "$HANDOFF_NOTEBOOK"/<file>    # 0 means it did not land
 ```
 
 Then verify by effect, always: size and mtime changed, the new symbol present, the suite run. If a
@@ -67,6 +68,9 @@ check runs:
 git clone <repo> /tmp/pubcheck && cd /tmp/pubcheck
 git log --all -p | grep -nE "sess_[a-z]*_?[0-9A-HJKMNP-TV-Z]{20,}" | head   # must be empty
 ```
+
+Notebook path parameterized — the doc carries no private repo names; the values live in
+`.repo-paths` (gitignored), sourced by the commands above, same pattern as `.scrub-values`.
 
 A repo that is clean at HEAD and dirty in history is not clean. This paragraph exists because the
 tracked-file breach was found by a commissioned sweep, not by the check — a `.gitignore` entry is a

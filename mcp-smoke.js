@@ -29,6 +29,19 @@ delete process.env.CLAUDE_CODE_SESSION_ID;
 // fake CLAUDE_CODE_SESSION_ID while still pointing at the runner's own live row describes a
 // process that cannot exist. Cut both, so a faked identity is faked coherently.
 delete process.env.CLAUDE_PID;
+/* Same leak, THIRD vector (2026-08-10), and it did not exist until we created it. The barrier-7
+ * fix exports HANDOFF_SESSION_ID to every dispatched worker on purpose — a worker needs to know
+ * which record it is. The side effect: a worker that runs this suite inherits a REAL protocol
+ * identity, and fourteen assertions about anonymous sends, unpinned verbs and no-identity refusals
+ * break, because the environment now supplies the very thing they exist to test the absence of.
+ *
+ * Found by disagreement rather than by a failure here: a dispatched worker reported 199/14 while
+ * the same commit measured 213/0 for the operator, twice. Neither party was wrong — they were
+ * running in different worlds, and only one of them had been given an identity. The proposed
+ * explanation was a PATH difference; that was tested and falsified before this one was found.
+ *
+ * The baseline is NO identity. Identity tests set it explicitly, which is the whole design. */
+delete process.env.HANDOFF_SESSION_ID;
 fs.mkdirSync(process.env.HANDOFF_NATIVE_SESSIONS_DIR = '/tmp/hsmoke-nativereg-' + Date.now(), { recursive: true });
 process.env.HANDOFF_NO_CLI = '1';
 process.env.HANDOFF_NO_AUTORECEIPT = '1';

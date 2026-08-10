@@ -455,6 +455,70 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     delete require.cache[require.resolve('./handoff-core')];
   }
 
+  /* ---- (c7) a compaction must not stop the daemon ----
+   * llmSummarize was an `async function` wrapping spawnSync with a 90-second timeout, on the loop
+   * that serves every other request. The relay's "home-offline: no reply within 10000ms" errors
+   * were this, and they are a correctness hazard rather than a latency one: three dispatches that
+   * day returned that error having ALREADY LANDED, so a caller who believed it would double-
+   * dispatch.
+   *
+   * THE ASSERTION HAS TO BE ABLE TO FAIL, so it does not test the shape of the code. A fake
+   * `claude` that sleeps stands in for a slow model; the test starts a compaction and then issues
+   * an ordinary API call, and requires the ordinary call to FINISH FIRST. Under spawnSync it
+   * cannot: the second call would not even begin until the child exited. Ordering is the evidence,
+   * not elapsed time, so a slow machine cannot make this pass or fail by accident. */
+  {
+    const home = tmpHome();
+    const prev = process.env.HANDOFF_HOME, prevBin = process.env.HANDOFF_CLAUDE_BIN, prevCli = process.env.HANDOFF_NO_CLI;
+    const fake = path.join(home, 'fake-claude.sh');
+    // --version answers instantly so claudeCliAvailable() is true; a compaction call sleeps.
+    fs.writeFileSync(fake, '#!/bin/sh\ncase "$1" in --version) echo "1.0.0"; exit 0;; esac\nsleep 3\necho "SLOW SUMMARY"\n');
+    fs.chmodSync(fake, 0o755);
+    process.env.HANDOFF_HOME = home;
+    process.env.HANDOFF_CLAUDE_BIN = fake;
+    delete process.env.HANDOFF_NO_CLI;
+    delete require.cache[require.resolve('./handoff-core')];
+    const c7 = require('./handoff-core');
+
+    const mk = await c7.handleApi('POST', '/api/sessions', {}, { surface: 'chat', title: 'compaction blocking probe' });
+    const sid = mk.payload.id;
+    // Enough text that the envelope compacts rather than travelling whole.
+    const big = 'x'.repeat(c7.FULL_THRESHOLD + 1000);
+    await c7.handleApi('POST', `/api/sessions/${sid}/messages`, {}, { role: 'user', kind: 'chat', text: big });
+
+    const order = [];
+    const slow = c7.handleApi('GET', `/api/sessions/${sid}/brief`, { for: 'code' }, {}).then(r => { order.push('compaction'); return r; });
+    // Yield once so the compaction genuinely starts before the second call is issued.
+    await new Promise(r => setImmediate(r));
+    const quick = c7.handleApi('GET', '/api/state', {}, {}).then(r => { order.push('other-request'); return r; });
+    await Promise.all([slow, quick]);
+
+    ok(order[0] === 'other-request',
+      '(c7) an ordinary request completes WHILE a compaction is in flight — the daemon does not stand still inside its own summariser'
+      + ` (order: ${order.join(' then ')})`);
+
+    /* The 90s ceiling was the one thing spawnSync did guarantee, and moving to spawn would silently
+     * drop it. A child that never exits must still lose. */
+    const started = Date.now();
+    const capped = await new Promise(resolve => {
+      const hang = path.join(home, 'hang-claude.sh');
+      fs.writeFileSync(hang, '#!/bin/sh\ncase "$1" in --version) echo "1.0.0"; exit 0;; esac\nsleep 60\n');
+      fs.chmodSync(hang, 0o755);
+      process.env.HANDOFF_CLAUDE_BIN = hang;
+      delete require.cache[require.resolve('./handoff-core')];
+      const c7b = require('./handoff-core');
+      // Reach the summariser directly with a short ceiling; the product ceiling is 90s.
+      c7b.__claudeCompactForTests('probe', 1200).then(resolve);
+    });
+    ok(capped === null && Date.now() - started < 10000,
+      '(c7) ...and a hung child is killed at the ceiling rather than waited on forever — the guarantee spawnSync gave is kept');
+
+    if (prev === undefined) delete process.env.HANDOFF_HOME; else process.env.HANDOFF_HOME = prev;
+    if (prevBin === undefined) delete process.env.HANDOFF_CLAUDE_BIN; else process.env.HANDOFF_CLAUDE_BIN = prevBin;
+    if (prevCli === undefined) delete process.env.HANDOFF_NO_CLI; else process.env.HANDOFF_NO_CLI = prevCli;
+    delete require.cache[require.resolve('./handoff-core')];
+  }
+
   // ---- (d) rollout smoke: 10 forwarders under load across a restart, zero lost writes ----
   {
     const home = tmpHome();

@@ -300,12 +300,44 @@ function mcpRegistered() {
 
 /* ---------------- compaction ---------------- */
 const COMPACT_PROMPT = 'Compact this session into 2-3 sentences a successor agent needs. Preserve locked decisions verbatim.\n\n';
+/* AN `async` FUNCTION THAT BLOCKS ITS OWN EVENT LOOP IS NOT ASYNCHRONOUS.
+ *
+ * This called spawnSync with a 90-SECOND timeout, inside the daemon that serves every other
+ * request. The keyword said async, the await sites read as async, and nothing about the call site
+ * suggested that a compaction stops the protocol dead for up to a minute and a half.
+ *
+ * Measured 2026-08-10: the relay's "home-offline: no reply from home within 10000ms" errors were
+ * this — not a dead daemon, not a network fault, a daemon standing still inside its own summariser.
+ * Worse, those timeouts are a correctness hazard, not just latency: three times that day a
+ * send_to_worker returned home-offline and the dispatch had ALREADY LANDED. A caller that believes
+ * the error and retries creates duplicate workers.
+ *
+ * IT HAD BEEN DORMANT AND WAS WOKEN BY A FIX. Before the claude binary was resolved (be60892),
+ * claudeCliAvailable() returned false here, so this branch never ran. Mirroring that fix switched
+ * on a latent blocking bug that a different bug had been hiding — which is its own lesson about
+ * what "unblocking" can cost.
+ *
+ * Same binary, same 90s ceiling, same fallbacks; the process is simply awaited instead of waited
+ * on. The timeout is enforced by us rather than by spawnSync, because an async child that hangs
+ * would otherwise have no ceiling at all — the one guarantee the synchronous version did give. */
+function claudeCompact(text, timeoutMs) {
+  return new Promise(resolve => {
+    let child, done = false;
+    const finish = v => { if (!done) { done = true; clearTimeout(timer); resolve(v); } };
+    const timer = setTimeout(() => { try { child && child.kill('SIGKILL'); } catch (_) {} finish(null); }, timeoutMs);
+    try {
+      child = spawn(claudeBin() || 'claude', ['-p', COMPACT_PROMPT + text, '--output-format', 'text']);
+    } catch (_) { return finish(null); }
+    let out = '';
+    child.stdout.on('data', d => { out += d; if (out.length > 200000) out = out.slice(-200000); });
+    child.on('error', () => finish(null));
+    child.on('close', code => finish(code === 0 && out.trim() ? out.trim() : null));
+  });
+}
 async function llmSummarize(text) {
   if (claudeCliAvailable()) {
-    try {
-      const r = spawnSync(claudeBin() || 'claude', ['-p', COMPACT_PROMPT + text, '--output-format', 'text'], { timeout: 90000, encoding: 'utf8' });
-      if (r.status === 0 && r.stdout && r.stdout.trim()) return r.stdout.trim();
-    } catch (_) {}
+    const viaCli = await claudeCompact(text, 90000);
+    if (viaCli) return viaCli;
   }
   if (process.env.ANTHROPIC_API_KEY) {
     try {
@@ -1554,6 +1586,7 @@ module.exports = {
   handleApi, HOME, PREFS, OPS, FULL_THRESHOLD, SURFACES, NAMES,
   claudeCliAvailable, claudeBin, mcpRegistered, ops, autoReceipt, getPrefs, setPref, resolveAutosend,
   artifactCap, artifactBlock, buildBrief, fencedBlock,
+  __claudeCompactForTests: claudeCompact,
   /* Exported ONLY so the suite can assert the id invariant FIRES. handleApi calls load() at the
    * top of every operation, so an in-memory id mutation is wiped before any save can see it —
    * which means the invariant is unreachable from outside and a test that goes through the API

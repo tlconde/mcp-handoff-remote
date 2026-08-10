@@ -1003,8 +1003,14 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     process.env.HANDOFF_NO_CLI = '1';
     process.env.HANDOFF_CLAUDE_BIN = '/nonexistent/definitely-not-a-binary';
     const cheapNoModel = (await c13.handleApi('GET', `/api/sessions/${sid13}/brief`, { for: 'code' }, {})).payload;
-    ok(cheap.brief === cheapNoModel.brief,
-      '(c13) ...and is IDENTICAL with the model unreachable — a default read that cannot notice the model is gone never called it');
+    /* NORMALISE THE TIMESTAMP BEFORE COMPARING. buildBrief stamps env.created_at into its header,
+     * so two builds straddling a clock tick differ by a millisecond and nothing else — this
+     * assertion flaked once in five runs before that was accounted for. Comparing a value that is
+     * SUPPOSED to vary makes a test that fails for being right. Everything else must match
+     * exactly, which is the property under test. */
+    const norm = b => String(b).replace(/\(20\d\d-\d\d-\d\dT[0-9:.]+Z\)/g, '(TS)');
+    ok(norm(cheap.brief) === norm(cheapNoModel.brief),
+      '(c13) ...and is IDENTICAL with the model unreachable, modulo its timestamp — a default read that cannot notice the model is gone never called it');
     if (prevCli === undefined) delete process.env.HANDOFF_NO_CLI; else process.env.HANDOFF_NO_CLI = prevCli;
     if (prevBin === undefined) delete process.env.HANDOFF_CLAUDE_BIN; else process.env.HANDOFF_CLAUDE_BIN = prevBin;
 
@@ -1022,6 +1028,73 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
 
     if (prev === undefined) delete process.env.HANDOFF_HOME; else process.env.HANDOFF_HOME = prev;
     delete require.cache[require.resolve('./handoff-core')];
+  }
+
+  /* ---- (c14) THE HEARTBEAT VERB — own-host only, refused whole ----
+   * The remote door widened by exactly one tool so a wake agent on a second machine can assert a
+   * verdict for its own records. That is the act that flips reachability from 'unknown' to
+   * host-asserted, and it is the acceptance test this review was opened around.
+   *
+   * The refusal ships WITH the verb rather than after it: a door that widens without its guard
+   * tested is a door whose guard is a comment. */
+  {
+    const home = tmpHome();
+    const prev = process.env.HANDOFF_HOME;
+    process.env.HANDOFF_HOME = home;
+    delete require.cache[require.resolve('./handoff-core')];
+    delete require.cache[require.resolve('./handoff-tools')];
+    const c14 = require('./handoff-core');
+    const t14 = require('./handoff-tools');
+
+    // Two remote records on two different hosts.
+    const mine = (await c14.handleApi('POST', '/api/register-remote', {}, { host: 'my-laptop', title: 'mine', attested_by: 'operator', minted_by: 'test' })).payload.session;
+    const theirs = (await c14.handleApi('POST', '/api/register-remote', {}, { host: 'other-host', title: 'theirs', attested_by: 'operator', minted_by: 'test' })).payload.session;
+
+    /* peek lists records with mail WAITING, so a record needs something waiting on it before its
+     * reachability is reported at all — my first version asserted the verdict on a record nobody
+     * was writing to, and read an empty peek as a wrong verdict. */
+    await c14.handleApi('POST', `/api/sessions/${mine.id}/messages`, {}, { role: 'user', kind: 'xmsg', text: '[message from chat · x] waiting' });
+
+    // Before any heartbeat, a remote record reads unknown — nobody has looked.
+    const before = await t14.callTool('peek_inbox', { surface: 'code' }, {}, c14);
+    ok(/reachable: unknown/.test(before),
+      '(c14) a remote record reads UNKNOWN before its host has ever spoken — not unreachable, unlooked-at');
+
+    // THE REFUSAL, and it must refuse WHOLE rather than filtering.
+    const crossed = await t14.callTool('agent_heartbeat', {
+      host: 'my-laptop', sessions: { [mine.id]: 'process', [theirs.id]: 'process' }, agent_version: '0.1.0',
+    }, {}, c14);
+    ok(/Refused/.test(crossed) && /belongs to other-host/.test(crossed),
+      '(c14) a heartbeat naming ANOTHER host\'s record is refused, and the refusal names which record and whose it is');
+    ok(/NOTHING was written/.test(crossed),
+      '(c14) ...refused WHOLE, not filtered — silently dropping the foreign entries would let a caller believe it asserted something it did not');
+
+    const stAfterRefusal = (await c14.handleApi('GET', '/api/state', {}, {})).payload;
+    ok(!stAfterRefusal.agents || !stAfterRefusal.agents['my-laptop'],
+      '(c14) ...and the store proves it: no agent record was written by the refused call');
+
+    // The legitimate case: only its own records, and the verdict lands.
+    const okBeat = await t14.callTool('agent_heartbeat', {
+      host: 'my-laptop', sessions: { [mine.id]: 'process' }, agent_version: '0.1.0',
+    }, {}, c14);
+    ok(/Heartbeat recorded for "my-laptop"/.test(okBeat),
+      '(c14) a heartbeat for the caller\'s OWN records is recorded');
+
+    const after = await t14.callTool('peek_inbox', { surface: 'code' }, {}, c14);
+    ok(/reachable: process/.test(after),
+      '(c14) THE FLIP: reachability now reads what that host observed, not "unknown" — the acceptance test this verb exists for');
+
+    /* NO STATE-READ COMPANION, asserted so nobody "completes" the surface later. The gap is the
+     * design: the door widened for an acceptance test, never for a convenience. */
+    const { TOOLS } = require('./handoff-tool-schemas');
+    ok(TOOLS.some(t => t.name === 'agent_heartbeat'),
+      '(c14) the verb is on the remote surface, or a remote agent cannot reach it');
+    ok(!TOOLS.some(t => /state|enumerate/i.test(t.name)),
+      '(c14) ...and NO state-read tool rode in beside it — the enumeration gap is deliberate and stays open');
+
+    if (prev === undefined) delete process.env.HANDOFF_HOME; else process.env.HANDOFF_HOME = prev;
+    delete require.cache[require.resolve('./handoff-core')];
+    delete require.cache[require.resolve('./handoff-tools')];
   }
 
   // ---- (d) rollout smoke: 10 forwarders under load across a restart, zero lost writes ----

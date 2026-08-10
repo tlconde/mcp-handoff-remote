@@ -403,7 +403,7 @@ const MIGRATED = new Set([
   'pick_up', 'continue_from', 'return_to_origin',
   'resolve_conversation', 'send_message', 'send_to', 'send_to_surface', 'status', 'whoami',
   'send_to_worker', 'list_conversations', 'resume_code_session', 'open_conversation',
-  'check_inbox', 'peek_inbox', 'register_remote_session', 'withdraw_handoff', 'decline_handoff', 'list_workers',
+  'check_inbox', 'peek_inbox', 'register_remote_session', 'agent_heartbeat', 'withdraw_handoff', 'decline_handoff', 'list_workers',
 ]);
 
 /** Run a migrated tool against `core` with the caller's per-request `ctx`. */
@@ -421,6 +421,49 @@ async function callTool(name, args, ctx, core) {
     const full = await buildStatusReport({}, ctx, core);
     const line = String(full).split('\n').find(l => l.startsWith('You are:'));
     return line || 'You are: unidentified (no CLI uuid in this environment)';
+  }
+  /* AGENT HEARTBEAT — the one verb the remote door was widened for.
+   *
+   * A wake agent on a second machine can peek (peek_inbox) and deliver (send_message) but had no
+   * way to write its own verdict, which is the single act that flips a record from reachability
+   * 'unknown' to host-asserted. So the acceptance test that this whole review was opened around
+   * could not be closed from any machine — not for want of an agent, for want of a verb.
+   *
+   * THE DOOR WIDENS FOR THE ACCEPTANCE TEST, NEVER FOR A CONVENIENCE, and that is why there is no
+   * state-read tool beside this one. A remote agent cannot enumerate the store and does not need
+   * to: it asserts verdicts for records that name its host. Enumeration would be a convenience,
+   * and the relay is fail-closed by design — it exposes the minimum or it stops being able to
+   * claim it does. DO NOT "COMPLETE" THIS by adding a state read; the gap is deliberate.
+   *
+   * OWN-HOST ONLY, ENFORCED HERE. Liveness may be asserted only by the agent on the record's own
+   * host — a pid means nothing on another machine, and a verdict from elsewhere is a guess wearing
+   * a fact's clothes. The core route accepts any host because it is the store's write path and
+   * trusts its caller; the verb is where a remote caller is checked. A heartbeat naming records
+   * that belong to another host is refused whole, not filtered: silently dropping the offending
+   * entries would let a caller believe it had asserted something it had not. */
+  if (name === 'agent_heartbeat') {
+    const host = String((args && args.host) || '').trim();
+    if (!host) return 'Refused: host required — a heartbeat that cannot name its host asserts liveness on nobody\'s behalf.';
+    const sessions = (args && args.sessions && typeof args.sessions === 'object') ? args.sessions : {};
+    const st = await call('GET', '/api/state');
+    const foreign = [];
+    for (const sid of Object.keys(sessions)) {
+      const rec = (st.sessions || {})[sid];
+      if (!rec) { foreign.push(`${sid} (no such record)`); continue; }
+      const declared = (rec.remote && rec.remote.host) || (rec.native_ref && rec.native_ref.host) || null;
+      if (declared && declared !== host) foreign.push(`${sid} (belongs to ${declared})`);
+    }
+    if (foreign.length) {
+      return `Refused: this heartbeat names ${foreign.length} record(s) that do not belong to "${host}" — ${foreign.join(', ')}. ` +
+        'A host may assert liveness only for its own records; a verdict from another machine is a guess wearing a fact\'s clothes. ' +
+        'NOTHING was written — the heartbeat is refused whole rather than filtered, so you never believe you asserted something you did not.';
+    }
+    const r = await call('POST', '/api/agents/heartbeat', {}, {
+      host, sessions, agent_version: (args && args.agent_version) || null, owns: (args && args.owns) || Object.keys(sessions).length,
+    });
+    const a = r.agent || {};
+    return `Heartbeat recorded for "${host}": ${Object.keys(a.sessions || {}).length} record(s) carry a host-asserted verdict, agent ${a.agent_version || 'unversioned'}. ` +
+      'Reachability for those records now reads what THIS host observed, not "unknown".';
   }
   if (name === 'get_handoff') {
     const { id } = await namedOrPinned(args, ctx, core);

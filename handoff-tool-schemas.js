@@ -184,6 +184,21 @@ const TOOLS = [
     }
   },
   {
+    name: 'agent_heartbeat',
+    description: 'Write this HOST\'s own verdict for records that belong to it — the act that flips reachability from "unknown" to host-asserted. For a wake agent running on a machine that is not the store\'s host. Own-host only: a heartbeat naming records that belong to another host is refused WHOLE, never filtered, so you never believe you asserted something you did not. There is deliberately NO state-read companion to this tool: a remote agent asserts verdicts for its own records and does not enumerate the store. The remote surface widened for an acceptance test, not for a convenience — do not "complete" it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        host: { type: 'string', description: 'This machine\'s host id, exactly as records name it. Required — a heartbeat that cannot name its host asserts liveness on nobody\'s behalf.' },
+        sessions: { type: 'object', description: 'Map of session_id → verdict for records THIS host owns. Verdicts use the same vocabulary peek reports (process | none | stale-binding). "unknown" is never written: an agent that is running has looked, so it always has a real answer for its own records.' },
+        agent_version: { type: 'string', description: 'Agent version, recorded so a stale agent is identifiable. Optional.' },
+        owns: { type: 'number', description: 'How many records this host claims. Optional; defaults to the size of sessions.' }
+      },
+      required: ['host'],
+      additionalProperties: false
+    }
+  },
+  {
     name: 'peek_inbox',
     description: 'Read the inbox WITHOUT consuming it — counts, addresses and reachability, never message text, and nothing is marked read. Use this for anything that POLLS or watches on someone else\'s behalf; check_inbox marks what it shows as read and is scoped to a whole surface, so polling it consumes other conversations\' unread state (measured: an inbox check drained an envelope addressed to another session). Reachability per target is process | stale-binding | none | unknown. UNKNOWN means NOBODY LOOKED RECENTLY (the owning host\'s agent is silent or stale) and is never the same as NONE, which means the owning host looked and found nothing. A watcher must not treat unknown as absent. Returns a cursor; pass it back as `since` so repeat polls only report what is newer. The message text belongs to its reader — check_inbox in that conversation delivers it.',
     inputSchema: {

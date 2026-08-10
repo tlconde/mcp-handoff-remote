@@ -128,11 +128,13 @@ function makeStoreClient(opts) {
      *
      *   peek      YES — peek_inbox reads what is waiting WITHOUT consuming it
      *   deliver   YES — send_message
-     *   heartbeat NO  — /api/agents/heartbeat has no tool, so a remote host cannot write its own
-     *                   verdict, which is the one act that flips a record from 'unknown' to
-     *                   host-asserted
+     *   heartbeat YES — agent_heartbeat, added 2026-08-10 for exactly this. Own-host only, and
+     *                   refused WHOLE if it names another host's records. This is the act that
+     *                   flips a record from 'unknown' to host-asserted.
      *
-     * This client therefore REFUSES to pretend. getState does not synthesise an empty session map:
+     * State enumeration is STILL absent and deliberately so — the door widened for the acceptance
+     * test, not for a convenience. This client therefore REFUSES to pretend. getState does not
+     * synthesise an empty session map:
      * an agent handed `{sessions:{}}` would enumerate nothing, own nothing, report a clean cycle
      * and be silently useless — the exact failure this codebase keeps finding. It returns what it
      * genuinely has and marks the rest unavailable, so the caller must decide rather than be
@@ -150,10 +152,18 @@ function makeStoreClient(opts) {
         unavailable: ['state enumeration (no tool on the relay surface)'],
       };
     },
-    async heartbeat() {
-      const err = new Error('a remote agent cannot write a heartbeat: /api/agents/heartbeat is not exposed as a tool on the relay, so this host cannot assert a verdict for its own records. Reachability stays "unknown" — which is honest, and is exactly the acceptance test that stays open until the verb exists.');
-      err.code = 'HEARTBEAT_UNAVAILABLE_REMOTE';
-      throw err;
+    /* THE VERB EXISTS NOW, so HEARTBEAT_UNAVAILABLE_REMOTE is DELETED rather than kept behind a
+     * fallback. A dead error path that "still works if the tool is missing" is a second behaviour
+     * nobody exercises and everybody trusts; if the door narrows again this should break loudly,
+     * not quietly degrade to the state it was written to complain about. */
+    async heartbeat(beat) {
+      const text = await call(url, token, 'agent_heartbeat', {
+        host: beat.host,
+        sessions: beat.sessions || {},
+        agent_version: beat.agent_version || null,
+        owns: beat.owns,
+      }, TIMEOUT_MS);
+      return { recorded: text };
     },
   };
 }

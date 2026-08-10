@@ -70,6 +70,12 @@ Adds one door so a phone or a second laptop can reach the same store. **The stor
 only on the home machine** — this opens access, it does not move data. Read
 `DATA-RESIDENCY.md` before deciding.
 
+> **Setting up that second machine is its own runbook:
+> [REMOTE-PEER-SETUP.md](REMOTE-PEER-SETUP.md)** — credential, host id, a watched first run, and the
+> heartbeat that flips its record from `unknown` to a verdict it asserted itself. It applies to any
+> peer, not one operating system; the three things that differ (login service, credential store,
+> notification) are one table in that document.
+
 You need: a domain you control, a tunnel provider account, and an identity provider that can
 issue OAuth tokens. The reference deployment uses Cloudflare for both, because it is the
 combination the ecosystem has converged on — but nothing here is Cloudflare-specific except

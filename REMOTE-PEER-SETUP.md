@@ -1,8 +1,27 @@
-# Windows wake agent — the by-hand path
+# Remote peer setup — a machine with no store, reaching yours
 
-> **This is the manual path behind the plugin install.** Use it when you need to watch each step, or
-> when something misbehaves and you want to see where. Its value is that every expected output below
-> was captured from a real run rather than written from memory.
+**This document was called `WINDOWS-AGENT-SETUP.md`, and the name was lying about the domain.**
+Nothing here is Windows-specific except three cells in one table. What it actually describes is a
+**role**: a machine that holds *no store* and reaches the home machine over the relay. A second
+Linux laptop needs exactly this document and would previously have found nothing, because the
+filename advertised an operating system where the content describes a position in the system.
+
+## Three lanes, and this is only one of them
+
+Confusing these is the most common way to end up following the wrong runbook:
+
+| you want | you run | where |
+|---|---|---|
+| **the product** (MCP server, hook, wake agent) | `claude plugin marketplace add <owner>/handoff-remote` → `claude plugin install handoff@handoff` | any machine, same two lines |
+| **the store daemon** — one process owning the protocol | `deploy/install.sh` (launchd on macOS, systemd on Linux) | the **home machine** only, the one that holds the store |
+| **a remote peer** — a machine with no store | **this document** | any *second* machine |
+
+The home machine never needs this document: it *is* the store, so nothing has to reach across for
+it. A remote peer never needs `deploy/install.sh`: there is no store on it to serve.
+
+> **This is also the by-hand path behind the plugin install.** Use it when you need to watch each
+> step, or when something misbehaves and you want to see where. Its value is that every expected
+> output below was captured from a real run rather than written from memory.
 >
 > **Plugin packaging has LANDED — version 0.1.1, and the one-liner is the shipped route:**
 >
@@ -24,16 +43,42 @@
 > five deliveries that never happened.
 
 
-**What this does:** puts a wake agent on the Windows laptop so that machine can (1) see mail waiting
-for its sessions, (2) deliver it as a toast, and (3) tell the store what it observed — which is what
-flips a record from `reachability: unknown` to a verdict its own host asserted.
+**What this does:** puts a wake agent on the peer machine so it can (1) see mail waiting for its
+sessions, (2) deliver it locally, and (3) **tell the store what it observed** — which is what flips
+a record from `reachability: unknown` to a verdict that host asserted.
+
+**That third one is the acceptance test, not a side effect.** `unknown` does not mean unreachable;
+it means *nobody has ever looked*. Only the machine itself is entitled to say otherwise, and the
+heartbeat is how it says it. A peer that delivered a toast but never flipped its record has done
+the visible half of the job and skipped the half the rest of the system reads.
 
 **Why it has to run there and cannot run here:** every wake path is local by construction. A
-session's inbox socket is bound on its own machine; a toast appears on the machine that raises it.
-The store is shared and reachable from anywhere; delivery never is. So no host is special, and each
-machine speaks for itself.
+session's inbox socket is bound on its own machine; a notification appears on the machine that
+raises it. The store is shared and reachable from anywhere; delivery never is. So no host is
+special, and each machine speaks for itself.
 
-**Time:** about ten minutes. **You need:** the laptop, a browser for the Access login, PowerShell.
+### What actually differs by operating system
+
+Three cells. Everything else in this document is the same prose on every platform.
+
+| concern | macOS peer | Linux peer | Windows peer |
+|---|---|---|---|
+| **run at login** | launchd `LaunchAgent` | systemd **user** unit (`--user`, `Restart=always`) | `schtasks /SC ONLOGON` |
+| **credential store** | Keychain (`security add-generic-password`) | libsecret (`secret-tool store`) | Credential Manager (`cmdkey /generic:`) |
+| **local notification** | `osascript`, or `terminal-notifier` for a clickable one | `notify-send` | PowerShell WinRT toast |
+
+> **VERIFICATION STATUS, per platform — shared prose is not a verified peer.**
+> **Windows:** every expected output in this document was captured from a real run, except the
+> scheduled-task block, which is marked UNVERIFIED where it appears.
+> **Linux:** the three cells above are written from the code's actual rungs
+> (`bin/handoff-notify.js` branches on `process.platform`, `deploy/install.sh` already emits a
+> systemd user unit for the daemon) but **no Linux peer has ever been run**. Treat the Linux column
+> as a starting point to correct, not as a tested path.
+> **macOS as a peer:** unexercised too — the Mac here is the store host, so it has never needed
+> this document.
+
+**Time:** about ten minutes. **You need:** the peer machine, a browser for the Access login, and a
+shell on it.
 
 ---
 
@@ -235,6 +280,35 @@ every error and every recovery. A silent window is the agent working, not the ag
 `--verbose` if you want the old per-cycle narration back; `--once` implies it. Silence is not a
 claim that anything happened: every state change and every failure still prints, so there is no
 quiet in which a problem could hide.
+
+### Run at login — one block per platform
+
+Pick your row from the table at the top. All three do the same thing: start the agent when *you*
+log in, not at boot, because the agent raises notifications and a machine-level service has no
+session to show one in.
+
+**Linux peer** — a systemd **user** unit (not a system unit, for the same reason):
+
+```bash
+mkdir -p ~/.config/systemd/user
+cat > ~/.config/systemd/user/handoff-wake-agent.service <<'UNIT'
+[Unit]
+Description=handoff wake agent (remote peer)
+[Service]
+ExecStart=/usr/bin/node %h/handoff/bin/handoff-wake-agent.js
+Restart=always
+[Install]
+WantedBy=default.target
+UNIT
+systemctl --user enable --now handoff-wake-agent
+systemctl --user status handoff-wake-agent      # verify by effect, not by the enable's exit code
+```
+
+**macOS peer** — the same shape as `deploy/install.sh` writes for the daemon, pointed at the agent
+instead. Copy `deploy/com.handoff.daemon.plist.template`, change the label and the script path.
+
+**UNVERIFIED on both.** Neither block has been run. The Windows one below has been written against
+the real flags but also never executed.
 
 ### The scheduled task — the Windows service form
 

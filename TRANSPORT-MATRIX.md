@@ -113,9 +113,44 @@ terminal that was never spawned by this session, and `ListAgents` describes exac
 `deploy/install.sh`: *"Native cross-session messaging (and this daemon) run on macOS + Linux/WSL2
 only."*
 
-**WHAT THIS DOES NOT ESTABLISH — and an earlier revision of this section got it wrong.** It said
-"`@peer` will never work there". **That was an overclaim, retracted.** Everything measured above is
-the **model's tool surface inside a session**. That is *not* the surface this system uses.
+### SETTLED ON THE SURFACE THE SYSTEM ACTUALLY USES — same CLI version, opposite result
+
+The question was re-asked correctly and answered. This project never calls peer messaging from a
+model's tools; the wake tier spawns `claude -p … --allowedTools ListAgents SendMessage`. So both
+machines ran **that** invocation and asked the spawned one-shot what it has.
+
+| | macOS | Windows |
+|---|---|---|
+| `claude --version` | **2.1.226** | **2.1.226** |
+| `ListAgents` inside the spawned one-shot | **"ListAgents is available."** | **"ListAgents: not available."** |
+| rung-2 relay outcome | reaches the target | `{"success":false,"message":"No agent named 'lulu' is reachable…"}` |
+
+**Identical version, different platform, different tool set. That is a measured platform boundary,
+not an inference.** The Windows failure is byte-identical whether the call is made from a session or
+from the spawned one-shot, and it fails for a *local* target — so it is not about hosts, names, or
+case. There is no peer lookup to mis-key: **the verb is absent, so nothing is ever matched.**
+
+**Consequences, and the second one is a live defect:**
+
+1. **On Windows only rungs 3 (notify) and 4 (store) exist.** Rung 1 is unavailable too — `--channels`
+   does not appear in `claude --help` on that build. This is exactly what the operator experiences:
+   nothing ever starts a turn there, and mail waits for a hand-typed `check_inbox`.
+2. **`--allowedTools` granting a nonexistent tool is a SILENT NO-OP.** The relay spawn therefore
+   *succeeds*, the peer lookup never happens, and the send fails into the subagent address space —
+   so rung 2 on Windows returns `dispatched` **every time, forever, having delivered nothing.** That
+   is the dispatched-is-not-delivered failure mode this repo documented on 2026-08-10, except here
+   it is not a risk but a certainty. **The tier should refuse rung 2 where the verb does not exist
+   rather than reporting a dispatch it cannot honour.**
+
+**The 25s median in the table above therefore stands as relay-attributed** — the rung is real, on
+this platform, at this version.
+
+**HOW THIS WAS GOT WRONG TWICE, kept because the route matters.** First conclusion: "`@peer` will
+never work on Windows" — right substance, wrong evidence, drawn from the model's session surface,
+which is not the surface used. Retracted. Second: the retraction implied the spawn path might
+differ; it does differ, and measuring it produced the same verdict on ground that supports it.
+**The correction was still correct as method** — the first version was true by luck, and a
+conclusion that is true by luck fails the next time it is reused.
 
 **This project never calls peer messaging from a model's tools.** The wake tier spawns the CLI:
 

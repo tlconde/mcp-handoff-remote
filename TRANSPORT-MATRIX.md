@@ -89,6 +89,40 @@ sitting in front of.
 to the store, produces no `xmsg`, and leaves no record. A ping through it proves the sockets work
 and proves nothing about handoff.
 
+### Native peer messaging is a PLATFORM capability — measured on both sides, 2026-08-10
+
+Two hypotheses died to get this, and both were wrong in instructive ways.
+
+| | macOS (this machine) | Windows (the peer) |
+|---|---|---|
+| `ListAgents` on the model's tool surface | **exists** — listed 8 terminal peers | **does not exist** — not "returns zero"; the verb is absent |
+| `SendMessage` to a terminal never spawned by the sender | **`success: true`** → *"another Claude session on this machine"* | `success: false` — *"No agent named 'X' is reachable"* |
+| same-machine control | — | **fails identically to the cross-machine attempt, byte for byte** |
+| published address in the session registry | `messaging_socket_path` | **none** — no socket, no port, no pipe. `peerProtocol: 1` is declared with no address, and neither Claude process listens on any TCP port |
+
+**The wrong hypothesis (mine):** *"native @peer is host-local, so it cannot cross machines."* Refuted
+by the peer's same-machine control — a local peer failed exactly as a remote one did, so the host
+boundary was not what was stopping it.
+
+**The wrong inference (the peer's):** *"the model-facing SendMessage only addresses subagents it
+spawned, on every OS including the Mac."* Refuted by the control above — on macOS it reached a
+terminal that was never spawned by this session, and `ListAgents` describes exactly that scope.
+
+**What is actually true:** native cross-session messaging is available on **macOS and Linux** and is
+**not exposed by Claude Code on Windows**. The repo already said so in one line nobody was reading —
+`deploy/install.sh`: *"Native cross-session messaging (and this daemon) run on macOS + Linux/WSL2
+only."*
+
+**The consequence for a Windows peer, plainly: `@peer` will never work there.** No amount of
+configuration reaches a surface the platform does not expose. The store plus the relay is the
+carrier, and the only way to *push* to a Windows peer is the wake agent running on that machine
+delivering locally — which is why that slice, not a peer fix, is what ends manual `check_inbox`.
+
+**One thing this does NOT settle:** whether a *human typing* `@peer` in the prompt is a different
+affordance handled by the CLI before a model sees it. Every measurement above is of the model's tool
+surface. `peerProtocol: 1` with no published address is consistent with a wire addressed by
+something the registry does not expose. Testing that needs a human typing it on Windows.
+
 ## code → code — cross-machine · **UNVERIFIED**
 
 **How it travels:** the store is the carrier. A remote machine reaches it through the relay (tier 2)

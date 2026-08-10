@@ -344,8 +344,30 @@ function wake(delivery, opts) {
 
       // ONE call, no retries. Fire-and-forget: detach so a slow/hung relay never blocks the
       // send; on spawn error degrade to notify (we do NOT re-attempt the relay).
+      /* STDIO CAPTURE — because 'ignore' is how a whole class of failure hid for a day.
+       *
+       * The relay one-shot runs detached with its output discarded, so a job that started,
+       * looked around, found nothing and obediently did nothing is INDISTINGUISHABLE from a job
+       * that delivered. On 2026-08-10 five consecutive wakes logged woke:true / dispatched while
+       * no terminal moved, and the same argv run by hand from a shell worked — the difference was
+       * only ever visible in output nobody was keeping.
+       *
+       * HANDOFF_WAKE_STDIO=<file> appends the child's stdout+stderr to a sidecar. Off by default
+       * (a wake path must not accumulate files nobody asked for); on, it is the first thing to
+       * reach for when dispatched-but-silent appears again. Failing to open the sidecar must never
+       * cost the wake — it degrades to 'ignore' and the wake proceeds. */
+      let stdio = 'ignore';
+      const stdioPath = process.env.HANDOFF_WAKE_STDIO;
+      if (stdioPath) {
+        try {
+          const fd = fs.openSync(stdioPath, 'a');
+          fs.writeSync(fd, `\n=== relay spawn ${new Date().toISOString()} target=${rc.name} cwd=${cwd} bin=${bin}\n` +
+            `    PATH=${process.env.PATH || '(unset)'}\n    TMPDIR=${process.env.TMPDIR || '(unset)'}\n`);
+          stdio = ['ignore', fd, fd];
+        } catch (_) { stdio = 'ignore'; }
+      }
       try {
-        const child = doSpawn(bin, argv, { cwd, detached: true, stdio: 'ignore' });
+        const child = doSpawn(bin, argv, { cwd, detached: true, stdio });
         /* A SPAWN THAT FAILED MUST NOT REPORT AS DISPATCHED (A12, in code).
          * spawn() does NOT throw on a missing binary: it returns a child whose pid is
          * undefined and emits ENOENT asynchronously. The old code attached an empty error

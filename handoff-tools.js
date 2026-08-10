@@ -1404,7 +1404,13 @@ async function callTool(name, args, ctx, core) {
      * because the test asserted the specific honest value ('unknown') rather than "some value
      * came back" — the second time in one day that distinction was the only thing standing
      * between a fix and its own regression. Assert the value, not the shape. */
-    if (!nr) return remoteHost ? remoteVerdict(remoteHost, null, st) : 'none';
+    /* Keyed by the PROTOCOL RECORD ID, not by native_ref.session_id. A remote record has no
+     * native_ref — the mint refuses to assert one — so keying the verdict off it meant a heartbeat
+     * could never answer for exactly the records heartbeats exist to answer for. It would have sat
+     * at 'unknown' forever with its host's agent running and reporting, and the acceptance test
+     * (a remote record flipping to a host-asserted verdict) could not have passed. Found by trying
+     * to run it rather than by reading it. The record id exists for every record, local or not. */
+    if (!nr) return remoteHost ? remoteVerdict(remoteHost, sess.id, st) : 'none';
     const here = !nr.host || nr.host === (process.env.HANDOFF_HOST_ID || require('os').hostname());
     if (here) {
       if (!nr.pid) return 'stale-binding';
@@ -1412,7 +1418,7 @@ async function callTool(name, args, ctx, core) {
       catch (e) { return e.code === 'EPERM' ? 'process' : 'stale-binding'; }
     }
     // Another device owns it. Only its agent may say, and only recently.
-    return remoteVerdict(nr.host, nr.session_id, st);
+    return remoteVerdict(nr.host, sess.id, st);
   }
   /** The owning host's own verdict, or 'unknown'. Never a local inference. */
   function remoteVerdict(host, sessionKey, st) {

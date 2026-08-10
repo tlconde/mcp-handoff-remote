@@ -242,6 +242,56 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
   }
 
 
+  // ---- (c3) a host's heartbeat flips its own records off 'unknown' ----
+  // THE ACCEPTANCE TEST for the ownership design. A remote record starts at 'unknown' — nobody has
+  // looked — and only the agent on its OWN host may change that. The flip proves three things at
+  // once: the agents collection persists, the verdict is keyed so a record with no native_ref can
+  // be answered for at all, and 'unknown' and 'none' are genuinely different states rather than
+  // two spellings of "not reachable".
+  //
+  // Keying nearly sank this. Verdicts were first keyed by native_ref.session_id — which a remote
+  // record does not have, by design — so a heartbeat could never speak about exactly the records
+  // heartbeats exist for. It would have sat at 'unknown' forever with the agent running, and this
+  // test could not have passed. Found by running it, not by reading it.
+  {
+    const home = tmpHome();
+    const env = { ...process.env, HANDOFF_HOME: home };
+    delete require.cache[require.resolve('./handoff-core')];
+    delete require.cache[require.resolve('./handoff-tools')];
+    const prevHome = process.env.HANDOFF_HOME;
+    process.env.HANDOFF_HOME = home;
+    const core2 = require('./handoff-core');
+    const tools2 = require('./handoff-tools');
+
+    const mint = await core2.handleApi('POST', '/api/register-remote', {}, { host: 'far-host', title: 'far-session', attested_by: 'operator', minted_by: 'test' });
+    const rid = mint.payload.session.id;
+    await core2.handleApi('POST', `/api/sessions/${rid}/messages`, {}, { role: 'user', kind: 'xmsg', text: '[message from chat · x] waiting' });
+
+    const before = await tools2.callTool('peek_inbox', { surface: 'code' }, {}, core2);
+    ok(/reachable: unknown/.test(before),
+      '(c3) a remote record with no agent reads UNKNOWN — nobody has looked, which is not the same as looked-and-found-nothing');
+
+    await core2.handleApi('POST', '/api/agents/heartbeat', {}, {
+      host: 'far-host', last_seen: new Date().toISOString(), agent_version: '0.1.0', sessions: { [rid]: 'none' }, owns: 1
+    });
+
+    const after = await tools2.callTool('peek_inbox', { surface: 'code' }, {}, core2);
+    ok(/reachable: none/.test(after) && !/reachable: unknown/.test(after),
+      '(c3) after its own host heartbeats, the record carries a HOST-ASSERTED verdict instead of unknown');
+
+    // A stale heartbeat must age back to unknown rather than keep asserting.
+    await core2.handleApi('POST', '/api/agents/heartbeat', {}, {
+      host: 'far-host', last_seen: new Date(Date.now() - 60 * 60 * 1000).toISOString(), agent_version: '0.1.0', sessions: { [rid]: 'process' }, owns: 1
+    });
+    const stale = await tools2.callTool('peek_inbox', { surface: 'code' }, {}, core2);
+    ok(/reachable: unknown/.test(stale),
+      '(c3) an hour-old heartbeat is not evidence — the verdict ages back to unknown rather than being trusted forever');
+
+    if (prevHome === undefined) delete process.env.HANDOFF_HOME; else process.env.HANDOFF_HOME = prevHome;
+    delete require.cache[require.resolve('./handoff-core')];
+    delete require.cache[require.resolve('./handoff-tools')];
+  }
+
   // ---- (d) rollout smoke: 10 forwarders under load across a restart, zero lost writes ----
   {
     const home = tmpHome();

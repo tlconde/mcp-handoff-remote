@@ -987,6 +987,33 @@ async function handleApi(method, p, query, b) {
   try {
     if (method === 'GET' && p === '/api/health') return { code: 200, payload: { ok: true, sessions: Object.keys(db.sessions).length, store: HOME } };
     if (method === 'POST' && p === '/api/seed') return { code: 200, payload: await seed(!!b.force) };
+    /* HEARTBEAT — a host's own verdict about its own sessions, and nothing else's.
+     *
+     * The endpoint refuses to write a verdict for a host other than the caller's declared one,
+     * because the whole point of the ownership rule is that liveness is asserted by the machine
+     * that can actually see the process. An agent writing another host's row would be inferring a
+     * process table it cannot read, which is the error this design exists to prevent — and it
+     * would be indistinguishable from a real verdict afterwards.
+     *
+     * Idempotent upsert keyed by host: one record per machine, one atomic write. agent_version is
+     * carried so a fleet with a lagging agent is diagnosable from the store rather than by
+     * connecting to each machine and asking. */
+    if (method === 'POST' && p === '/api/agents/heartbeat') {
+      if (!b.host) return { code: 400, payload: { error: 'host required — a heartbeat that cannot name its host asserts liveness on behalf of nobody' } };
+      const host = String(b.host);
+      const rec = {
+        id: host, host,
+        last_seen: b.last_seen || now(),
+        agent_version: b.agent_version || null,
+        sessions: (b.sessions && typeof b.sessions === 'object') ? b.sessions : {},
+        owns: Number(b.owns) || 0,
+      };
+      db.agents[host] = rec;
+      ops('agent_heartbeat', { host, sessions: Object.keys(rec.sessions).length, agent_version: rec.agent_version });
+      save(db);
+      return { code: 200, payload: { agent: rec } };
+    }
+
     if (method === 'GET' && p === '/api/state') return { code: 200, payload: demoState() };
     /* THE REMOTE DOOR — a DIFFERENT door with a different key, not a hole punched in the local one.
      *

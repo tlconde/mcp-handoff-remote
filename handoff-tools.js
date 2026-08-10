@@ -880,11 +880,20 @@ async function callTool(name, args, ctx, core) {
        *
        * NEVER let logging break the send. Same rule as the wake call it follows. */
       try {
+        /* THE NOTIFY RUNG'S OWN OUTCOME RIDES ALONG, because a sighting the operator remembers
+         * and a firing the system recorded were previously two different worlds. bin/handoff-notify
+         * has exactly one production caller — the notify rung inside wake() — so recording its
+         * result here covers every firing without a second logging site, and the rung already
+         * returns {fired, channel}. Before this, the only timeline for a notification was somebody
+         * remembering seeing one. */
         core.ops('wake', {
           dest: dest.id, surface: dest.surface,
           tier: (woke && woke.tier) || 'none',
           woke: !!(woke && woke.woke),
           requested: args.mode === 'fyi' ? 'fyi' : 'attention',
+          reason: (woke && woke.reason) || undefined,
+          notify_fired: woke && woke.notify ? !!woke.notify.fired : undefined,
+          notify_channel: woke && woke.notify ? woke.notify.channel : undefined,
           error: (woke && woke.error) || undefined
         });
       } catch (_) {}

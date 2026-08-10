@@ -177,6 +177,34 @@ cmdkey /generic:handoff-relay /user:agent /pass
 # paste the token when prompted — it is not echoed
 ```
 
+### If you also want Claude Code on this machine to talk to the relay directly
+
+Separate from the agent: adding the relay as an MCP server for your *sessions* on this machine.
+**Name the transport explicitly.**
+
+```powershell
+claude mcp add --scope user handoff-remote `
+  --transport http `
+  https://<relay-host>/mcp `
+  --header "Cookie: CF_Authorization=<token>"
+```
+
+**`--transport http` is not optional.** The relay answers **POST only** and deliberately refuses a
+server-initiated SSE stream:
+
+> `this server replies to POST; it does not offer a server-initiated SSE stream`
+
+That refusal is the relay working — it is a 405 with the reason named rather than a hang or an
+empty stream — but if you let the client pick `sse`, that sentence is the first thing you will see
+and it looks like a broken server. **Observed in the field on the first laptop run**, which is why
+it is written here. If you see it, the fix is the transport flag, not the relay.
+
+Verify by effect rather than by the add command's exit code:
+
+```powershell
+claude mcp list          # expect: handoff-remote ... Connected
+```
+
 **Scope:** this credential is used for exactly three verbs — `peek_inbox` (read what is waiting,
 without consuming it), `send_message` (deliver), and `agent_heartbeat` (write this host's verdict
 for its own records). It cannot enumerate the store. That is deliberate: the remote surface widened

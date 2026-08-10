@@ -1008,8 +1008,26 @@ async function doLaunch(s, b) {
     ops('launch', { session: s.id, mode: 'ide', transport: viaMcp ? 'mcp' : 'file', ide: ideCmd, native: nativeId, launched: true });
     return { code: 202, payload: { launched: true, mode, transport: viaMcp ? 'mcp' : 'file', ide: ideCmd, path: fp, session: s.id, note: taskNote, native_ref: s.native_ref } };
   }
+  /* THE SAME SERVER IS MOUNTED UNDER MORE THAN ONE NAME, AND THE GRANT NAMED ONLY ONE.
+   *
+   * A worker launched, read its brief's first instruction, called get_handoff — and was DENIED,
+   * because it resolved the verb through the `claude_ai_Handoff_Remote` mount (the relay/connector
+   * registration) while this allowlist granted only `mcp__handoff__`. Headless means non-
+   * interactive, so no approval prompt could be raised: the worker reported the denial and stopped
+   * without ever seeing its envelope. Measured 2026-08-10, the fourth distinct barrier between a
+   * dispatch and a worker doing work — after the empty brief (bca94aa), the unopened Code tab, and
+   * the unresolvable binary (be60892).
+   *
+   * The grant is therefore built from the VERBS, crossed with every mount name the server is known
+   * by, instead of being written out once against one spelling. A mount that gets added later needs
+   * its name added here, and that is the point: an unlisted mount fails loudly at the grant rather
+   * than silently at the first tool call inside a session nobody is watching. */
+  const HANDOFF_VERBS = ['get_handoff', 'get_decisions', 'report_progress', 'return_to_origin'];
+  const HANDOFF_MOUNTS = ['handoff', 'claude_ai_Handoff_Remote'];
   const ALLOWED = process.env.HANDOFF_ALLOWED_TOOLS ||
-    'Read,Write,Edit,Glob,Grep,Bash,mcp__handoff__get_handoff,mcp__handoff__get_decisions,mcp__handoff__report_progress,mcp__handoff__return_to_origin';
+    ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash']
+      .concat(HANDOFF_MOUNTS.flatMap(m => HANDOFF_VERBS.map(v => `mcp__${m}__${v}`)))
+      .join(',');
   // Resolved, not inherited — this is the actual worker LAUNCH, and a bare name here is what made
   // a dispatch come back "prepared but NOT auto-launched" while the binary sat in ~/.local/bin.
   const child = spawn(claudeBin() || 'claude', ['-p', '--session-id', nativeId, PROMPT, '--output-format', 'text', '--allowedTools', ALLOWED],

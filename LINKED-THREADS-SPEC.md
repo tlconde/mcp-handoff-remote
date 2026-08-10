@@ -342,6 +342,43 @@ under an unrelated app tab's project bucket even though the session cwd was corr
 not cwd, decides the app Code target. The review seat already uses `open_in: 'none'` as its habit
 for code targets.
 
+## Identity cannot pin to a transport session — VERDICT, measured 2026-08-10
+
+The obvious-looking fix for chat identity is to pin it to the MCP session: the transport
+already has a session id, so let identity ride it. **It does not work, and the reason is
+measured rather than argued.**
+
+**MCP sessions are per-interaction.** Two consecutive interactions in one app conversation
+produced two different transport ids — `fe0c295a`, then `e25d7676`. A transport id therefore
+identifies a *request episode*, not a conversation and not a participant. Pinning identity to
+it would mint a new identity every turn, which is worse than the anonymity it was meant to
+cure: §I2b's stored-address disease, with a fresh address each time.
+
+The ~150ms `initialize` handshake observed on every interaction is **the client's design, not
+our omission**. There is nothing to fix on our side and nothing to wait for; the caller-named
+mechanism above stays the answer for non-terminal surfaces.
+
+## "Refreshed" is not a failed adoption — the CLI uuid survives `/clear`
+
+Recorded 2026-08-10, after a deliberate `/clear` run as a live test of the fragmentation case.
+The reborn session called `register_session` with `succeeds:` pointing at its predecessor's
+record and got back **"Refreshed"** — no adoption, no `superseded_by` written. That is correct
+behaviour and it should not be read as a failed test:
+
+**`/clear` does not fragment identity in Claude Code.** The CLI uuid is stable across it, so
+`register_session` resolves the *existing* record by uuid and `handoff-core.js`'s adoption
+branch (`b.succeeds && b.succeeds !== s.id`) skips a self-adoption. Same uuid → refresh, by
+design.
+
+The TRUE fragmentation case — the one adoption exists for — is **a NEW terminal adopting an old
+record**, where the uuid genuinely differs. A test that wants to exercise the adoption path has
+to break the uuid (a fresh process, a `--resume` under a new id), not the thread.
+
+Open, deliberately: a self-adoption is currently skipped **silently**, so a caller asserting a
+fragmentation that did not happen is told nothing. Whether that should refuse or report is a
+protocol decision, not a bug fix — but "exit status is not effect" applies to the response text
+as much as to the exit code.
+
 ## Open questions
 
 1. Thread granularity — one thread per project, or per work stream within a project?

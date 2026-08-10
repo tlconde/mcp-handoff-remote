@@ -1,12 +1,27 @@
 # Windows wake agent — the by-hand path
 
-> **This is the manual path behind `/plugin install`.** Use it when the plugin cannot run, when you
-> need to watch each step, or when something misbehaves and you want to see where. The intended
-> install is one command; this document is the debugging companion to it, and its value is that
-> every expected output below was captured from a real run rather than written from memory.
+> **This is the manual path behind the plugin install.** Use it when you need to watch each step, or
+> when something misbehaves and you want to see where. Its value is that every expected output below
+> was captured from a real run rather than written from memory.
 >
-> Plugin packaging is in progress. Until it lands, this is also the only path — which is stated
-> here rather than left for you to infer.
+> **Plugin packaging has LANDED — version 0.1.1, and the one-liner is the shipped route:**
+>
+> ```powershell
+> claude plugin marketplace add <owner>/handoff-remote
+> claude plugin install handoff@handoff
+> ```
+>
+> Both commands shell out to `git clone`, so **while this repo is private they need a git that can
+> already authenticate to it** — do Step 2's `gh auth login` first and they will work. Proven on
+> macOS 2026-08-10 end to end (`handoff@handoff 0.1.1, enabled`); **not yet run on Windows**, which
+> is one of the two things this trip is for.
+>
+> **What changed since this document was last true:** the plugin registers **no monitors** (that
+> registration was retired — wake is wired at the send site, not by a background monitor); the wake
+> agent is **quiet by default** and narrates only on state changes, with `--verbose` for a watched
+> first run; and test seams (`HANDOFF_WAKE_LOG`, `HANDOFF_NOTIFY_LOG`) now **refuse to arm** unless
+> `HANDOFF_TEST=1` is also set, because one of them was armed in a production daemon and reported
+> five deliveries that never happened.
 
 
 **What this does:** puts a wake agent on the Windows laptop so that machine can (1) see mail waiting
@@ -61,6 +76,23 @@ cd handoff
 If you would rather not install `gh`: create a fine-grained personal access token with read access
 to this one repo and clone with `git clone https://<token>@github.com/<owner>/<repo>.git handoff`.
 The CLI route is easier to revoke later.
+
+**Once `gh auth login` has succeeded, the plugin one-liner also works** — the plugin CLI shells out
+to `git clone` and inherits exactly these credentials:
+
+```powershell
+claude plugin marketplace add <owner>/handoff-remote
+claude plugin install handoff@handoff
+claude plugin list                      # expect: handoff@handoff  0.1.1  enabled
+```
+
+Measured on macOS: with credentials present both commands succeed; from an environment with no
+credential helper the clone fails with *"Could not read from remote repository"* **before the
+marketplace file is ever read** — so an auth failure looks like a repo failure. If you see that
+message, the problem is Step 2, not the plugin.
+
+Either route gives you the same code. The clone below is what the rest of this document assumes,
+because it is the one you can watch.
 
 Nothing is installed globally and nothing runs at login yet. That comes after it has been seen to
 work once.
@@ -191,11 +223,65 @@ appearance. Copy that line back — it is the finding.
 Once you have seen a cycle work and a toast appear:
 
 ```powershell
-node bin/handoff-wake-agent.js          # polls until Ctrl-C
+node bin/handoff-wake-agent.js          # polls until Ctrl-C, QUIET unless something changes
 ```
 
-Leave it in a window for a while before considering a scheduled task. Making it a managed service
+Leave it in a window for a while before making it a scheduled task. Making it a managed service
 comes after it has been seen to work, not before.
+
+**What quiet means here.** The agent prints two lines at startup and then **nothing** until
+something changes — a verdict flips, mail arrives or clears, the store becomes unreachable — plus
+every error and every recovery. A silent window is the agent working, not the agent stuck. Pass
+`--verbose` if you want the old per-cycle narration back; `--once` implies it. Silence is not a
+claim that anything happened: every state change and every failure still prints, so there is no
+quiet in which a problem could hide.
+
+### The scheduled task — the Windows service form
+
+This is the counterpart of the Mac's launchd unit. Run it **only after** a foreground run has
+worked, and register it as a **logon** task rather than a service, because the agent raises toasts
+and a session-0 service cannot show one to you.
+
+```powershell
+# from the folder you cloned into, with the credential already in Credential Manager
+$node = (Get-Command node).Source
+$agent = "$PWD\bin\handoff-wake-agent.js"
+
+schtasks /Create `
+  /TN "handoff-wake-agent" `
+  /TR "`"$node`" `"$agent`"" `
+  /SC ONLOGON `
+  /RL LIMITED `
+  /F
+```
+
+Then verify **by effect**, not by the command's exit code:
+
+```powershell
+schtasks /Run /TN "handoff-wake-agent"
+Start-Sleep -Seconds 5
+Get-Process node -ErrorAction SilentlyContinue | Select-Object Id, StartTime   # a node process exists
+schtasks /Query /TN "handoff-wake-agent" /V /FO LIST | Select-String "Last Result"
+```
+
+`Last Result: 0` means the task launched a process. **It does not mean the agent is delivering** —
+for that, send yourself a message from the home device and watch the toast, exactly as in Step 6.
+The layer that reports success is never the layer that proves it, and on this project that rule was
+paid for twice in one evening.
+
+**The environment a scheduled task does NOT inherit.** It gets a minimal environment, so anything
+the agent needs must be set explicitly — the same defect that once made the Mac's relay spawn a
+binary it could not see. `HANDOFF_REMOTE_URL` and `HANDOFF_HOST_ID` live in `.agent-env`; the token
+is read from Credential Manager at start. If the task runs and the agent exits immediately, that
+environment is the first thing to check, and `--verbose` in the task's command line is how you see
+why.
+
+**To remove it:** `schtasks /Delete /TN "handoff-wake-agent" /F`.
+
+> **UNVERIFIED — this block has never been executed.** It is written from the agent's actual flags
+> and the Mac unit's shape, and it is the one section of this document not captured from a real run.
+> Correct it against what the laptop actually does, and say so, rather than trusting it because it
+> is written down.
 
 ---
 

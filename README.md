@@ -18,9 +18,13 @@ which hops are trusted.
 Start at tier 1 — no network surface at all:
 
 ```bash
-git clone https://github.com/<you>/handoff-remote.git && cd handoff-remote
-claude mcp add --scope user handoff -- node "$PWD/mcp-handoff.js"
+claude plugin marketplace add <owner>/handoff-remote
+claude plugin install handoff@handoff
 ```
+
+That is the whole install: MCP server, session-start hook and wake agent as one versioned unit.
+While this repo is private the commands need a git that can already authenticate to it — see
+[INSTALL.md](INSTALL.md) for the manual path and the details.
 
 Full guide, including remote access from your phone or a second laptop: [INSTALL.md](INSTALL.md).
 

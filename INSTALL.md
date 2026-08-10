@@ -13,11 +13,37 @@ Requirements: Node 18+, macOS or Linux. Zero npm dependencies — the whole thin
 No tunnel, no cloud account, no third party, no network surface at all. Claude Code talks to
 the server over stdio on your own machine.
 
+**Install it as a plugin — this is the supported route:**
+
 ```bash
-git clone https://github.com/<you>/handoff-remote.git
+claude plugin marketplace add <owner>/handoff-remote
+claude plugin install handoff@handoff
+```
+
+That is the whole install. It brings the MCP server, the session-start hook and the wake agent
+together as one versioned unit, and `claude plugin update handoff@handoff` is how you get
+changes afterwards.
+
+> **While this repo is private**, both commands need a git that can already authenticate to it —
+> the plugin CLI shells out to `git clone`, so it inherits your credential helper and nothing
+> else. Measured 2026-08-10: with credentials present the two commands succeed and the plugin
+> reports `0.1.1, enabled`; from an environment with no credential helper the clone fails with
+> *"Could not read from remote repository"* before the marketplace is ever read. **If you are not
+> a collaborator on a private copy, use the manual path below until the repo is public.**
+
+<details>
+<summary><b>Manual install</b> — the same thing by hand, for development or when the plugin route is unavailable</summary>
+
+```bash
+git clone https://github.com/<owner>/handoff-remote.git
 cd handoff-remote
 claude mcp add --scope user handoff -- node "$PWD/mcp-handoff.js"
 ```
+
+This wires the MCP server only. The session-start hook and the wake agent are yours to run
+directly (`node bin/handoff-wake-agent.js`), which the plugin would otherwise manage for you.
+
+</details>
 
 Check it:
 

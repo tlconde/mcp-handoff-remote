@@ -162,6 +162,36 @@ function req(opts, body) {
   });
 
   await new Promise(r => relay.server.close(r));
-  console.log(`\nrelay-smoke: ${pass} passed, ${fail} failed`);
+  
+/* EXIT-ON-STALE — the relay served pre-change code for ELEVEN HOURS while looking healthy, because
+ * it had no staleness check and nothing else watched its file. The dangerous part was not the
+ * staleness but that the artifact kept being produced: the access log grew with 145 well-formed
+ * lines of real traffic, missing the one field a design decision depended on. ABSENT, not
+ * malformed — which reads as "no traffic yet" rather than "this process cannot produce it".
+ *
+ * Asserted at the SOURCE level rather than by bouncing a live relay: the process exits on detect,
+ * so exercising it would mean killing a server mid-test, and the property worth guarding is that
+ * the check exists, watches the right files, and compares against BOOT rather than a threshold. */
+{
+  const src = require('fs').readFileSync(require('path').join(__dirname, 'handoff-relay.js'), 'utf8');
+  await test('stale: the relay checks its own freshness at all', () => {
+    assert.match(src, /relayStaleFile/, 'a long-lived process with no staleness check serves old code silently');
+  });
+  await test('stale: staleness is measured against BOOT mtimes, never "newer than start"', () => {
+    assert.match(src, /RELAY_BOOT_MTIMES/, 'captures what it loaded');
+    assert.ok(!/mtimeMs\s*>\s*START/.test(src),
+      'a threshold comparison never recovers: a future-dated file satisfies it forever and loops the service manager');
+  });
+  await test('stale: it refuses and exits rather than hot-reloading under live connections', () => {
+    assert.match(src, /relay_stale/, 'the refusal is named so a client can tell it apart from a crash');
+    assert.match(src, /503/, 'refuses with a retryable status rather than serving stale answers');
+  });
+  await test('stale: the contract file is watched too, not only the relay itself', () => {
+    assert.match(src, /require\.resolve\('\.\/handoff-contract'\)/,
+      'a contract change the relay has not loaded is the same defect one file over');
+  });
+}
+
+console.log(`\nrelay-smoke: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

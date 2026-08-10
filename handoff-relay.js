@@ -208,7 +208,51 @@ function unauthorized(res, reason, detail) {
   });
 }
 
+/* EXIT-ON-STALE, the same doctrine the daemon follows — added 2026-08-10 after this process
+ * served pre-change code for ELEVEN HOURS while looking healthy.
+ *
+ * Measured: the relay booted 19:38:08 and its own file was modified 06:48:44 the next morning. It
+ * had loaded the file at boot and never reloaded. handoff-relay.js is not in the daemon's WATCHED
+ * set (that covers daemon/core/tools/contract), and the relay had no check of its own, so the new
+ * code sat on disk and nowhere else.
+ *
+ * WHAT MADE IT DANGEROUS was not the staleness, it was that the artifact kept being produced. The
+ * access log was enabled and growing — 145 well-formed lines of real client traffic — while missing
+ * the one field a pending design decision depended on. Not malformed: ABSENT. Anyone checking would
+ * have found a healthy log and concluded "no traffic yet, check later" rather than "the process
+ * serving this cannot produce it". A growing log file is not the measurement, exactly as an exit
+ * status is not an effect.
+ *
+ * Refuse, report, exit — launchd restarts with the new code. Deliberately NOT a hot-reload: this
+ * process holds live client connections and swapping module state under them is the mixed-version
+ * corruption the daemon spec forbids for the same reason.
+ *
+ * Staleness is "differs from the mtime captured at BOOT", never "mtime > start". A file dated in
+ * the future satisfies the latter forever and would put launchd in a restart loop; "differs from
+ * what I loaded" cannot. That lesson is already paid for on the daemon side. */
+const RELAY_WATCHED = [__filename, require.resolve('./handoff-contract')];
+const relayMtime = f => { try { return fs.statSync(f).mtimeMs; } catch (_) { return 0; } };
+const RELAY_BOOT_MTIMES = new Map(RELAY_WATCHED.map(f => [f, relayMtime(f)]));
+function relayStaleFile() {
+  for (const f of RELAY_WATCHED) if (relayMtime(f) !== RELAY_BOOT_MTIMES.get(f)) return path.basename(f);
+  return null;
+}
+
 const server = http.createServer(async (req, res) => {
+  /* Checked per request rather than on a timer: a relay with no traffic is not serving anything
+   * stale, and the first request after a deploy is exactly when it matters. */
+  const staleRelay = relayStaleFile();
+  if (staleRelay) {
+    // eslint-disable-next-line no-console
+    console.error(`handoff-relay: ${staleRelay} changed since boot — exiting for restart with current code (pid ${process.pid})`);
+    try {
+      res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '2' });
+      res.end(JSON.stringify({ error: 'relay_stale', detail: `${staleRelay} changed since this relay booted; it is restarting with current code` }));
+    } catch (_) {}
+    setImmediate(() => { try { server.close(); } catch (_) {} process.exit(0); });
+    return;
+  }
+
   const url = new URL(req.url, `http://localhost:${PORT}`);
   /* ACCESS LOG, opt-in. An operator debugging "my client cannot reach the server" needs to
    * know whether requests ARRIVE at all — the difference between a routing problem upstream

@@ -302,7 +302,18 @@ above, and by nothing else.
 - **Fail closed.** Absence of configuration is never permission.
 - **A test that has never failed for the right reason has not been shown to work.** Fixtures
   must describe a world that can exist — real pids for liveness, real keys for signatures.
-- **Exit status is not effect. Check the effect.** This is the single most expensive lesson of
+- **THE LAYER THAT REPORTS SUCCESS IS NEVER THE LAYER THAT PROVES IT.** This is the general form,
+  and it has two field cases from one evening. (1) The wake op said `woke:true, tier:'relay',
+  delivery:'dispatched'` five times in a row while a CI seam — armed in the production daemon by
+  its plist — returned that verdict without spawning anything; the op was telling the truth about
+  a simulator. Proof had to come from the other side: the spawn's own stdio, a child pid, or the
+  arrival itself. (2) A mirror step printed `exit: 0`, which was the exit status of `tail` at the
+  end of the pipeline, not of the `git apply` that had actually failed; the effect-check on the
+  file is what caught it. **So when something reports that it worked, ask which layer produced
+  that sentence and whether any other layer can corroborate it.** A wake op's own word is never
+  sufficient evidence of delivery.
+- **Exit status is not effect. Check the effect.** The special case of the rule above, kept
+  because it is the one people recognise. This is the single most expensive lesson of
   2026-08-09/10, because it recurred four times in two days and every instance looked like success:
   - `terminal-notifier` exits 0 whether or not a notification appears.
   - a notify rung dispatched with `execFile(..., () => {})` returned `fired: true` for a command

@@ -131,11 +131,21 @@ async function main() {
       ? `${viaProtocol.length} chars${hasPayload(viaProtocol) ? '' : ' — returned, but the task was not in it'}`
       : 'get_handoff did not return a usable brief — recovering it from disk is a workaround, not a pass');
 
+  /* THE DISK PATH IS ONLY SCORED WHEN THE PROTOCOL PATH FAILED, because HANDOFF.md is written ONLY
+   * on the non-MCP launch path — its absence is the HEALTHY state when the protocol worked, and
+   * scoring it red printed "the worker had no route to its task at all" directly beneath a green
+   * line proving it had one. Sixth defect in this tool's own checks and the same shape as the other
+   * five: the checker was wrong about the world, not the world about the checker. A red that is
+   * routinely wrong teaches the reader to skip reds, which costs more than the check is worth. */
   const viaDisk = readBriefFile(dir);
-  link('brief also on disk (workaround path, not the chain)', !!viaDisk && hasPayload(viaDisk),
-    viaDisk
-      ? `${viaDisk.length} chars — informational: a worker CAN recover from this, but a chain that needs it is broken`
-      : 'no HANDOFF.md either — the worker had no route to its task at all');
+  if (viaProtocol && hasPayload(viaProtocol)) {
+    console.log(`    · disk copy: ${viaDisk ? `${viaDisk.length} chars` : 'absent (expected — HANDOFF.md is only written on the non-MCP path)'}`);
+  } else {
+    link('brief recoverable from disk (workaround, since the protocol path failed)', !!viaDisk && hasPayload(viaDisk),
+      viaDisk
+        ? `${viaDisk.length} chars — a worker CAN recover from this, but a chain that needs it is broken`
+        : 'no HANDOFF.md either — the worker had NO route to its task by any path');
+  }
 
   // ---- the only verdict that counts ----
   console.log(`\n  waiting up to ${Math.round(TIMEOUT_MS / 1000)}s for the effect…`);

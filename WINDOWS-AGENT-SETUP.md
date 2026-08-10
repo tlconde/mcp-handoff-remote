@@ -1,4 +1,13 @@
-# Windows wake agent — operator package
+# Windows wake agent — the by-hand path
+
+> **This is the manual path behind `/plugin install`.** Use it when the plugin cannot run, when you
+> need to watch each step, or when something misbehaves and you want to see where. The intended
+> install is one command; this document is the debugging companion to it, and its value is that
+> every expected output below was captured from a real run rather than written from memory.
+>
+> Plugin packaging is in progress. Until it lands, this is also the only path — which is stated
+> here rather than left for you to infer.
+
 
 **What this does:** puts a wake agent on the Windows laptop so that machine can (1) see mail waiting
 for its sessions, (2) deliver it as a toast, and (3) tell the store what it observed — which is what

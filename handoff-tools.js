@@ -86,14 +86,25 @@ async function namedOrPinned(args, ctx, core) {
  * an unread-able kind — that made a state change drainable, which is how one session's
  * drain ate another terminal's ✓✓. */
 const UNREAD_KINDS = new Set(['xmsg', 'resume_summary']);
+/* ONE MALFORMED RECORD MUST NOT BLIND THE WHOLE SURFACE. These read `messages` off every
+ * session status enumerates, and a record without the array threw — taking down status AND
+ * whoami for every session in the store, not just the broken one. Measured 2026-08-10: a
+ * two-field stub (`{id, title}`) left in the live store by daemon-smoke's id-invariant test
+ * made "which session is this" unanswerable, at the exact moment a cleared session needed to
+ * ask it. The store is shared and append-only, so it will always be possible for something to
+ * write a record this layer did not expect; the reader treats an absent history as an empty
+ * one rather than as a reason to refuse an answer about 65 healthy records. */
+function messagesOf(s) {
+  return (s && Array.isArray(s.messages)) ? s.messages : [];
+}
 function lastCheckIndex(s) {
-  return s.messages
+  return messagesOf(s)
     .map((m2, i) => (m2.kind === 'progress' && /^inbox checked/.test(m2.text)) ? i : -1)
     .reduce((a, b) => Math.max(a, b), -1);
 }
 function freshMessages(s) {
   const lastCheck = lastCheckIndex(s);
-  return s.messages.filter((m2, i) => UNREAD_KINDS.has(m2.kind) && i > lastCheck);
+  return messagesOf(s).filter((m2, i) => UNREAD_KINDS.has(m2.kind) && i > lastCheck);
 }
 function unreadCount(s) {
   return freshMessages(s).length;

@@ -303,8 +303,26 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
   // operation, so an in-memory id mutation is wiped before any save can observe it: a test driving
   // this through a verb passes while proving nothing, which is the vacuous shape found twice this
   // week. The write layer is exported for tests so the refusal can actually be provoked.
+  /* THIS BLOCK REACHES PAST THE API, SO IT MUST NOT REACH INTO THE LIVE STORE. It was the one
+   * block in this file with no scratch HANDOFF_HOME — the preceding block restores the variable
+   * on its way out, so `require('./handoff-core')` here resolved STORE to ~/.claude-handoff and
+   * `__writeRecordForTests` wrote a two-field stub into the running product's store. It sat there
+   * until status and whoami both threw on it hours later. The force-seed guard in the core does
+   * not cover this path: it protects seeding, and this is a direct record write. A test that can
+   * write past the API has to own its store explicitly. */
   {
+    const home = tmpHome();
+    const prevHome4 = process.env.HANDOFF_HOME;
+    process.env.HANDOFF_HOME = home;
+    delete require.cache[require.resolve('./handoff-core')];
+    delete require.cache[require.resolve('./handoff-tools')];
     const c4 = require('./handoff-core');
+    /* STORE is resolved at module load, so the store directories have to exist before any write
+     * that reaches past the API — an earlier version swapped HANDOFF_HOME here and failed with
+     * ENOENT, which would have read as "the guard rejects valid writes" when it was the test
+     * writing to a directory that was never created. Drive one normal API call first. */
+    await c4.handleApi('POST', '/api/sessions', {}, { surface: 'chat', title: 'invariant probe' });
+
     let refused = null;
     try { c4.__writeRecordForTests('sessions', 'sess_chat_REAL', { id: 'sess_chat_IMPOSTOR', title: 'x' }); }
     catch (e) { refused = e; }
@@ -313,12 +331,7 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     ok(refused && /never changes/.test(refused.message) && /adoption/.test(refused.message),
       '(c4) ...and the refusal names the remedy: change the name, or link with adoption which supersedes rather than rewrites');
 
-    /* The invariant must not fire on legitimate writes, or every save breaks. Note STORE is
-     * resolved at module load, so the store directories have to exist for the real path — an
-     * earlier version swapped HANDOFF_HOME here and failed with ENOENT, which would have read as
-     * "the guard rejects valid writes" when it was the test writing to a directory that was never
-     * created. Drive one normal API call first so the dirs exist. */
-    await c4.handleApi('POST', '/api/sessions', {}, { surface: 'chat', title: 'invariant probe' });
+    // The invariant must not fire on legitimate writes, or every save breaks.
     let ok2 = true, why2 = '';
     try { c4.__writeRecordForTests('sessions', 'sess_chat_REAL', { id: 'sess_chat_REAL', title: 'x' }); }
     catch (e) { ok2 = false; why2 = e.message; }
@@ -329,6 +342,23 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     try { c4.__writeRecordForTests('agents', 'some-host', { host: 'some-host', last_seen: 'x' }); }
     catch (e) { ok3 = false; why3 = e.message; }
     ok(ok3, '(c4) records that carry no id field are unaffected — agents and links still persist' + (why3 ? ' :: ' + why3.slice(0, 80) : ''));
+
+    /* The stub this test writes is exactly the shape that blinded status and whoami for every
+     * session in the live store: a record with no `messages` array. The reader now treats an
+     * absent history as an empty one, and the assertion is that status still ANSWERS — asserting
+     * the value ("You are:" is present), not merely that no exception escaped, because a status
+     * report that returned an error string would also not throw. */
+    const t4 = require('./handoff-tools');
+    let survived = '', threw = '';
+    try { survived = String(await t4.callTool('status', { surface: 'chat' }, {}, c4)); }
+    catch (e) { threw = e.message; }
+    ok(/You are:/.test(survived),
+      '(c4) status still answers with a record that carries no messages[] — one malformed record cannot blind the surface'
+      + (threw ? ' :: threw ' + threw.slice(0, 80) : ''));
+
+    if (prevHome4 === undefined) delete process.env.HANDOFF_HOME; else process.env.HANDOFF_HOME = prevHome4;
+    delete require.cache[require.resolve('./handoff-core')];
+    delete require.cache[require.resolve('./handoff-tools')];
   }
 
   // ---- (c5) a worker's brief carries the caller's task, not the delivery address ----

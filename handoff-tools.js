@@ -83,7 +83,16 @@ function deliveryNoteFor(woke, dest, windowName) {
   if (woke && woke.tier === 'notify') return `"${windowName}" is closed — a notification went out naming that window. Nothing has started there; opening it delivers the message. `;
   if (woke && woke.tier === 'store') return `"${windowName}" is closed and no notification could be sent — the message is stored; say anything in that window and it arrives on the next turn. `;
   if (dest && dest.remote && !dest.native_ref) {
-    return `Stored for "${dest.title}" on ${dest.remote.host}. NOT IN FLIGHT: no transport leg can reach that device yet, so nothing will cause it to be read. It drains when an agent on ${dest.remote.host} claims that record. `;
+    /* CORRECTED IN THE FIELD, 2026-08-10, by the peer this sentence is about. It used to end
+     * "...so nothing will cause it to be read", and a session on that device disproved it in the
+     * most direct way available: it ran check_inbox and the message came back. The record is
+     * READABLE ON DEMAND, not undeliverable — what is missing is the PUSH, not the read. The old
+     * wording was true of one direction and stated as if it were true of both, which is the same
+     * overclaim this branch was written to replace ("It arrives when that conversation next
+     * checks", promising an arrival nothing could cause). Understating a capability is a smaller
+     * sin than overstating one and still worth fixing: a reader who believes a message is
+     * unreachable will not go and look. */
+    return `Stored for "${dest.title}" on ${dest.remote.host}. NOT IN FLIGHT: no transport leg can PUSH it, so nothing will start a turn there. Someone on that device can still read it by asking (check_inbox), and it drains automatically once an agent on ${dest.remote.host} claims that record. `;
   }
   return `It arrives when that conversation next checks. `;
 }

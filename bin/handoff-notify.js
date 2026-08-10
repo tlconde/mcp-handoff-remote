@@ -31,8 +31,10 @@
  *      implying otherwise.
  *   4. Windows toast via PowerShell WinRT — no install needed on Windows 10/11. Attributed to
  *      PowerShell for the same reason osascript is attributed to Script Editor: a toast must be
- *      shown by a registered app and handoff is not one. NOT VERIFIED on a real Windows machine;
- *      `node notify-smoke.js --prove` fires one so the person there can confirm by eye.
+ *      shown by a registered app and handoff is not one. VERIFIED on real Windows hardware
+ *      2026-08-10: the toast rendered, attributed to Windows PowerShell, and was seen. Re-check on
+ *      any new machine with `node notify-smoke.js --prove` — Windows exposes no delivered-list, so
+ *      a human's eyes remain the only receipt available there.
  *
  * Test / CI mode: HANDOFF_NOTIFY_LOG=<file> appends one JSON line INSTEAD of firing, so tests
  * never spawn OS notifications. HANDOFF_NO_NOTIFY=1 disables the layer. Never throws: a failed
@@ -221,11 +223,23 @@ function notify(ev) {
      * of compromise as osascript's Script Editor attribution on macOS — visible, honestly
      * labelled, and the click belongs to the host app rather than to us. So no click is promised.
      *
-     * NOT VERIFIED ON A REAL WINDOWS MACHINE by the author. It is written, it is covered by
-     * notify-smoke's routing assertions, and `node notify-smoke.js --prove` fires a real one so
-     * the person on that machine can confirm with their own eyes. Until someone does that, this
-     * comment must not claim it works — today produced two separate false "measured" claims
-     * about notification delivery and both came from asserting an effect nobody had seen. */
+     * VERIFIED ON REAL WINDOWS HARDWARE, 2026-08-10, and it took two runs to get there.
+     *
+     * The first version loaded ONE WinRT type accelerator and then called New-Object on a different
+     * type in a different namespace. It failed with TypeNotFound before building anything, and every
+     * later line cascaded from the null — including Show(null), which returned WITHOUT error. The
+     * failing call was the quiet one. Three separate loads now, one per type instantiated, plus two
+     * throw guards so a null stops the block instead of producing a confident "dispatched" and no
+     * toast.
+     *
+     * The corrected block then rendered and was SEEN: attributed to Windows PowerShell, title
+     * "lulu — Design review on the Windows laptop", body "From chat — open that window to pick it
+     * up." Exact shipped copy shape, and no claim that anything woke.
+     *
+     * Windows exposes no delivered-list, unlike macOS where terminal-notifier -list reads the
+     * notification centre's own records. So a human's eyes are the receipt here and always will be:
+     * `node notify-smoke.js --prove` fires one to be confirmed by eye on any new machine. That is
+     * why this comment names a DATE and a WITNESS rather than saying it works. */
     if (process.platform === 'win32') {
       const xml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       const q = s => String(s).replace(/'/g, "''"); // PowerShell single-quote escape

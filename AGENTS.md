@@ -284,6 +284,21 @@ self-installs slash commands under `.claude/`. Both are gitignored. If either sh
   Three defects sat stacked in that one mechanism — inert guard, clean exit, log line contradicted
   by the status — and **each was invisible until the one before it was fixed.** Expect that shape
   when a mechanism has never once been observed working.
+- **Anchors are chosen by STRUCTURE, never by offset — and an extraction is verified by LOADING the
+  result, not by reading the diff.** Twice on 2026-08-10 a scripted edit anchored on two symbols
+  destroyed working code between them. Once a replacement spanning `applyNickname → PARTICIPATION`
+  silently deleted an entire feature and a builder that happened to live in the gap; once a
+  route-mirror computed its start as `line − 6` and pasted a block beginning mid-comment, leaving
+  the file that serves production with a syntax error.
+
+  Both failures are SILENT at edit time and TOTAL at runtime, and neither diff looked wrong: the
+  first showed a plausible replacement, the second a plausible paste. What caught them was running
+  the result — a suite in seconds, a `require()` immediately.
+
+  So: anchor on a symbol you can name (`function foo(`, a route's own `if`), take the block by
+  walking its own boundaries rather than counting lines around it, and after any scripted edit run
+  the file before believing it. Where a symbol count can be taken before and after, take it — a
+  range edit assumes nothing lives between its ends, and twice in one day something did.
 - **A commit that changes behaviour says so in its subject; a doctrine or docs commit carries no
   functional change.** Mirroring is by commit, and a mirror pass skips doctrine commits by design,
   so a functional change hiding in one is invisible to the only process meant to carry it across.

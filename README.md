@@ -45,7 +45,14 @@ registry at the moment of use. Seven bugs in this codebase were one instance of 
 
 **Say only what was measured.** A dispatch is reported as a dispatch, not as a delivery. If the
 home machine is offline, remote calls fail with `home-offline` rather than hanging or serving
-stale data. Docs claim nothing that isn't asserted by a test.
+stale data.
+
+**About the tests.** This was developed against a test lab written as refusals rather than
+features — the interesting behaviour of a door is what it turns away. That lab is not part of what
+ships: it lives with the maintainer and in this repo's history, so **a clone of this repo cannot
+run it**, and nothing here should be read as "these tests prove it" over tests you do not have.
+What the doctrine above describes is how the code was built and what it was measured against, not
+a proof surface handed to you with the package.
 
 ## Security
 

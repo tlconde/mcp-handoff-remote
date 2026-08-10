@@ -256,8 +256,28 @@ function autoReceipt() {
     }
     const child = spawn('python3', [script, pkg], { detached: true, stdio: 'ignore', env: process.env });
     child.unref();
-    child.on('error', () => {});
-  } catch (_) {}
+    /* ENOENT IS THE ONLY SILENT FAILURE, and it is silent because it is already announced: no
+     * python3 on this machine is a fact about the environment, not a defect, and the absence
+     * notice above covers the same ground. Anything else — EACCES, EPERM, a spawn that dies for a
+     * reason nobody predicted — gets one line. A bare `() => {}` here would be the empty callback
+     * this codebase's own doctrine names as the disease: a failure converted into success by an
+     * error handler that handles nothing. */
+    child.on('error', (e) => announceReceiptFailure(e));
+  } catch (e) {
+    announceReceiptFailure(e);
+  }
+}
+
+/* One line per process for unexpected receipt failures, for the same reason the absence notice is
+ * once-per-process: a fire-and-forget path that logs per lifecycle event becomes noise and stops
+ * being read. Never throws — auto-tracing must not be able to fail the protocol operation that
+ * triggered it. */
+let receiptFailureAnnounced = false;
+function announceReceiptFailure(e) {
+  if (e && e.code === 'ENOENT') return;   // no python3, or the script vanished mid-flight
+  if (receiptFailureAnnounced) return;
+  receiptFailureAnnounced = true;
+  try { console.error(`auto-receipts failing: ${(e && (e.message || e.code)) || e}`); } catch (_) {}
 }
 
 /* ---------------- environment probes ---------------- */

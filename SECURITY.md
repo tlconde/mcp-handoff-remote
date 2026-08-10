@@ -44,5 +44,8 @@ Tier 2 (remote) adds exactly one door, and it is closed by default:
   distinguish. If you place a second resource behind one authorization server, revisit this.
 - **No read cache.** If the home machine is offline, remote reads fail with an explicit
   `home-offline` error rather than serving stale data.
-- The relay is young. It is covered by tests that assert refusals rather than features, but it
-  has not been through third-party review.
+- The relay is young. It was developed against a refusal-oriented test lab — assertions about what
+  it turns away rather than what it accepts — but **that lab does not ship with this repo**, so a
+  clone cannot re-run those assertions and should not treat them as a proof surface it holds. It
+  has not been through third-party review either. Both facts point the same way: verify the
+  refusals yourself against your own deployment before trusting them.

@@ -11,9 +11,21 @@
 symptom is a bug fixed in one place and still live in the other. Measured 2026-08-09: 15 of 23
 shared files had drifted apart while both sides believed they were mirroring.
 
-**This repo LEADS.** When the two disagree, the question is not "how do I carry the notebook's
-version across" but "is the notebook's version a divergence to correct back". Changes flow here
-first and the notebook follows. A change that exists only in the notebook is not yet real.
+**This repo LEADS THE RUNTIME.** When the two disagree about runtime code, the question is not "how
+do I carry the notebook's version across" but "is the notebook's version a divergence to correct
+back". Runtime changes flow here first and the notebook follows. A runtime change that exists only
+in the notebook is not yet real.
+
+**IT DOES NOT LEAD THE PROOFS, AND SAYING IT DID WAS THE CONTRADICTION.** Leadership was written
+once, for one tree, before there were two kinds of file in it. After `95a7ae3` the smokes and specs
+are not tracked here at all, so "this repo leads and every `*-smoke.js` is shared" instructed the
+next agent to mirror lab files INTO a repo that deliberately refuses them — the exact failure
+ADR-0002 exists to prevent, stated in the document that was supposed to prevent it. Two truths in
+one file is the shape doctrine forbids, and a banner announcing the untracking did not repair it,
+because a banner changes what a reader knows and the shared list changes what an agent does.
+
+**PROOFS ARE OWNED BY THE LAB — see the ownership table below.** The publishable repo is not their
+home and does not adjudicate their content.
 
 > **The development lab is no longer tracked.** As of `95a7ae3` ("Ship the plugin, not the lab")
 > the smokes (`*-smoke.js`), `protocol-test.js`, `drift-eval.js`, `forwarder-runbook.js`, the
@@ -22,7 +34,8 @@ first and the notebook follows. A change that exists only in the notebook is not
 > names one of them still works **where the lab is present** and will be missing from a fresh
 > clone. That is deliberate — the repo ships the plugin, not the workbench.
 
-Before assuming the trees match, measure it:
+Before assuming the trees match, measure it — **LAB-ONLY COMMAND: `drift-eval.js` is not tracked
+here, so this runs where the lab is present and is simply absent from a fresh clone:**
 `HANDOFF_MIRROR=$HANDOFF_NOTEBOOK node drift-eval.js` separates comment-only and
 placeholder-value differences (both expected) from structural ones — the only kind that means
 the two copies would behave differently.
@@ -48,9 +61,25 @@ diverged in places nobody has measured, and a rejected hunk is usually telling y
 about that divergence rather than being an obstacle. `--reject` is allowed, but check every hunk
 landed individually; its summary line is not evidence.
 
-Shared code means: `handoff-core.js`, `handoff-tools.js`, `handoff-daemon.js`,
-`handoff-contract.js`, `handoff-relay.js`, `handoff-jwt.js`, `handoff-tool-schemas.js`,
-`mcp-handoff.js`, `server.js`, everything in `bin/`, and every `*-smoke.js` / `protocol-test.js`.
+### Who owns what, and which way it mirrors
+
+| lane | files | owner (leads) | mirror direction |
+|---|---|---|---|
+| **Runtime** | `handoff-core.js`, `handoff-tools.js`, `handoff-daemon.js`, `handoff-contract.js`, `handoff-relay.js`, `handoff-jwt.js`, `handoff-tool-schemas.js`, `mcp-handoff.js`, `server.js`, everything in `bin/`, `hooks/`, `plugin.json` + `mcp.json` | **this repo** | here → notebook |
+| **Proofs** | `*-smoke.js`, `protocol-test.js`, `drift-eval.js`, `forwarder-runbook.js` | **`<PROOF_OWNER>`** (see below) | proof owner → wherever a copy is needed |
+| **Design specs** | `*-SPEC.md`, `THREAT-MODEL.md` | **`<PROOF_OWNER>`** | proof owner only |
+| **Evaluation receipts, trials, pitch material** | see the never-travels list below | notebook | never travels here |
+
+**`<PROOF_OWNER>` is a one-line fill-in awaiting the operator**, and it is deliberately left visible
+rather than guessed: the candidates are the existing notebook or a future private `handoff-lab`
+repo, and they differ in ways an agent must not paper over. Until it is filled, treat the proof
+lane as **not owned by this repo** — which is the part that is already decided and the part the old
+shared list got wrong.
+
+**A runtime change still lands in BOTH trees.** That rule is unchanged and is the one the drift
+measurement above exists for. What changed is that it applies to the runtime lane only: a proof
+that exists in the lab and not here is CORRECT, not drift, and an agent that "fixes" it by copying
+smokes into this tree has broken ADR-0002.
 
 Not shared, and must **never** travel from the notebook to here:
 
@@ -82,6 +111,14 @@ Notebook path parameterized — the doc carries no private repo names; the value
 A repo that is clean at HEAD and dirty in history is not clean. This paragraph exists because the
 tracked-file breach was found by a commissioned sweep, not by the check — a `.gitignore` entry is a
 promise about tomorrow and says nothing about what already shipped.
+
+**The gate is not theoretical, and the residue has a number.** Measured 2026-08-10 at `9a73a84`:
+`mcp-roundtrip-evals/` appears in **5** commits, `docs-seed/` in **5**, and the `sess_`-class
+pattern matches **25** times across `git log --all -p`. Two untracking commits have now moved the
+tip without moving any of that. The procedure — preconditions, the `git-filter-repo` commands,
+and the fresh-clone verification that must come back EMPTY rather than merely smaller — is written
+out in [`docs/runbooks/history-scrub.md`](docs/runbooks/history-scrub.md). It is prepared and
+deliberately NOT performed: the decision and the command are the operator's.
 
 ## Nothing personal, ever, including comments
 
@@ -180,7 +217,8 @@ contained the word.
 before sending — it delivers nothing, so a wrong target costs nothing to correct, and it is the
 only point where the mistake is free.
 
-`node drift-eval.js` has a NAMES check for this. It needs no app API: every inbound message stores
+**LAB-ONLY COMMAND** (not tracked here): `node drift-eval.js` has a NAMES check for this. It needs
+no app API: every inbound message stores
 its sender's label verbatim, so the store already knows what each record has been calling itself.
 Currently reports 5 records answering to names they never use.
 
@@ -189,7 +227,7 @@ them in the resolvers is a change to resolution semantics and is with the review
 
 ## Test side-effects that must not be committed
 
-`protocol-test.js` exports `HANDOFF.md` into the working directory, and the bridge
+**LAB-ONLY** (not tracked here): `protocol-test.js` exports `HANDOFF.md` into the working directory, and the bridge
 self-installs slash commands under `.claude/`. Both are gitignored. If either shows up in
 `git status`, it is an artifact, not work.
 
@@ -198,8 +236,11 @@ self-installs slash commands under `.claude/`. Both are gitignored. If either sh
 - **Never guess.** Ambiguity is surfaced and refused, never resolved silently.
 - **Process-scoped addresses are never persisted or cached** — pids, sockets, transcript ids
   are hints, validated live at the moment of use.
-- **Say only what was measured.** A dispatch is not a delivery. No doc claims a capability
-  that is not asserted by a test.
+- **Say only what was measured.** A dispatch is not a delivery. No doc claims a capability that is
+  not asserted by a test — and since `95a7ae3` that rule needs its own second half: the tests are
+  LAB-SIDE, so a claim in a SHIPPED doc must also be true for a reader who cannot run them. Where
+  it is not, qualify it or move it here. A rule about honesty that quietly stopped applying to the
+  only documents strangers read would be the most expensive kind of dead rule.
 - **Fail closed.** Absence of configuration is never permission.
 - **A test that has never failed for the right reason has not been shown to work.** Fixtures
   must describe a world that can exist — real pids for liveness, real keys for signatures.
@@ -319,3 +360,17 @@ self-installs slash commands under `.claude/`. Both are gitignored. If either sh
   asserting the *mint* — the other half of that commit's own subject line — exposed the gap. **A
   subject line that names two things is a two-item mirror checklist**, and a subject accurate about
   intent but wrong about content is worse than a vague one.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as GitHub Issues in this repo (via `gh`). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.

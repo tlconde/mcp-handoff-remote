@@ -1193,6 +1193,15 @@ async function callTool(name, args, ctx, core) {
     const st = await call('GET', '/api/state');
     let sessions = Object.values(st.sessions).filter(s => !s.archived);
     if (args && args.surface) sessions = sessions.filter(s => s.surface === args.surface);
+    /* PASSIVE RECORDS ARE ADDRESSABLE BUT NOT OFFERED — R1 as amended. Minting on first contact
+     * gives a read-only conversation an inbox (the case that decided it: a chat did useful
+     * read-only work and could not be sent to, because it had never written and so did not
+     * exist). The cost is picker clutter, and the answer is a filter rather than a denial: the
+     * record exists, resolves and receives; it simply is not proposed as a destination until it
+     * has done something. include_passive shows them, and the count is always stated — a list
+     * that silently omits rows is the same defect as one that silently includes the wrong ones. */
+    const passiveAll = sessions.filter(s => s.participation === 'passive');
+    if (!(args && args.include_passive)) sessions = sessions.filter(s => s.participation !== 'passive');
     // Routing telemetry (t11): the ops trail showed only the final resume, never what
     // was listed — Gate A was blind to the decision path. Every routing verb now logs.
     core.ops('route_query', { verb: 'list_conversations', surface: (args && args.surface) || null, protocol: sessions.length });
@@ -1208,6 +1217,12 @@ async function callTool(name, args, ctx, core) {
     const loc = s => (s.surface === 'code' ? 'Claude Code · protocol record' : `Claude app · ${s.surface}`) + supersededNote(s);
     const banner = await attentionBanner(ctx, core);
     const parts = [];
+    /* NEVER A SILENT OMISSION. Whatever the filter drops is counted out loud, so a short list is
+     * legibly short rather than mysteriously so. A picker that hides rows without saying it does
+     * is how someone concludes a conversation does not exist when it merely has not spoken. */
+    const hiddenNote = (!(args && args.include_passive) && passiveAll.length)
+      ? `\n(${passiveAll.length} passive record(s) not shown — minted on first contact, addressable and able to receive, but not yet offered as a destination. include_passive: true to list them.)`
+      : '';
     if (!sessions.length && (!args || !args.surface)) {
       parts.push(
         'No conversations in the protocol yet.\n\n' +
@@ -1260,7 +1275,7 @@ async function callTool(name, args, ctx, core) {
     }
     parts.push('NOT listable anywhere: Claude app CHAT conversations that never touched the protocol — their state is server-side with no API. They join by handing off from their own side ("/handoff" there, or "hand this off to …").');
     const body = parts.length ? parts.join('\n\n') : 'No conversations discovered yet. Conversations join by handing off, picking up, or being dispatched; local Claude Code sessions appear once ~/.claude/projects exists.';
-    return banner + body;
+    return banner + body + hiddenNote;
   }
   if (name === 'resume_code_session') {
     /* AMBIGUITY ENFORCEMENT (t5 regressed in t11): the ROUTING prose in tool

@@ -644,6 +644,86 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     delete require.cache[require.resolve('./handoff-core')];
   }
 
+  /* ---- (c9) IDENTITY STEP 2 — nickname (R3) and participation (R1 as amended) ----
+   * A nickname is not a second title. It is what a human types from memory to repair an identity
+   * the model has lost, which is why uniqueness is enforced WHEN THE NAME IS CLAIMED: a collision
+   * discovered at use time is discovered by someone who has already lost their identity and is
+   * now being asked to disambiguate. Worst possible moment.
+   *
+   * Participation exists because minting on first contact — which gives a read-only conversation
+   * an inbox — would otherwise fill every picker with records that have never spoken. The record
+   * is addressable from first contact; it is simply not OFFERED until it acts. */
+  {
+    const home = tmpHome();
+    const prev = process.env.HANDOFF_HOME, prevCli = process.env.HANDOFF_NO_CLI;
+    process.env.HANDOFF_HOME = home; process.env.HANDOFF_NO_CLI = '1';
+    delete require.cache[require.resolve('./handoff-core')];
+    delete require.cache[require.resolve('./handoff-tools')];
+    const c9 = require('./handoff-core');
+    const t9 = require('./handoff-tools');
+    const reg = async (uuid, body) => (await c9.handleApi('POST', '/api/register', {}, { native_id: uuid, cwd: '/tmp/x', ...body }));
+
+    const a = await reg('11111111-1111-4111-8111-111111111111', { title: 'first', nickname: 'alpha' });
+    const aId = a.payload && a.payload.session && a.payload.session.id;
+    ok(!!aId && a.code < 300, '(c9) a nickname can be claimed at all');
+
+    // THE REFUSAL, and it must name the holder — "taken" without a name leaves the human stuck.
+    const b = await reg('22222222-2222-4222-8222-222222222222', { title: 'second', nickname: 'alpha' });
+    ok(b.code === 409, '(c9) a second live record on the SAME surface is REFUSED the name — at set time, not at use time');
+    ok(b.payload && /already held/.test(b.payload.error) && b.payload.held_by === aId,
+      '(c9) ...and the refusal NAMES the holder, because "taken" alone leaves the human with nowhere to go');
+
+    /* THE REGISTRATION MUST SURVIVE THE REFUSAL. The first version of this code returned 409
+     * before save(), so the mint and the title went with it: the caller asked for identity plus a
+     * name, was refused the name, and silently lost the identity too. Asserting the record EXISTS
+     * and carries no nickname — a refusal that costs you your record is worse than one that
+     * costs you a name. */
+    const bId = b.payload && b.payload.id;
+    ok(!!bId, '(c9) ...and the REGISTRATION still stands — a refused nickname must not discard the identity the caller just asked for');
+    const st1 = (await c9.handleApi('GET', '/api/state', {}, {})).payload;
+    ok(st1.sessions[bId] && !st1.sessions[bId].nickname,
+      '(c9) ...with no nickname on it — the refusal leaves no residue, but it also leaves a record');
+
+    // Case-insensitive, because a human under pressure does not capitalise consistently.
+    const d = await reg('33333333-3333-4333-8333-333333333333', { title: 'fourth', nickname: 'ALPHA' });
+    ok(d.code === 409, '(c9) collision is case-insensitive — a name typed from memory is not typed carefully');
+
+    // One word only: a nickname that needs quoting is not a recovery path.
+    const e = await reg('44444444-4444-4444-8444-444444444444', { title: 'fifth', nickname: 'two words' });
+    ok(e.code === 400 && /one word/.test(e.payload.error),
+      '(c9) a nickname must be one word — a name that needs quoting is not something typed under pressure');
+
+    /* PARTICIPATION. A freshly minted record has never acted, so it is passive; registering is
+     * write-shaped, so a registered terminal is active. Asserting the VALUE on both sides —
+     * a test that only checked "the field exists" would pass with the flag stuck either way. */
+    const passiveRes = await c9.handleApi('POST', '/api/sessions', {}, { surface: 'chat', title: 'reader' });
+    const passiveId = passiveRes.payload.id;
+    const st2 = (await c9.handleApi('GET', '/api/state', {}, {})).payload;
+    ok(st2.sessions[passiveId].participation === 'passive',
+      '(c9) a record that has only been minted is PASSIVE — addressable, with an inbox, but it has not spoken');
+    ok(st2.sessions[aId].participation === 'active',
+      '(c9) ...and registering is write-shaped, so a terminal that registered is ACTIVE');
+
+    // The picker offers active records and SAYS what it withheld.
+    const listed = await t9.callTool('list_conversations', {}, {}, c9);
+    ok(!listed.includes('"reader"'), '(c9) the picker does not offer a record that has never acted');
+    ok(/passive record\(s\) not shown/.test(listed),
+      '(c9) ...but it SAYS SO and counts them — a list that silently omits rows is how someone concludes a conversation does not exist');
+    const listedAll = await t9.callTool('list_conversations', { include_passive: true }, {}, c9);
+    ok(listedAll.includes('"reader"'), '(c9) include_passive shows them — hidden is not the same as denied');
+
+    // One direction: passive is a claim about what a record has NEVER done.
+    await c9.handleApi('POST', `/api/sessions/${passiveId}/messages`, {}, { role: 'user', kind: 'chat', text: 'now it speaks' });
+    const st3 = (await c9.handleApi('GET', '/api/state', {}, {})).payload;
+    ok(st3.sessions[passiveId].participation === 'active' && !!st3.sessions[passiveId].activated_at,
+      '(c9) a first write-shaped act flips it to ACTIVE, stamped, once and in one direction');
+
+    if (prev === undefined) delete process.env.HANDOFF_HOME; else process.env.HANDOFF_HOME = prev;
+    if (prevCli === undefined) delete process.env.HANDOFF_NO_CLI; else process.env.HANDOFF_NO_CLI = prevCli;
+    delete require.cache[require.resolve('./handoff-core')];
+    delete require.cache[require.resolve('./handoff-tools')];
+  }
+
   // ---- (d) rollout smoke: 10 forwarders under load across a restart, zero lost writes ----
   {
     const home = tmpHome();

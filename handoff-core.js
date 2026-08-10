@@ -658,11 +658,35 @@ function createSession({ surface, title }) {
    * easy one.
    *
    * Existing ids stay valid: matching is exact-string, so nothing is rewritten or migrated. */
-  const s = { id: id('sess_' + (surface || 'x')), surface, title: title || 'Untitled', created_at: now(), messages: [], decisions: [], artifacts: [], open_items: [], archived: false };
+  const s = { id: id('sess_' + (surface || 'x')), surface, title: title || 'Untitled', created_at: now(), messages: [], decisions: [], artifacts: [], open_items: [], archived: false, participation: 'passive' };
   db.sessions[s.id] = s;
   return s;
 }
+/* PARTICIPATION — R1 as amended. Every record starts 'passive' and becomes 'active' at its first
+ * write-shaped act. One transition, one direction, recorded as an event.
+ *
+ * WHY MINT AT ALL FOR A READER: a conversation that only reads still needs an ADDRESS. The case
+ * that decided it — a chat conversation did genuinely useful read-only work through the connector
+ * and ended up UNADDRESSABLE, because it had never written and therefore did not exist; there was
+ * nothing to send to. Denying identity to readers denies them an inbox, and addressability from
+ * first contact is half of what identity is for.
+ *
+ * WHY A STATE RATHER THAN NOTHING: the objection to minting on read was picker clutter, and it was
+ * a real objection — a list where every passing reader appears is a list nobody can choose from.
+ * So the record exists and is addressable, and the pickers filter. Cost is a few hundred bytes of
+ * id with no payload; the bloat vector is artifact bodies, which is a different slice entirely.
+ *
+ * ONE DIRECTION, because 'passive' is a claim about what a record has NEVER done, and that cannot
+ * become true again once it is false. */
+const WRITE_SHAPED = new Set(['send', 'handoff', 'register', 'claim', 'nickname', 'adopt', 'message', 'progress', 'return']);
+function markActive(session, act) {
+  if (!session || session.participation === 'active') return;
+  session.participation = 'active';
+  session.activated_at = now();
+  ops('participation_active', { session: session.id, by: act || 'unspecified' });
+}
 function addMessage(session, { role, text, reply_to = null, kind = 'chat', decision = false, from_session = null, sender_class = null }) {
+  markActive(session, kind === 'progress' ? 'progress' : 'message');
   if (kind === 'receipt') {
     // Two-tier model (2026-08-08): a receipt is not a message, it is STATE on the send
     // record (read_at/read_in, set via the /state route). Refusing the kind at the only
@@ -1428,6 +1452,59 @@ async function handleApi(method, p, query, b) {
       else if (b.native_name && minted && !s._title_explicit) s.title = String(b.native_name).slice(0, 120);
       if (b.title) s._title_explicit = true;
       if (b.role !== undefined) s.role = b.role ? String(b.role).slice(0, 40) : null;
+
+      /* NICKNAME — R3. THE HUMAN'S RECOVERY PATH, WHICH IS WHY IT REFUSES AT SET TIME.
+       *
+       * A title is what a record is called; a NICKNAME is what a person types from memory to
+       * repair an identity the model has lost. That is layer 2 of the four-layer design and it
+       * only works if the name resolves to exactly one live record — so uniqueness is enforced
+       * WHEN THE NAME IS CLAIMED, not when it is used. A collision discovered at use time is
+       * discovered by someone who has already lost their identity and is now being asked to
+       * disambiguate; that is the worst possible moment to find out.
+       *
+       * Unique PER SURFACE, because that is the scope a human addresses in ("the code one called
+       * build"), and because two surfaces genuinely can hold unrelated conversations of the same
+       * name without ambiguity for the person typing.
+       *
+       * A SUPERSEDED RECORD DOES NOT BLOCK A NAME, but shadowing one is stated rather than
+       * silent: adoption is append-only and the old record keeps its history forever, so its
+       * nickname would otherwise squat the name for good. The grant names what it shadows, so a
+       * later reader can follow the chain instead of wondering why a familiar name points somewhere
+       * unexpected. Refusing here would punish exactly the recovery adoption exists to serve. */
+      /* A REFUSED NICKNAME MUST NOT DISCARD THE REGISTRATION. The first version of this returned
+       * 409 before save(), so the mint and the title went with it — the caller asked for identity
+       * plus a name, was refused the name, and silently lost the identity too. "Nothing was
+       * changed" has to mean the NICKNAME was not set, never "your registration was thrown away";
+       * a terminal that registers and ends up with no record is worse off than one that never
+       * called. So the refusal is collected here, the rest of the registration is applied and
+       * saved below, and the 409 is returned at the end carrying both facts. */
+      let nickRefusal = null;
+      if (b.nickname !== undefined) {
+        const nick = b.nickname === null || b.nickname === '' ? null : String(b.nickname).trim().slice(0, 40);
+        if (nick && !/^[a-z0-9][a-z0-9_-]*$/i.test(nick)) {
+          nickRefusal = { code: 400, error: `nickname "${nick}" must be one word — letters, digits, hyphen or underscore. A name a human types under pressure cannot need quoting.` };
+        } else if (nick) {
+          const rivals = Object.values(db.sessions).filter(x =>
+            x && x.id !== s.id && x.surface === s.surface && !x.archived &&
+            String(x.nickname || '').toLowerCase() === nick.toLowerCase());
+          const live = rivals.filter(x => !x.superseded_by);
+          if (live.length) {
+            nickRefusal = { code: 409, held_by: live[0].id,
+              error: `nickname "${nick}" is already held on ${s.surface} by ${live[0].id}${live[0].title ? ` ("${live[0].title}")` : ''} — the nickname was NOT set. Your registration stands and your record is ${s.id}. A nickname is how a human recovers an identity, so it must resolve to one record; pick another name, or retire that one first.` };
+          } else {
+            const shadowed = rivals.filter(x => x.superseded_by).map(x => x.id);
+            s.nickname = nick;
+            ops('nickname_set', { session: s.id, nickname: nick, surface: s.surface, shadows: shadowed.length ? shadowed : undefined });
+            if (shadowed.length) s.nickname_shadows = shadowed;
+          }
+        } else {
+          if (s.nickname) ops('nickname_cleared', { session: s.id, nickname: s.nickname });
+          s.nickname = null;
+          delete s.nickname_shadows;
+        }
+      }
+
+      markActive(s, 'register');
       s.last_seen = now();
       /* ADOPTION (explicit only). The caller names a predecessor id it already holds — from
        * its own thread, which is the one continuity that survives a process boundary. This
@@ -1459,6 +1536,11 @@ async function handleApi(method, p, query, b) {
       // to the caller, so a heal is something you can see happen rather than infer.
       if (healed) ops('identity_healed', { session: s.id, from: healed.from, to: healed.to, by: healed.by, pid: b.pid || null });
       save();
+      /* The registration is saved FIRST, then the nickname refusal is reported — so the caller
+       * ends up with a real record and an honest "the name was refused", never with neither. */
+      if (nickRefusal) {
+        return { code: nickRefusal.code, payload: { error: nickRefusal.error, held_by: nickRefusal.held_by, id: s.id, minted, session: s } };
+      }
       return { code: minted ? 201 : 200, payload: { id: s.id, minted, healed, session: s } };
     }
     if (method === 'POST' && p === '/api/sessions') {

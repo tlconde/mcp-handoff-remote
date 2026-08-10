@@ -161,6 +161,7 @@ function makeStoreClient(opts) {
         host: beat.host,
         sessions: beat.sessions || {},
         agent_version: beat.agent_version || null,
+        default_verdict: beat.default_verdict,
         owns: beat.owns,
       }, TIMEOUT_MS);
       return { recorded: text };

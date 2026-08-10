@@ -1084,6 +1084,26 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     ok(/reachable: process/.test(after),
       '(c14) THE FLIP: reachability now reads what that host observed, not "unknown" — the acceptance test this verb exists for');
 
+    /* DEFAULT VERDICT — the half without which the whole verb could not do its job. Reachability
+     * is keyed per record, and an agent that cannot enumerate cannot build that map. So one
+     * verdict expands server-side over records declaring this host. Found by WIRING the agent to
+     * the verb; reading either alone would not have shown it. */
+    const other = (await c14.handleApi('POST', '/api/register-remote', {}, { host: 'third-host', title: 'not mine', attested_by: 'operator', minted_by: 'test' })).payload.session;
+    await c14.handleApi('POST', `/api/sessions/${other.id}/messages`, {}, { role: 'user', kind: 'xmsg', text: '[message from chat · x] waiting' });
+    const spread = await t14.callTool('agent_heartbeat', { host: 'my-laptop', default_verdict: 'process', agent_version: '0.1.0' }, {}, c14);
+    ok(/Heartbeat recorded for "my-laptop"/.test(spread),
+      '(c14) a host may assert ONE verdict for records it cannot enumerate — without it the verb could not flip anything');
+
+    const spreadPeek = await t14.callTool('peek_inbox', { surface: 'code' }, {}, c14);
+    ok(/reachable: process/.test(spreadPeek),
+      '(c14) ...and its own record carries that verdict');
+    ok(/reachable: unknown/.test(spreadPeek),
+      '(c14) ...while ANOTHER host\'s record still reads unknown — a default verdict cannot reach records that do not declare this host');
+
+    const badVerdict = await t14.callTool('agent_heartbeat', { host: 'my-laptop', default_verdict: 'unknown' }, {}, c14);
+    ok(/Refused/.test(badVerdict),
+      '(c14) ...and "unknown" is refused as a verdict — an agent that is running has looked, so it always has a real answer');
+
     /* NO STATE-READ COMPANION, asserted so nobody "completes" the surface later. The gap is the
      * design: the door widened for an acceptance test, never for a convenience. */
     const { TOOLS } = require('./handoff-tool-schemas');

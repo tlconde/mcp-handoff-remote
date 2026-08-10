@@ -192,6 +192,7 @@ const TOOLS = [
         host: { type: 'string', description: 'This machine\'s host id, exactly as records name it. Required — a heartbeat that cannot name its host asserts liveness on nobody\'s behalf.' },
         sessions: { type: 'object', description: 'Map of session_id → verdict for records THIS host owns. Verdicts use the same vocabulary peek reports (process | none | stale-binding). "unknown" is never written: an agent that is running has looked, so it always has a real answer for its own records.' },
         agent_version: { type: 'string', description: 'Agent version, recorded so a stale agent is identifiable. Optional.' },
+        default_verdict: { type: 'string', enum: ['process', 'none', 'stale-binding'], description: 'ONE verdict applied to every record that declares this host and is not named in `sessions`. For an agent that cannot enumerate the store — the expansion happens server-side, so you assert a verdict without ever learning which records exist. Own-host only: it cannot reach another host\'s records.' },
         owns: { type: 'number', description: 'How many records this host claims. Optional; defaults to the size of sessions.' }
       },
       required: ['host'],

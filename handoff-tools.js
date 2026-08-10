@@ -458,8 +458,33 @@ async function callTool(name, args, ctx, core) {
         'A host may assert liveness only for its own records; a verdict from another machine is a guess wearing a fact\'s clothes. ' +
         'NOTHING was written — the heartbeat is refused whole rather than filtered, so you never believe you asserted something you did not.';
     }
+    /* DEFAULT VERDICT — how a host speaks for records it cannot enumerate.
+     *
+     * Reachability is keyed per record: remoteVerdict reads beat.sessions[recordId], so a host with
+     * no per-record map flips nothing. And a remote agent CANNOT build that map, because there is
+     * deliberately no state-read tool. Widening the door for a heartbeat alone would therefore have
+     * shipped a verb that could not do the thing it was approved for — found by wiring the agent to
+     * it rather than by reading either.
+     *
+     * So the caller may send ONE verdict for all of its own records, and the expansion happens HERE,
+     * server-side, where the store already lives. The remote surface gains no read: the caller
+     * names a verdict, never learns which records exist, and the response carries a count rather
+     * than a list. Own-host-only still holds — expansion is restricted to records declaring this
+     * host, so a default verdict cannot reach anyone else's. */
+    const merged = Object.assign({}, sessions);
+    const dv = args && args.default_verdict;
+    if (dv) {
+      if (!['process', 'none', 'stale-binding'].includes(dv)) {
+        return `Refused: default_verdict "${dv}" is not one of process | none | stale-binding. "unknown" is never written — an agent that is running has looked, so it always has a real answer for its own records.`;
+      }
+      for (const [sid, rec] of Object.entries(st.sessions || {})) {
+        if (rec && rec.archived) continue;
+        const declared = (rec.remote && rec.remote.host) || (rec.native_ref && rec.native_ref.host) || null;
+        if (declared === host && merged[sid] === undefined) merged[sid] = dv;
+      }
+    }
     const r = await call('POST', '/api/agents/heartbeat', {}, {
-      host, sessions, agent_version: (args && args.agent_version) || null, owns: (args && args.owns) || Object.keys(sessions).length,
+      host, sessions: merged, agent_version: (args && args.agent_version) || null, owns: (args && args.owns) || Object.keys(merged).length,
     });
     const a = r.agent || {};
     return `Heartbeat recorded for "${host}": ${Object.keys(a.sessions || {}).length} record(s) carry a host-asserted verdict, agent ${a.agent_version || 'unversioned'}. ` +

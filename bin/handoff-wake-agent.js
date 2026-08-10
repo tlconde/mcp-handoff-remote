@@ -60,8 +60,13 @@ const ONCE = process.argv.includes('--once');
 const DRY = process.argv.includes('--dry-run');
 const INTERVAL_S = Math.min(300, Math.max(5, Number(process.env.HANDOFF_AGENT_INTERVAL) || 20));
 
-const core = require('../handoff-core');
+/* THE STORE IS AN INTERFACE, NOT A FILESYSTEM. It was `require('../handoff-core')` — correct on
+ * the store's own host and impossible anywhere else, which meant this agent could not run on the
+ * one machine the design needed it: a second device has no store to read. The client picks local
+ * or remote from the environment and this file stops knowing which it has. */
+const { makeStoreClient } = require('./handoff-store-client');
 const transport = require('./handoff-transport');
+let store; // built in main(), so a misconfiguration is one sentence rather than a stack trace
 
 const log = (...a) => console.log(`[wake-agent ${HOST}]`, ...a);
 
@@ -90,7 +95,25 @@ function ownedHere(s) {
 }
 
 async function cycle(state) {
-  const st = (await core.handleApi('GET', '/api/state', {}, {})).payload;
+  const st = await store.getState();
+  if (st.sessions === null) {
+    /* A remote agent cannot enumerate, but it MUST still heartbeat — the verdict is the whole
+     * point, and returning early here would have shipped an agent that peeks and never speaks.
+     * It sends ONE verdict for its own records and the store expands it; this host is running and
+     * has looked, so 'process' is what it honestly observed of itself. */
+    log(`remote store — cannot enumerate (${(st.unavailable || []).join('; ')}); peeking and asserting one verdict for this host's records.`);
+    log(`peek says: ${String(st.peek || '').split('\n')[0] || '(nothing waiting)'}`);
+    if (!DRY) {
+      await store.heartbeat({
+        host: HOST, last_seen: new Date().toISOString(), agent_version: AGENT_VERSION,
+        sessions: {}, default_verdict: 'process',
+      });
+      log(`heartbeat — sent for "${HOST}" with default verdict 'process' for records declaring this host`);
+    } else {
+      log('heartbeat — skipped (dry-run)');
+    }
+    return state;
+  }
   const sessions = Object.values(st.sessions || {});
   const mine = sessions.filter(ownedHere);
 
@@ -110,7 +133,7 @@ async function cycle(state) {
     sessions: verdicts,
     owns: mine.length,
   };
-  if (!DRY) await core.handleApi('POST', '/api/agents/heartbeat', {}, beat);
+  if (!DRY) await store.heartbeat(beat);
   log(`heartbeat — ${mine.length} record(s) owned, ${Object.keys(verdicts).length} with a verdict${DRY ? ' (dry-run, not written)' : ''}`);
 
   /* PEEK, never check_inbox. Counts and addresses only; the text belongs to its reader. */
@@ -138,7 +161,14 @@ async function cycle(state) {
 
 async function main() {
   log(`starting — version ${AGENT_VERSION}, interval ${INTERVAL_S}s${ONCE ? ', single cycle' : ''}${DRY ? ', DRY RUN' : ''}`);
-  log(`store: ${process.env.HANDOFF_HOME || path.join(os.homedir(), '.claude-handoff')}`);
+  /* A misconfigured agent stops with ONE readable sentence. The client refuses to build without a
+   * credential — correct, and an operator should not meet that as a stack trace at require time. */
+  try { store = makeStoreClient(); }
+  catch (e) { log('cannot start:', (e && e.message) || e); process.exit(1); }
+  log(`store: ${store.describe()}`);
+  /* A remote agent cannot enumerate, so it must say so rather than report a quiet cycle over an
+   * empty list. sessions:null means "cannot enumerate"; {} would mean "none exist", and reading
+   * one as the other is how an agent looks healthy while doing nothing. */
   let state = {};
   for (;;) {
     try { state = await cycle(state); }

@@ -488,7 +488,26 @@ async function buildEnvelope(session) {
     created_at: now()
   };
 }
-function verbatimDecisions(env) { return env.decisions.map(d => `- "${d.text}"`).join('\n') || '- (none locked yet)'; }
+/* THE HEADING SAYS VERBATIM, SO A DECISION THAT IS NOT VERBATIM MUST SAY SO. Writes are refused
+ * above the limit now, but 13 decisions were stored truncated before that landed and their tails
+ * are not recoverable from anywhere — no source message holds the original. They are annotated at
+ * render time rather than rewritten: a lost tail is a fact about the record, and repairing the
+ * APPEARANCE of a record whose content is gone is the dishonesty this whole arc exists to refuse.
+ * A reader can now tell "this is the caller's exact wording" from "this is what survived a cap",
+ * which are different claims and were being rendered identically.
+ *
+ * The marker is length-based rather than a stored flag ON PURPOSE: a flag would have to be
+ * back-filled by guessing which records were cut, and a decision that happens to be exactly at the
+ * limit is indistinguishable from one that was truncated at it — so the honest annotation is the
+ * one that fires on both and overclaims nothing. */
+const DECISION_LIMIT = 200;
+function verbatimDecisions(env) {
+  return env.decisions.map(d => {
+    const t = String(d.text || '');
+    const suspect = t.length >= DECISION_LIMIT;
+    return `- "${t}"${suspect ? `\n  _[at the ${DECISION_LIMIT}-char limit — if this was truncated before 2026-08-10 the original is not recoverable; treat as possibly incomplete]_` : ''}`;
+  }).join('\n') || '- (none locked yet)';
+}
 /* TWO PAYLOAD CHANNELS, AND THE CODE ASSUMED ONE.
  *
  * A dispatch carries the caller's TASK and the caller's CONTEXT, and they travel separately: the
@@ -861,8 +880,30 @@ function addMessage(session, { role, text, reply_to = null, kind = 'chat', decis
   if (pastedCarrier && /\block\b|\bdecision:/i.test(text)) {
     ops('carrier_detected', { session: session.id, msg: msg.id, suppressed_autolock: true });
   }
+  /* A CAP THAT SILENTLY TRUNCATES UNDER A HEADING THAT PROMISES "VERBATIM" IS A BROKEN PROMISE,
+   * NOT A LIMIT. This wrote `text.slice(0, 200)` into a collection that briefs render under
+   * "## Locked constraints (verbatim — do not re-litigate)". Measured 2026-08-10: 13 of 164 stored
+   * decisions sit at exactly the cap, tails gone, presented to every downstream reader as the
+   * caller's exact words. A locked constraint is the most protected data class this protocol has —
+   * it is the thing a receiver is told not to re-litigate — and it was the one being quietly cut.
+   *
+   * REFUSED AT WRITE TIME, NOT CAPPED HIGHER. Any cap re-creates the same silent break at a new
+   * length; only a refusal keeps the promise honest at every length. The remedy names BOTH honest
+   * options, because some constraints genuinely need more than 200 characters of precision and
+   * "shorten it" alone would push a caller toward losing the precision that made it a constraint.
+   *
+   * The existing 13 cannot be repaired — their tails are not recoverable from anywhere — so they
+   * are annotated rather than rewritten, and the renderer says so. Losing data is not fixed by
+   * pretending the loss did not happen. */
+  const DECISION_MAX = 200;
   if (decision || (kind === 'chat' && !pastedCarrier && /\block\b|\bdecision:/i.test(text))) {
-    session.decisions.push({ text: text.slice(0, 200), source_message: msg.id });
+    if (text.length > DECISION_MAX) {
+      const err = new Error(
+        `decision refused: ${text.length} characters exceeds the ${DECISION_MAX}-character limit, and decisions are rendered under a heading that promises VERBATIM — storing a truncated one would break that promise silently. Two honest remedies: shorten this decision to its binding sentence, or SPLIT IT INTO TWO locked decisions, each independently quotable. Nothing was stored.`);
+      err.status = 400;
+      throw err;
+    }
+    session.decisions.push({ text, source_message: msg.id });
   }
   return msg;
 }

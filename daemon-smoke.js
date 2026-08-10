@@ -816,6 +816,55 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     delete require.cache[require.resolve('./handoff-core')];
   }
 
+  /* ---- (c11) A LOCKED DECISION IS VERBATIM OR IT IS REFUSED ----
+   * The write path did text.slice(0, 200) into a collection rendered under "Locked constraints
+   * (verbatim — do not re-litigate)". Measured 2026-08-10: 13 of 164 stored decisions sit at
+   * exactly the cap with their tails gone, shown to every reader as the caller's exact words. The
+   * most protected data class in the protocol — the thing a receiver is told not to re-litigate —
+   * was the one being silently cut. */
+  {
+    const home = tmpHome();
+    const prev = process.env.HANDOFF_HOME;
+    process.env.HANDOFF_HOME = home;
+    delete require.cache[require.resolve('./handoff-core')];
+    const c11 = require('./handoff-core');
+
+    const s = await c11.handleApi('POST', '/api/sessions', {}, { surface: 'chat', title: 'decisions' });
+    const sid = s.payload.id;
+    const long = 'We lock the following constraint, at length, because it needs the precision: ' + 'x'.repeat(200);
+
+    const refused = await c11.handleApi('POST', `/api/sessions/${sid}/messages`, {}, { role: 'user', kind: 'chat', text: long, decision: true });
+    ok(refused.code === 400,
+      '(c11) an over-length decision is REFUSED at write time — a cap that truncates under a "verbatim" heading is a broken promise, not a limit');
+    ok(/VERBATIM/.test(refused.payload.error) && /SPLIT IT INTO TWO/.test(refused.payload.error),
+      '(c11) ...and the remedy names BOTH honest options — shorten, or split — because some constraints genuinely need the precision');
+    ok(/Nothing was stored/.test(refused.payload.error),
+      '(c11) ...and says nothing was stored, so a caller is never left guessing whether a half-write happened');
+
+    const st = (await c11.handleApi('GET', '/api/state', {}, {})).payload;
+    ok((st.sessions[sid].decisions || []).length === 0,
+      '(c11) ...and NOTHING was stored — asserting the store, not the status code, because a 400 that wrote anyway is the exact failure this replaces');
+
+    // A decision within the limit still locks, unchanged and untruncated.
+    const okText = 'Ship the deterministic checkpoint first; no model in the checkpoint path.';
+    await c11.handleApi('POST', `/api/sessions/${sid}/messages`, {}, { role: 'user', kind: 'chat', text: okText, decision: true });
+    const st2 = (await c11.handleApi('GET', '/api/state', {}, {})).payload;
+    ok(st2.sessions[sid].decisions.length === 1 && st2.sessions[sid].decisions[0].text === okText,
+      '(c11) a decision within the limit is stored WHOLE and byte-identical — the promise kept, not merely unbroken');
+
+    /* The 13 already stored cannot be repaired, so the RENDERER stops overclaiming on them. */
+    const envSess = st2.sessions[sid];
+    envSess.decisions.push({ text: 'y'.repeat(200), source_message: null });
+    const brief = c11.buildBrief('code', { decisions: envSess.decisions, open_items: [], artifacts: [], notes: null, created_at: new Date().toISOString(), context_mode: 'full', transcript: [], summary: '' }, envSess);
+    ok(/not recoverable/.test(brief) && /possibly incomplete/.test(brief),
+      '(c11) a decision sitting AT the limit renders with a warning — a lost tail is a fact about the record, and repairing its appearance would be the dishonesty this refuses');
+    ok(!/not recoverable/.test(brief.split('\n').filter(l => l.includes(okText)).join('\n')),
+      '(c11) ...while a short decision renders clean — the warning marks the suspect ones, never all of them');
+
+    if (prev === undefined) delete process.env.HANDOFF_HOME; else process.env.HANDOFF_HOME = prev;
+    delete require.cache[require.resolve('./handoff-core')];
+  }
+
   // ---- (d) rollout smoke: 10 forwarders under load across a restart, zero lost writes ----
   {
     const home = tmpHome();

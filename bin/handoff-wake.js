@@ -17,7 +17,7 @@
  *                        ONE `claude -p` with the CHEAPEST model and --allowedTools
  *                        "ListAgents SendMessage"; the spawned session confirms the target
  *                        via ListAgents, then SendMessage's ONE wake line. Proven live in
- *                        t26 (woke ai-product-sense-2a). Fire-and-exit, no-reply-expected,
+ *                        t26 (woke a live terminal session). Fire-and-exit, no-reply-expected,
  *                        exactly ONE call, NO retries (relay contract, t26 §reply).
  *   3. notify          — the target cannot be reached by any process: no live socket, or it is
  *                        on ANOTHER DEVICE. Tell the human instead, naming the session, the
@@ -128,8 +128,8 @@ function claudeBinPath() {
  * validated against a live registry row at the moment of use. This function used to trust
  * the hint two ways, and both were defects:
  *   - it matched reg.sessionId === native_ref.session_id and gave up when nothing matched.
- *     A resume FORKS a new session id under the same process (probed live: bdf5f77e →
- *     93ac44b0, parentUuid null, no lineage), so after any /clear + resume no row carries
+ *     A resume FORKS a new session id under the same process (probed live: the uuid changes,
+ *     parentUuid null, no lineage), so after any /clear + resume no row carries
  *     the stored id and an OPEN terminal reported CLOSED — every resumed session silently
  *     degraded to a notification, which is the zero-tap path quietly dying.
  *   - worse, it then fell back to native_ref.messaging_socket_path if that path still

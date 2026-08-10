@@ -8,10 +8,10 @@ deploy/cloudflared.yml
 # Never commit credentials. They live outside the repo; this is belt and braces.
 *.pem
 *.json.credentials
-# Test side-effects: protocol-test exports # Session state written before a deliberate /clear, for the reborn session to read.
+# Session state written before a deliberate /clear, for the reborn session to read.
 # Working memory, not product — present on disk, never shipped.
 CONTEXT-PACKAGE.md
-HANDOFF.md into the working directory,
+# Test side-effects: protocol-test exports HANDOFF.md into the working directory,
 # and the bridge self-installs slash commands. Neither belongs in the repo.
 HANDOFF.md
 .claude/

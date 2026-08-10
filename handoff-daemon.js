@@ -89,7 +89,7 @@ function nativeSessionsDir() {
  * This returned the FIRST registry row matching the declared uuid, which assumed one row per
  * session. That assumption is false: `claude --continue` resumes the most recent session in a
  * DIRECTORY, so two terminals in one cwd land on the same transcript and each registers under
- * its own pid. Measured live — pids 82602 ("build") and 87920 ("tunnel"), both alive, one
+ * its own pid. Measured live — two distinct pids in different lanes, both alive, one
  * sessionId. Which row won depended on readdir order, so the stamp's name and cwd were
  * nondeterministic and the cwd check could compare against a process that was not calling.
  * That is how a terminal named build came to be renamed tunnel.

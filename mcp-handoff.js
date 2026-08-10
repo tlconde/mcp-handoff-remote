@@ -135,12 +135,12 @@ let PINNED = process.env.HANDOFF_SESSION_ID || null;
  * working — set by pick_up / continue_from / the launch env var above. IDENTITY is this
  * terminal session's OWN protocol record, minted on first protocol contact from the CLI
  * uuid Claude Code exports as CLAUDE_CODE_SESSION_ID. They are deliberately separate:
- * conflating them is how real sends went out stamped with a borrowed sess_6ic0ed9c and
+ * conflating them is how real sends went out stamped with a borrowed record id and
  * their delivery receipts aimed at a record no one was reading (C28/C29). */
 /* NOT a constant, deliberately. This used to be
  *     const NATIVE_ID = process.env.CLAUDE_CODE_SESSION_ID || null;
  * captured once at bridge-process start. A bridge outlives a /clear + resume, and resume
- * FORKS a new session id (probed live: bdf5f77e → 93ac44b0, no lineage pointer), so the
+ * FORKS a new session id (probed live: the uuid changes with no lineage pointer), so the
  * frozen value went on naming a transcript that no longer existed. Everything downstream —
  * identity, receipts, and the wake tier's open/closed answer — inherited that dead pointer,
  * which is why an OPEN terminal reported CLOSED. Same disease as the ENOENT reply socket and

@@ -175,8 +175,8 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: 'The name a human will address it by, one word if possible ("lulu").' },
-        device: { type: 'string', description: 'The machine it runs on ("windows-laptop"). Required: it is the dedup key on reconnect and the host whose agent answers for reachability.' },
+        title: { type: 'string', description: 'The name a human will address it by, one word if possible ("build").' },
+        device: { type: 'string', description: 'The machine it runs on ("second-laptop"). Required: it is the dedup key on reconnect and the host whose agent answers for reachability.' },
         role: { type: 'string', description: 'Optional role/lane label discriminating sessions on one device.' }
       },
       required: ['title', 'device'],

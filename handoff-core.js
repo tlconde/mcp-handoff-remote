@@ -1381,7 +1381,7 @@ async function handleApi(method, p, query, b) {
     if (method === 'POST' && p === '/api/register') {
       // Identity minting (I2, t24 addendum): a terminal session joins the protocol under
       // its OWN record, keyed to the CLI transcript uuid, instead of borrowing whichever
-      // record happened to sit at by_surface.code — the borrowed sess_6ic0ed9c that put
+      // record happened to sit at by_surface.code — the borrowed record id that put
       // wrong from_session on real messages and would have misrouted their receipts.
       // Idempotent upsert: first contact mints; every contact refreshes the handle facts
       // (cwd, last_seen) that candidate lists discriminate by. Role/lane label ("build",

@@ -233,7 +233,7 @@ async function buildStatusReport(args, ctx, core) {
    * what ListAgents and native SendMessage resolve. register_session only ever READS native's
    * registration and adopts the name; nothing here can write native's registry back. So a
    * /name'd session is addressable by handoff and INVISIBLE to ListAgents under that name.
-   * Measured 2026-08-09: a peer could not find "booty" and addressed it as handoff-remote-3a,
+   * Measured 2026-08-09: a peer could not find a /name’d session by its title and addressed it by its native name,
    * and the only way to see the split was to grep two stores. Print both whenever they differ
    * — a divergence the user cannot see is one they cannot work around. */
   const nativeDisplay = boundRecord && boundRecord.native_ref && boundRecord.native_ref.name;
@@ -1710,7 +1710,7 @@ function readNativeRegistration(nativeId, preferPid) {
   return null;
 }
 /* PROCESS-SCOPED ADDRESSES ARE NEVER PERSISTED **OR CACHED**. Probed 2026-08-09 on a live
- * `claude --resume`: resume FORKS a new session id and a new transcript (bdf5f77e → 93ac44b0)
+ * `claude --resume`: resume FORKS a new session id and a new transcript (probed live: the uuid changes)
  * and records no lineage pointer, so CLAUDE_CODE_SESSION_ID is transcript-scoped, not
  * conversation-scoped. A bridge that froze it in a module constant at process start therefore
  * served an id with no transcript behind it at all — unresolvable, not merely stale — and the

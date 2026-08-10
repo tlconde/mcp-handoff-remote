@@ -1686,8 +1686,8 @@ function readNativeRegistration(nativeId, preferPid) {
   const dir = process.env.HANDOFF_NATIVE_SESSIONS_DIR || path.join(os.homedir(), '.claude', 'sessions');
   let files = [];
   try { files = fs.readdirSync(dir).filter(f => f.endsWith('.json')); } catch (_) { return null; }
-  /* A uuid can have SEVERAL live rows (measured: /exit + `claude --continue` left pids 38088
-   * and 87920 both registered under one session id). First-match then returns whichever the
+  /* A uuid can have SEVERAL live rows (measured: /exit + `claude --continue` left two pids
+   * both registered under one session id). First-match then returns whichever the
    * filesystem listed first — which is how this record came to record the OTHER window's pid.
    * The caller knows its own pid; prefer its row, and never infer identity from listing order. */
   const rows = [];

@@ -87,7 +87,7 @@ function terminalNotifierPath() {
  * would be exactly the guess §I2b forbids. */
 const CLAUDE_BUNDLE_ID = 'com.anthropic.claudefordesktop';
 /* Which GUI app OWNS a terminal, resolved live by walking the process tree up from a
- * VALIDATED live pid — e.g. 38088 → claude → zsh → "Cursor Helper: terminal pty-host" →
+ * VALIDATED live pid — e.g. <pid> → claude → zsh → "Cursor Helper: terminal pty-host" →
  * /Applications/Cursor.app. This is evidence, not a guess: the pid was validated against a
  * live registry row, and every hop is read from the OS at the moment of use, never stored.
  * That is why it satisfies §I2b instead of bending it. It fires ONLY with a validated pid —

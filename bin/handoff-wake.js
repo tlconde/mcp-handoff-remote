@@ -168,7 +168,7 @@ function nativeReach(native_ref) {
     const rows = liveRows();
     /* 1. VALIDATE THE HINT against a live row. This is the only path that can wake.
      * A uuid is NOT unique across processes: measured 2026-08-09, `/exit` followed by
-     * `claude --continue` left TWO live processes (38088 and 87920) registered under one
+     * `claude --continue` left TWO live processes registered under one
      * session id, both named "build". find() would have picked whichever the filesystem
      * listed first and relayed into a window nobody was watching — starting a turn in the
      * wrong place is worse than not starting one. Several live claimants is ambiguity, and
@@ -178,7 +178,7 @@ function nativeReach(native_ref) {
     if (claimants.length > 1) {
       /* SUCCESSION WITHIN ONE IDENTITY, not ambiguity between identities. Probed live:
        * `/exit` then `claude --continue` leaves BOTH processes registered under one session
-       * id, and BOTH keep heartbeating (38088 flipped idle->busy minutes after 87920 started),
+       * id, and BOTH keep heartbeating (the older one flipped idle->busy minutes after the newer started),
        * so the leftover is NOT defunct by construction and must never be killed or assumed
        * dead. But one fact does discriminate without guessing: native_ref.pid records THE
        * PROCESS THAT LAST SPOKE TO US — every tool contact refreshes it from the caller's own

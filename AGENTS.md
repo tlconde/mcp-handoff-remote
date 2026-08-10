@@ -240,6 +240,30 @@ them in the resolvers is a change to resolution semantics and is with the review
 self-installs slash commands under `.claude/`. Both are gitignored. If either shows up in
 `git status`, it is an artifact, not work.
 
+## Shipped content changes, the version changes
+
+**Any change to shipped plugin content without a version bump is the defect.** Bump `version` in
+`plugin.json` and regenerate — never edit `.claude-plugin/*` by hand.
+
+This is not bookkeeping. `claude plugin update` is **version-gated**: measured 2026-08-10, the
+monitors block was removed from this tree and `update` still reported *"handoff is already at the
+latest version (0.1.0)"* and exited **0** while the installed cache kept the old registration. There
+is no `--force` on `install` or `update`. So a content change with no bump is not merely untidy —
+it is **invisible to every machine that already has the plugin**, and the only recovery is an
+uninstall/reinstall that no one knows to run because the update reported success.
+
+Corollary, and it has bitten once: after a reinstall from a Directory-source marketplace the cache
+is copied from the **working directory**, so uncommitted work can make an installed plugin look
+correct. Commit first, or the next clean-checkout install silently restores what you removed.
+
+**Mechanical enforcement is not cheap today, and this is why.** The honest check is "shipped content
+changed since the version last released", which needs a release anchor. The natural one is the
+`{name}--v{version}` tag `claude plugin tag` creates — and `git tag -l` is currently **empty**, so
+there is nothing to diff against. A check that instead demanded a bump per commit touching shipped
+paths would fire on every intermediate commit and be wrong. Once releases are tagged, the check
+becomes cheap and correct; until then this rule is enforced by this file, like the ownership table
+above, and by nothing else.
+
 ## The standard this codebase is held to
 
 - **Never guess.** Ambiguity is surfaced and refused, never resolved silently.

@@ -144,3 +144,28 @@ self-installs slash commands under `.claude/`. Both are gitignored. If either sh
 - **Fail closed.** Absence of configuration is never permission.
 - **A test that has never failed for the right reason has not been shown to work.** Fixtures
   must describe a world that can exist — real pids for liveness, real keys for signatures.
+- **Exit status is not effect. Check the effect.** This is the single most expensive lesson of
+  2026-08-09/10, because it recurred four times in two days and every instance looked like success:
+  - `terminal-notifier` exits 0 whether or not a notification appears.
+  - a notify rung dispatched with `execFile(..., () => {})` returned `fired: true` for a command
+    that failed outright — the Windows toast would have thrown on every machine, forever, and
+    reported a successful ping.
+  - two versions of one test passed *vacuously*: one short-circuited before the code path it
+    tested, the other had an `|| stderr === ''` escape hatch that turned the exact failure it
+    existed to catch into a pass.
+  - `git apply --reject` reported success, wrote an **empty** `.rej`, produced a file that parsed
+    and contained the expected markers — and had silently dropped the one hunk that mattered. Found
+    by diffing every added line against the applied file: 161 of 176 present, and the missing 15
+    were the fix.
+
+  The fourth is the instructive one: the unreliable reporter was a standard tool, not our code. So
+  the rule is not "our code lies", it is that **a call reporting success is evidence the call ran,
+  never evidence it worked.** Verify the effect: read the record back, diff the applied file, look
+  for the delivered receipt, ask a human whether the notification appeared. Where no receipt exists
+  — Windows toasts, `osascript` — say so and name the human as the receipt rather than implying
+  one.
+- **Assert the value, not the shape.** A test that accepts "some value came back" passes while the
+  mechanism it guards is broken. Twice in one day the difference between asserting a *specific
+  honest value* and asserting a shape was the only thing standing between a fix and its own
+  regression — and one anti-drift test found a real defect on its first run only because it
+  compared against an exact expected set. Also: **check that the assertion can fail.**

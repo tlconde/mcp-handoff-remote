@@ -667,26 +667,27 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     const aId = a.payload && a.payload.session && a.payload.session.id;
     ok(!!aId && a.code < 300, '(c9) a nickname can be claimed at all');
 
-    // THE REFUSAL, and it must name the holder — "taken" without a name leaves the human stuck.
+    /* SETTING NEVER REFUSES A DUPLICATE — operator ruling 2026-08-10, overruling R3's set-time
+     * refusal. Uniqueness is what ids are for; a nickname is a user-edited string, and a name that
+     * refuses is a name pretending to be an id. The detection did not die — its VERDICT changed
+     * from a block to an advisory, so duplication is a KNOWING act rather than a forbidden one.
+     * These assertions previously defended the opposite rule; they are rewritten rather than
+     * deleted, because the same scan is still being tested. */
     const b = await reg('22222222-2222-4222-8222-222222222222', { title: 'second', nickname: 'alpha' });
-    ok(b.code === 409, '(c9) a second live record on the SAME surface is REFUSED the name — at set time, not at use time');
-    ok(b.payload && /already held/.test(b.payload.error) && b.payload.held_by === aId,
-      '(c9) ...and the refusal NAMES the holder, because "taken" alone leaves the human with nowhere to go');
+    ok(b.code < 300, '(c9) a second record may TAKE a name another already answers to — uniqueness is what ids are for');
+    ok(/also answer to "alpha"/.test(b.payload.nickname_note || ''),
+      '(c9) ...and is TOLD so, by surface and count — duplication becomes a knowing act, not a blocked one');
+    ok((b.payload.nickname_duplicates || []).some(d => d.id === aId),
+      '(c9) ...with the other holders named, so the human can tell which one they meant');
 
-    /* THE REGISTRATION MUST SURVIVE THE REFUSAL. The first version of this code returned 409
-     * before save(), so the mint and the title went with it: the caller asked for identity plus a
-     * name, was refused the name, and silently lost the identity too. Asserting the record EXISTS
-     * and carries no nickname — a refusal that costs you your record is worse than one that
-     * costs you a name. */
-    const bId = b.payload && b.payload.id;
-    ok(!!bId, '(c9) ...and the REGISTRATION still stands — a refused nickname must not discard the identity the caller just asked for');
-    const st1 = (await c9.handleApi('GET', '/api/state', {}, {})).payload;
-    ok(st1.sessions[bId] && !st1.sessions[bId].nickname,
-      '(c9) ...with no nickname on it — the refusal leaves no residue, but it also leaves a record');
+    const stDup = (await c9.handleApi('GET', '/api/state', {}, {})).payload;
+    ok(stDup.sessions[b.payload.id].nickname === 'alpha',
+      '(c9) ...and the name is actually SET — an advisory is a report, not a soft refusal');
 
     // Case-insensitive, because a human under pressure does not capitalise consistently.
     const d = await reg('33333333-3333-4333-8333-333333333333', { title: 'fourth', nickname: 'ALPHA' });
-    ok(d.code === 409, '(c9) collision is case-insensitive — a name typed from memory is not typed carefully');
+    ok(d.code < 300 && /also answer to/.test(d.payload.nickname_note || ''),
+      '(c9) duplicate detection stays CASE-INSENSITIVE — a name typed from memory is not typed carefully, and the advisory must still fire');
 
     // One word only: a nickname that needs quoting is not a recovery path.
     const e = await reg('44444444-4444-4444-8444-444444444444', { title: 'fifth', nickname: 'two words' });
@@ -729,8 +730,27 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     void clash;
     const chat2 = await c9.handleApi('POST', '/api/sessions', {}, { surface: 'chat', title: 'another chat' });
     const clash2 = await c9.handleApi('POST', `/api/sessions/${chat2.payload.id}/nickname`, {}, { nickname: 'BETA' });
-    ok(clash2.code === 409 && clash2.payload.held_by === chatId,
-      '(c9) ...and the SAME refusal applies from this door — one rule, two call sites, or "unique per surface" quietly stops being true');
+    ok(clash2.code === 200 && /also answer to/.test(clash2.payload.note || ''),
+      '(c9) ...and the SAME advisory comes from this door — one rule, two call sites, which is why applyNickname stayed shared when its verdict changed');
+
+    /* RESOLUTION NOW CARRIES THE UNIQUENESS BURDEN, which is the other half of the ruling and the
+     * half that makes the loosening safe. Two records answering to one name is fine; SILENTLY
+     * PICKING between them never was. This is the ambiguity grammar this file already had —
+     * exact beats substring, several matches are listed and never scored — applied to one more
+     * field. Asserted through the real resolver, not by reading the matcher. */
+    const nickHits = t9.filterByName(Object.values((await c9.handleApi('GET', '/api/state', {}, {})).payload.sessions)
+      .filter(x => !x.archived), 'alpha');
+    ok(nickHits.length >= 2,
+      '(c9) resolution FINDS every record answering to a duplicated nickname — listing is the point, so none may be dropped');
+    ok(nickHits.every(x => String(x.nickname || '').toLowerCase() === 'alpha'),
+      '(c9) ...and matches it EXACTLY — an exact nickname beats a title that merely contains the word, or the recovery name would surface strangers');
+
+    /* The addressability the nickname was stored for, and did not have until now: it was a
+     * recovery path nothing resolved by, which is a recovery path only on paper. */
+    const byNick = t9.filterByName(Object.values((await c9.handleApi('GET', '/api/state', {}, {})).payload.sessions)
+      .filter(x => !x.archived && x.surface === 'chat'), 'beta');
+    ok(byNick.length && byNick.some(x => x.nickname === 'beta'),
+      '(c9) a record is addressable BY ITS NICKNAME — stored-but-unresolvable is what this ruling exposed');
 
     // One direction: passive is a claim about what a record has NEVER done.
     await c9.handleApi('POST', `/api/sessions/${passiveId}/messages`, {}, { role: 'user', kind: 'chat', text: 'now it speaks' });

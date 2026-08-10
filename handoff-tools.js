@@ -25,6 +25,16 @@
  * one resolver is reachable by all of them. */
 function targetNames(s) {
   const out = [];
+  /* THE NICKNAME IS FIRST, because it is the name a human types from memory when they have lost
+   * everything else. It was stored before it was addressable — a recovery path nothing resolved
+   * by, which is a recovery path only on paper.
+   *
+   * Uniqueness is NOT enforced when it is set (operator ruling, 2026-08-10, overruling R3's
+   * set-time refusal): uniqueness is what ids are for, and a name that refuses is a name
+   * pretending to be an id. Two sessions may both answer to "maple". The burden moves here, to
+   * resolution, where this file already has the grammar for it — exact beats substring, several
+   * matches are LISTED and never scored. Applying that to one more field is the whole change. */
+  if (s && typeof s.nickname === 'string' && s.nickname) out.push(s.nickname);
   if (s && typeof s.title === 'string') out.push(s.title);
   if (s && s.native_ref && typeof s.native_ref.name === 'string') out.push(s.native_ref.name);
   return out;

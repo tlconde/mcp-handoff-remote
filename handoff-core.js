@@ -719,20 +719,34 @@ function applyNickname(s, raw) {
     delete s.nickname_shadows;
     return null;
   }
-  const rivals = Object.values(db.sessions).filter(x =>
-    x && x.id !== s.id && x.surface === s.surface && !x.archived &&
+  /* SETTING NEVER REFUSES ON COLLISION — operator ruling 2026-08-10, overruling R3.
+   *
+   * The old rule refused a duplicate at set time, reasoning that a recovery name must resolve to
+   * one record. The ruling takes NAMES MOVE, IDS DON'T to its conclusion: uniqueness is exactly
+   * what ids are for, and a nickname is a user-edited string. If two sessions answer to "maple",
+   * the right behaviour is to ASK WHICH ONE — "chat, cowork or code?" — not to forbid the second
+   * one from having the name its owner wants.
+   *
+   * The detection machinery does not die; its VERDICT changes. Same scan, same candidates, now
+   * returned as an advisory so duplication is a KNOWING act rather than a blocked one. A user who
+   * is told "two others answer to this" and proceeds has chosen; a user who is refused has only
+   * been obstructed.
+   *
+   * Layer-2 recovery survives by advisory rather than by law: "I am maple" with several maples
+   * resolves through the candidate list plus the id in the context package — and the id was
+   * always the true recovery key. The name never carried uniqueness; it has stopped pretending to. */
+  const others = Object.values(db.sessions).filter(x =>
+    x && x.id !== s.id && !x.archived &&
     String(x.nickname || '').toLowerCase() === nick.toLowerCase());
-  const live = rivals.filter(x => !x.superseded_by);
-  if (live.length) {
-    return { code: 409, held_by: live[0].id,
-      error: `nickname "${nick}" is already held on ${s.surface} by ${live[0].id}${live[0].title ? ` ("${live[0].title}")` : ''} — the nickname was NOT set. A nickname is how a human recovers an identity, so it must resolve to one record; pick another name, or retire that one first.` };
-  }
-  const shadowed = rivals.filter(x => x.superseded_by).map(x => x.id);
   s.nickname = nick;
-  ops('nickname_set', { session: s.id, nickname: nick, surface: s.surface, shadows: shadowed.length ? shadowed : undefined });
-  if (shadowed.length) s.nickname_shadows = shadowed;
-  return null;
+  delete s.nickname_shadows; // shadow bookkeeping retires with the refusal that needed it
+  ops('nickname_set', { session: s.id, nickname: nick, surface: s.surface, duplicates: others.length || undefined });
+  if (!others.length) return null;
+  const bySurface = others.reduce((acc, x) => { acc[x.surface] = (acc[x.surface] || 0) + 1; return acc; }, {});
+  return { advisory: `note: ${others.length} other session(s) also answer to "${nick}" (${Object.entries(bySurface).map(([k, v]) => `${k} x${v}`).join(', ')}). The name is yours as well — resolution will list every match rather than guess, so addressing it may ask which one you mean.`,
+    duplicates: others.map(x => ({ id: x.id, surface: x.surface, title: x.title || null })) };
 }
+
 /* ---------------- DETERMINISTIC CHECKPOINT ----------------
  *
  * WHAT A CHECKPOINT IS: everything a successor needs, assembled from fields that already travel
@@ -1729,10 +1743,12 @@ async function handleApi(method, p, query, b) {
        * before save(), so the mint and the title went with it — the caller asked for identity plus
        * a name, was refused the name, and silently lost the identity too. "Nothing was changed"
        * has to mean the NICKNAME was not set, never "your registration was thrown away". */
-      let nickRefusal = null;
+      let nickRefusal = null, nickAdvisory = null;
       if (b.nickname !== undefined) {
         const r = applyNickname(s, b.nickname);
-        if (r) nickRefusal = Object.assign({}, r, { error: r.error + ` Your registration stands and your record is ${s.id}.` });
+        // A malformed name is still refused; a DUPLICATE is now only reported. Two different verdicts.
+        if (r && r.error) nickRefusal = Object.assign({}, r, { error: r.error + ` Your registration stands and your record is ${s.id}.` });
+        else if (r && r.advisory) nickAdvisory = r;
       }
 
       markActive(s, 'register');
@@ -1772,7 +1788,9 @@ async function handleApi(method, p, query, b) {
       if (nickRefusal) {
         return { code: nickRefusal.code, payload: { error: nickRefusal.error, held_by: nickRefusal.held_by, id: s.id, minted, session: s } };
       }
-      return { code: minted ? 201 : 200, payload: { id: s.id, minted, healed, session: s } };
+      return { code: minted ? 201 : 200, payload: { id: s.id, minted, healed, session: s,
+        nickname_note: nickAdvisory ? nickAdvisory.advisory : undefined,
+        nickname_duplicates: nickAdvisory ? nickAdvisory.duplicates : undefined } };
     }
     if (method === 'POST' && p === '/api/sessions') {
       if (!SURFACES.includes(b.surface)) return { code: 400, payload: { error: 'surface must be one of ' + SURFACES } };
@@ -1880,14 +1898,12 @@ async function handleApi(method, p, query, b) {
     if ((m = p.match(/^\/api\/sessions\/([^/]+)\/nickname$/)) && method === 'POST') {
       const s = db.sessions[m[1]];
       if (!s) return { code: 404, payload: { error: `no record ${m[1]} — nothing was changed` } };
-      if (s.superseded_by) {
-        return { code: 409, payload: { error: `${s.id} is superseded by ${s.superseded_by} — name the successor instead, or the nickname would point at a record nothing resolves to` } };
-      }
-      const refusal = applyNickname(s, b && b.nickname !== undefined ? b.nickname : null);
-      if (refusal) return { code: refusal.code, payload: { error: refusal.error, held_by: refusal.held_by, id: s.id } };
+      const r = applyNickname(s, b && b.nickname !== undefined ? b.nickname : null);
+      if (r && r.error) return { code: r.code, payload: { error: r.error, id: s.id } };
       ops('nickname_granted', { session: s.id, nickname: s.nickname, surface: s.surface, provenance: 'asserted', by: (b && b.by) || null });
       save();
-      return { code: 200, payload: { id: s.id, nickname: s.nickname, surface: s.surface, shadows: s.nickname_shadows || null, provenance: 'asserted' } };
+      return { code: 200, payload: { id: s.id, nickname: s.nickname, surface: s.surface, provenance: 'asserted',
+        note: r && r.advisory ? r.advisory : undefined, duplicates: r && r.duplicates ? r.duplicates : undefined } };
     }
     if ((m = p.match(/^\/api\/sessions\/([^/]+)\/envelope$/)) && method === 'GET') {
       const s = db.sessions[m[1]]; if (!s) return { code: 404, payload: { error: 'not found' } };

@@ -313,9 +313,38 @@ function pruneSessions() {
  * Staleness is "differs from the mtime captured at BOOT", never "mtime > start". A file dated in
  * the future satisfies the latter forever and would put launchd in a restart loop; "differs from
  * what I loaded" cannot. That lesson is already paid for on the daemon side. */
+/* THIS GUARD WAS INERT FROM THE DAY IT SHIPPED, AND THE CATCH-ALL IS WHY.
+ *
+ * `fs` was never required in this file. So `fs.statSync` threw ReferenceError, the bare `catch (_)`
+ * swallowed it, and relayMtime returned 0 — for the boot snapshot AND for every later check. 0 === 0
+ * forever: nothing was ever stale, the relay never restarted on a code change, and it said nothing
+ * while not doing it.
+ *
+ * Measured 2026-08-10, and only by experiment: the daemon's identical guard fired twelve times that
+ * day while this one had never fired once. Bounced the relay, touched this file so it was strictly
+ * newer than boot, made one request — served in 54ms, no exit, no log. That is what turned "it has
+ * not restarted yet" into "it cannot".
+ *
+ * A catch-all that returns a plausible value converts a programming error into a confident wrong
+ * answer, which is the same disease as an empty callback reporting fired:true. So the catch now
+ * distinguishes: a missing file is a legitimate 0, anything else is a bug and must not read as
+ * "unchanged". And because __filename provably exists — we are executing it — a boot snapshot of 0
+ * for our own file is proof the check is broken, and is refused loudly at startup rather than
+ * silently disabling the only thing that keeps a long-running relay honest about its own code. */
+const fs = require('fs');
 const RELAY_WATCHED = [__filename, require.resolve('./handoff-contract')];
-const relayMtime = f => { try { return fs.statSync(f).mtimeMs; } catch (_) { return 0; } };
+const relayMtime = f => {
+  try { return fs.statSync(f).mtimeMs; }
+  catch (e) {
+    if (e && e.code === 'ENOENT') return 0; // genuinely absent — a real, reportable state
+    throw e;                                // anything else is our bug, and must not look like "unchanged"
+  }
+};
 const RELAY_BOOT_MTIMES = new Map(RELAY_WATCHED.map(f => [f, relayMtime(f)]));
+if (!RELAY_BOOT_MTIMES.get(__filename)) {
+  process.stderr.write('[handoff-relay] FATAL: cannot stat my own file, so the stale-code guard cannot work — refusing to run blind\n');
+  process.exit(1);
+}
 function relayStaleFile() {
   for (const f of RELAY_WATCHED) if (relayMtime(f) !== RELAY_BOOT_MTIMES.get(f)) return path.basename(f);
   return null;
@@ -462,4 +491,9 @@ if (require.main === module) {
   });
 }
 
-module.exports = { server, protectedResourceMetadata, verifyToken, relayToDaemon, handleMcp, homeErrorText, PORT };
+module.exports = {
+  server, protectedResourceMetadata, verifyToken, relayToDaemon, handleMcp, homeErrorText, PORT,
+  /* Exported so the suite can assert the stale guard WORKS rather than that it EXISTS. Four
+   * source-level assertions passed green for a day while this guard was inert. */
+  relayStaleFile, __relayBootMtime: () => RELAY_BOOT_MTIMES.get(__filename), __relayWatched: () => RELAY_WATCHED.slice()
+};

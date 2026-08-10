@@ -210,6 +210,38 @@ function req(opts, body) {
     assert.match(src, /require\.resolve\('\.\/handoff-contract'\)/,
       'a contract change the relay has not loaded is the same defect one file over');
   });
+
+  /* THE FOUR ASSERTIONS ABOVE PASSED GREEN FOR A DAY WHILE THIS GUARD WAS INERT, and that is the
+   * lesson worth more than the bug. `fs` was never required in handoff-relay.js, so fs.statSync
+   * threw ReferenceError, a bare `catch (_)` swallowed it, and relayMtime returned 0 for the boot
+   * snapshot AND every later check — 0 === 0 forever. Every source-level assertion about shape
+   * remained true; the behaviour was dead.
+   *
+   * Found by experiment, not by reading: the daemon's identical guard fired twelve times that day
+   * while this one had never fired once, so the relay was bounced, its file touched to be strictly
+   * newer than boot, and one request made — served in 54ms, no exit, no log.
+   *
+   * These two assert the VALUE. A boot mtime of 0 for a file we are executing is impossible unless
+   * the check is broken, and that single comparison would have caught it on day one. */
+  await test('stale: the boot snapshot holds a REAL mtime — 0 for a file we are executing means the check is broken', () => {
+    const boot = relay.__relayBootMtime();
+    assert.ok(typeof boot === 'number' && boot > 0,
+      `boot mtime was ${boot} — relayMtime is swallowing an error and returning a value that means "unchanged" forever`);
+  });
+  await test('stale: a file newer than boot is actually DETECTED, not merely watched', () => {
+    const fs2 = require('fs'), p2 = require('path');
+    const target = p2.join(__dirname, 'handoff-relay.js');
+    const before = fs2.statSync(target);
+    assert.strictEqual(relay.relayStaleFile(), null, 'unchanged must read as fresh, or the guard loops the service manager');
+    const future = new Date(Date.now() + 60000);
+    fs2.utimesSync(target, future, future);
+    try {
+      assert.strictEqual(relay.relayStaleFile(), 'handoff-relay.js',
+        'a changed file must be NAMED — this is the whole behaviour, and it was absent while four shape assertions passed');
+    } finally {
+      fs2.utimesSync(target, before.atime, before.mtime); // leave the tree exactly as found
+    }
+  });
 }
 
 /* TRANSPORT SESSION CONTRACT.

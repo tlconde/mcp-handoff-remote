@@ -186,7 +186,14 @@ Support matrix copied from native: **macOS + Linux (incl. WSL 2); native Windows
   the user if closed → store always durable. The relay is the **wake-tier parallel session's**
   `bin/handoff-wake.js` — slice 3b `require`s it at the send site; do NOT reimplement it, and do
   NOT edit `bin/handoff-wake.js`/`wake-smoke.js` (theirs), as they will not edit
-  mcp-handoff/core/daemon/contract (mine). **Notifications are PERMANENT** — the wake tier only
+  mcp-handoff/core/daemon/contract (mine). **`bin/handoff-notify.js` and `notify-smoke.js` are the
+  wake lane's too** (ruled 2026-08-10). That line was missing, and its absence stopped a whole
+  mirror pass: the migration lane found the file 217 lines diverged, could not tell whether it was
+  an actively-owned implementation or a stale copy, and declined to overwrite another lane's work
+  on a boundary the spec did not draw. Declining was right. **An ownership question stops the line,
+  and the spec gains the line — the pass does not gain an exception.** Notify-tier changes are
+  applied to BOTH builds in one pass from here on, never mirrored after the fact, because the two
+  implementations diverge fast enough that a later patch fails on context rather than on meaning. **Notifications are PERMANENT** — the wake tier only
   changes their meaning (informational, not to-do), never removes them.
 - **Board / @-picker presence (record for later):** native maintains LIVE presence in
   `~/.claude/sessions/<pid>.json` — `"status"` (idle/busy) + `statusUpdatedAt`, continuously

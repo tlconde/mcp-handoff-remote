@@ -167,6 +167,53 @@ function checkRecord() {
     dead.concat(split.length ? [`(${split.length} name split(s), reported by whoami — not drift, listed for context)`, ...split] : []));
 }
 
+/* ── 5. NAMES ──────────────────────────────────────────────────────────────────────────────
+ * The name a conversation ANSWERS TO and the name it CALLS ITSELF are different strings, and
+ * nothing keeps them together. A record's title is set once, at creation. The Claude app then
+ * renames the conversation from its own content, terminals get renamed by their operators, and
+ * every message a sender writes carries a free-text "from" label that reflects what it calls
+ * itself TODAY. Resolution matches the title. So the name a human reads is not the name the
+ * protocol answers to, and a send addressed to what they see resolves to nothing.
+ *
+ * Measured 2026-08-10: a chat created as "btw: automate the check inbox poke" was renamed by the
+ * app to "Automating inbox check notifications". resolve_conversation on the name in the sidebar
+ * returned RESOLVED: nothing, while replies silently landed under the old title. Same shape as the
+ * terminal case that cost hours the day before ("booty" by title, "handoff-remote-3a" natively),
+ * which I had wrongly filed as terminal-only.
+ *
+ * Detectable without any app API, which is the useful part: every inbound message stores its
+ * sender's label verbatim, so the store already holds what each record has been calling itself. */
+function checkNames() {
+  if (!fs.existsSync(SESSIONS)) { report('NAMES', true, 'skipped — no live store'); return; }
+  const titles = new Map(), calls = new Map();
+  const recs = [];
+  for (const f of fs.readdirSync(SESSIONS)) {
+    const r = readJson(path.join(SESSIONS, f));
+    if (!r || r.archived) continue;
+    recs.push(r); titles.set(r.id, r.title || '');
+  }
+  for (const r of recs) {
+    for (const m of (r.messages || [])) {
+      const mm = /^\[message from ([a-z]+) · ([^\]]+)\]/.exec(m.text || '');
+      if (!mm || !m.from_session) continue;
+      if (!calls.has(m.from_session)) calls.set(m.from_session, new Set());
+      calls.get(m.from_session).add(mm[2].trim());
+    }
+  }
+  const diverged = [];
+  for (const [sid, names] of calls) {
+    const title = titles.get(sid);
+    if (title === undefined) continue; // archived or gone; not this check's business
+    // A label that CONTAINS the title is an annotation ("booty (handoff-remote)"), not a rename.
+    const unmatched = [...names].filter(n => n !== title && !n.includes(title) && !title.includes(n));
+    if (unmatched.length) diverged.push(`"${title}" also calls itself ${unmatched.map(n => `"${n}"`).join(', ')} — those names resolve to nothing`);
+  }
+  report('NAMES', diverged.length === 0,
+    diverged.length ? `${diverged.length} record(s) answer to a name they never use`
+                    : 'every record answers to the name it calls itself',
+    diverged);
+}
+
 /* ── 5. REACH ──────────────────────────────────────────────────────────────────────────────
  * Mail waiting in a record nothing can read. A send to a record with no live terminal reports
  * success in the same words as one that started a turn, so the sender learns nothing — three
@@ -188,7 +235,7 @@ function checkReach() {
     stranded);
 }
 
-checkMirror(); checkProcess(); checkShadow(); checkRecord(); checkReach();
+checkMirror(); checkProcess(); checkShadow(); checkRecord(); checkReach(); checkNames();
 
 console.log('\nDRIFT EVAL — is anything here disagreeing with itself?\n');
 for (const r of results) {

@@ -97,6 +97,37 @@ owner references that live in comments on the notebook side. Copying a shared fi
 end of mirroring — **de-personalize after every copy, then run the grep above.** The rule
 caught it; assume it will need to.
 
+## A name is not one thing, and the one you read may not resolve
+
+Three names can point at the same conversation and only one of them is what resolution matches:
+
+| name | owned by | matched by |
+|---|---|---|
+| protocol `title` | the store, set once at creation | `resolve_conversation`, `send_to`, `send_message` |
+| `native_ref.name` | Claude Code's registry | `ListAgents`, native `SendMessage` — and now our resolvers too |
+| the `from` label on a message | whoever sent it, free text, current | nothing |
+
+They drift apart on their own. The Claude app renames a conversation from its content; an operator
+renames a terminal; a sender starts calling itself something clearer. The title never follows.
+
+Measured 2026-08-10: a chat created as "btw: automate the check inbox poke" was renamed by the app
+to "Automating inbox check notifications". `resolve_conversation` on the name in the sidebar
+returned **RESOLVED: nothing**, while replies landed silently under the old title. The day before,
+the same shape sent three substantial messages to a dead record: the live terminal was `build`
+natively and `tunnel` by title, so "send to build" matched an unrelated record that merely
+contained the word.
+
+**So never assume the name a human types is the name the store holds.** `resolve_conversation`
+before sending — it delivers nothing, so a wrong target costs nothing to correct, and it is the
+only point where the mistake is free.
+
+`node drift-eval.js` has a NAMES check for this. It needs no app API: every inbound message stores
+its sender's label verbatim, so the store already knows what each record has been calling itself.
+Currently reports 5 records answering to names they never use.
+
+**Known gap, not yet fixed:** those observed aliases are detected but not *addressable* — matching
+them in the resolvers is a change to resolution semantics and is with the review seat.
+
 ## Test side-effects that must not be committed
 
 `protocol-test.js` exports `HANDOFF.md` into the working directory, and the bridge

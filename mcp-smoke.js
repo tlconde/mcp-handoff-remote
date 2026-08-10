@@ -791,8 +791,8 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
     const regDir = path.join(os.tmpdir(), 'hsmoke-nativereg-' + Date.now());
     fs.mkdirSync(regDir, { recursive: true });
     const uuid = '33333333-cccc-4ddd-8eee-ffff00001111';
-    const nativeName = 'ai-product-sense-2a';
-    const cwd = '$HOME/Dev/Github/ai-product-sense';
+    const nativeName = 'repo-agent-2a';
+    const cwd = '$HOME/dev/demo-repo';
     const sock = '/tmp/cc-socks/20226.sock';
     fs.writeFileSync(path.join(regDir, '20226.json'),
       JSON.stringify({ pid: 20226, sessionId: uuid, cwd, name: nativeName, nameSource: 'derived', messagingSocketPath: sock }));
@@ -801,7 +801,7 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
 
     // register with NO explicit title → display adopts the native name.
     const rC = await rpc([init, call(1, 'register_session', {})]);
-    ok(/Display name \(native\): ai-product-sense-2a/.test(text(rC, 1)),
+    ok(/Display name \(native\): repo-agent-2a/.test(text(rC, 1)),
       'converge: register surfaces the native display name read from the registry');
     const sdir = path.join(process.env.HANDOFF_HOME, 'store', 'v1', 'sessions');
     const rec = fs.readdirSync(sdir).filter(f => f.endsWith('.json'))
@@ -814,20 +814,20 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
 
     // an explicit title becomes the alias and overrides display, native name still shown.
     const rC2 = await rpc([init, call(1, 'register_session', { title: 'terminal · build lane' })]);
-    ok(/native\): ai-product-sense-2a · alias: "terminal · build lane"/.test(text(rC2, 1)),
+    ok(/native\): repo-agent-2a · alias: "terminal · build lane"/.test(text(rC2, 1)),
       'converge: an explicit title is the alias; native name remains the display handle beside it');
     /* THE SPLIT MUST BE VISIBLE WHERE THE USER LOOKS. register_session showed both names, but
      * whoami and status showed the protocol title alone — so a session named with /name is
      * addressable by handoff and INVISIBLE to ListAgents under that name, with nothing saying
-     * so. Measured 2026-08-09: a peer could not find "booty", addressed it by its native name
+     * so. Measured 2026-08-09: a peer could not find "alpha", addressed it by its native name
      * instead, and the split was only findable by grepping two stores. */
     const rWho = await rpc([init, call(1, 'whoami', {}), call(2, 'status', {})]);
-    ok(/You are: terminal · build lane \(native: ai-product-sense-2a\)/.test(text(rWho, 1)),
+    ok(/You are: terminal · build lane \(native: repo-agent-2a\)/.test(text(rWho, 1)),
       'names: whoami prints BOTH names when the protocol title and the native name diverge');
-    ok(/native: ai-product-sense-2a/.test(text(rWho, 2)),
+    ok(/native: repo-agent-2a/.test(text(rWho, 2)),
       'names: status carries the same divergence on its Identity line');
     const rSame = await rpc([init, call(1, 'register_session', { title: nativeName }), call(2, 'whoami', {})]);
-    ok(/You are: ai-product-sense-2a/.test(text(rSame, 2)) && !/native:/.test(text(rSame, 2)),
+    ok(/You are: repo-agent-2a/.test(text(rSame, 2)) && !/native:/.test(text(rSame, 2)),
       'names: when the two names agree, whoami shows one name and no parenthetical');
     await rpc([init, call(1, 'register_session', { title: 'terminal · build lane' })]); // restore for later blocks
     // Slice 2: a Code→Code send to a natively-reachable code session is redirected to
@@ -842,12 +842,12 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
     const peerFile = fs.readdirSync(sdir).find(f => { try { return JSON.parse(fs.readFileSync(path.join(sdir, f), 'utf8')).id === peerCodeId; } catch (_) { return false; } });
     if (peerFile) {
       const pf = path.join(sdir, peerFile); const pr = JSON.parse(fs.readFileSync(pf, 'utf8'));
-      pr.native_ref = { kind: 'claude-code', session_id: 'peer-uuid-9999', name: 'ai-product-sense-77' };
+      pr.native_ref = { kind: 'claude-code', session_id: 'peer-uuid-9999', name: 'repo-agent-77' };
       fs.writeFileSync(pf, JSON.stringify(pr, null, 2));
     }
     const before = JSON.parse(fs.readFileSync(path.join(sdir, peerFile), 'utf8')).messages.length;
     const rC4 = await rpc([init, call(1, 'send_message', { session_id: peerCodeId, message: 'Code-to-code payload.', from: 'code' })]);
-    ok(/Code→Code: use NATIVE messaging/.test(text(rC4, 1)) && /SendMessage to "ai-product-sense-77"/.test(text(rC4, 1)),
+    ok(/Code→Code: use NATIVE messaging/.test(text(rC4, 1)) && /SendMessage to "repo-agent-77"/.test(text(rC4, 1)),
       'slice2: a Code→Code send is redirected to native SendMessage naming the peer\'s native handle');
     const after = JSON.parse(fs.readFileSync(path.join(sdir, peerFile), 'utf8')).messages.length;
     ok(after === before,
@@ -861,18 +861,18 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
   // invisible from here and unaddressable. register_session refuses without a CLI uuid, which is
   // right for the LOCAL door; a device across the relay has none here and never will. Two doors.
   {
-    const rMint = await rpc([init, call(1, 'register_remote_session', { title: 'lulu', device: 'windows-laptop' })]);
+    const rMint = await rpc([init, call(1, 'register_remote_session', { title: 'beta', device: 'windows-laptop' })]);
     const m1 = text(rMint, 1);
-    ok(/Registered/.test(m1) && /"lulu"/.test(m1) && /windows-laptop/.test(m1),
+    ok(/Registered/.test(m1) && /"beta"/.test(m1) && /windows-laptop/.test(m1),
       'remote mint: a device with no CLI uuid gets a named, addressable record');
     ok(/asserted/.test(m1) && /NOT CLI-verified/.test(m1),
       'remote mint: says plainly it is asserted and not CLI-verified — attestation is transport provenance, not a stronger identity');
     ok(/Reachability: unknown/.test(m1) && /nobody has looked recently/.test(m1),
       'remote mint: claims no liveness, and explains unknown rather than letting it read as unreachable');
-    const lulu = (m1.match(/session_id: (sess_[A-Za-z0-9_]+)/) || [])[1];
+    const beta = (m1.match(/session_id: (sess_[A-Za-z0-9_]+)/) || [])[1];
 
     const sdir3 = path.join(process.env.HANDOFF_HOME, 'store', 'v1', 'sessions');
-    const lf = fs.readdirSync(sdir3).find(f => { try { return JSON.parse(fs.readFileSync(path.join(sdir3, f), 'utf8')).id === lulu; } catch (_) { return false; } });
+    const lf = fs.readdirSync(sdir3).find(f => { try { return JSON.parse(fs.readFileSync(path.join(sdir3, f), 'utf8')).id === beta; } catch (_) { return false; } });
     const lrec = JSON.parse(fs.readFileSync(path.join(sdir3, lf), 'utf8'));
     ok(lrec.native_ref === null,
       'remote mint: native_ref stays NULL — a stored address nobody validated is this codebase oldest bug');
@@ -885,18 +885,18 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
       'remote mint: provenance says it was minted from HERE on the device behalf, never mistakable for one its own agent wrote');
 
     // Idempotency: reconnect must UPDATE, not duplicate.
-    const rAgain = await rpc([init, call(1, 'register_remote_session', { title: 'lulu', device: 'windows-laptop' })]);
-    ok(/Refreshed/.test(text(rAgain, 1)) && text(rAgain, 1).includes(lulu),
+    const rAgain = await rpc([init, call(1, 'register_remote_session', { title: 'beta', device: 'windows-laptop' })]);
+    ok(/Refreshed/.test(text(rAgain, 1)) && text(rAgain, 1).includes(beta),
       'remote mint: re-registering on reconnect refreshes the SAME record — one device, one record');
 
     // The whole point: addressable by name from anywhere that reads this store.
-    const rFind = await rpc([init, call(1, 'resolve_conversation', { title_contains: 'lulu', surface: 'code' })]);
-    ok(text(rFind, 1).includes(lulu),
+    const rFind = await rpc([init, call(1, 'resolve_conversation', { title_contains: 'beta', surface: 'code' })]);
+    ok(text(rFind, 1).includes(beta),
       'remote mint: resolvable by the name a human types, which is what visibility across devices means');
 
     // And peek must read it as unknown, not none — the owning host has no agent yet.
-    await rpc([init, call(1, 'send_message', { session_id: lulu, message: 'hello lulu', from: 'chat' })]);
-    const rPeekL = await rpc([init, call(1, 'peek_inbox', { surface: 'code', title_contains: 'lulu' })]);
+    await rpc([init, call(1, 'send_message', { session_id: beta, message: 'hello beta', from: 'chat' })]);
+    const rPeekL = await rpc([init, call(1, 'peek_inbox', { surface: 'code', title_contains: 'beta' })]);
     ok(/reachable: unknown/.test(text(rPeekL, 1)),
       'remote mint: a record whose device agent does not exist yet reads unknown — the correct state, not a degraded one');
 
@@ -906,8 +906,8 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
      * Measured: two real messages went to a remote record on that promise. Not 'held' (held
      * implies a holder that might release; there is none) and not a refusal (the write is correct
      * and becomes deliverable the instant an agent claims the record). */
-    await rpc([init, call(1, 'send_message', { session_id: lulu, message: 'probe', from: 'chat' })]);
-    const rSend2 = await rpc([init, call(1, 'send_message', { session_id: lulu, message: 'probe two', from: 'chat' })]);
+    await rpc([init, call(1, 'send_message', { session_id: beta, message: 'probe', from: 'chat' })]);
+    const rSend2 = await rpc([init, call(1, 'send_message', { session_id: beta, message: 'probe two', from: 'chat' })]);
     const sendTxt = text(rSend2, 1);
     ok(/NOT IN FLIGHT/.test(sendTxt) && /no transport leg can reach that device yet/.test(sendTxt),
       'unreachable: the send names the state instead of promising arrival nothing can cause');
@@ -918,7 +918,7 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
     ok(/Stored for/.test(sendTxt),
       'unreachable: the durable write is still reported as real — refusing it would fix a sentence by breaking the feature');
 
-    const rHint = await rpc([init, call(1, 'resolve_conversation', { title_contains: 'lulu', surface: 'code' })]);
+    const rHint = await rpc([init, call(1, 'resolve_conversation', { title_contains: 'beta', surface: 'code' })]);
     ok(/ADDRESSABLE BUT NOT YET DELIVERABLE/.test(text(rHint, 1)),
       'unreachable: the resolver warns BEFORE a send, since it is the verb that hands out the session_id');
 
@@ -976,9 +976,9 @@ const text = (r, id) => (((r[id] || {}).result || {}).content || [{}])[0].text |
       const p2 = path.join(sdir2, f2);
       const rec2 = JSON.parse(fs.readFileSync(p2, 'utf8'));
       // Same shape as a local record, but owned by another device and with a pid that IS alive here.
-      rec2.native_ref = { kind: 'claude-code', session_id: 'remote-uuid-1', name: 'lulu', pid: process.pid, host: 'the-other-laptop' };
+      rec2.native_ref = { kind: 'claude-code', session_id: 'remote-uuid-1', name: 'beta', pid: process.pid, host: 'other-host' };
       fs.writeFileSync(p2, JSON.stringify(rec2, null, 2));
-      await rpc([init, call(1, 'send_message', { session_id: peekId, message: 'for lulu', from: 'chat' })]);
+      await rpc([init, call(1, 'send_message', { session_id: peekId, message: 'for beta', from: 'chat' })]);
       const rRemote = await rpc([init, call(1, 'peek_inbox', { surface: 'code', title_contains: 'Peek target' })]);
       const t = text(rRemote, 1);
       ok(/reachable: unknown/.test(t),

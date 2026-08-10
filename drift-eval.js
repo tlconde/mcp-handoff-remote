@@ -175,11 +175,11 @@ function checkRecord() {
  * itself TODAY. Resolution matches the title. So the name a human reads is not the name the
  * protocol answers to, and a send addressed to what they see resolves to nothing.
  *
- * Measured 2026-08-10: a chat created as "btw: automate the check inbox poke" was renamed by the
- * app to "Automating inbox check notifications". resolve_conversation on the name in the sidebar
- * returned RESOLVED: nothing, while replies silently landed under the old title. Same shape as the
- * terminal case that cost hours the day before ("booty" by title, "handoff-remote-3a" natively),
- * which I had wrongly filed as terminal-only.
+ * Measured 2026-08-10: a chat created under one title was renamed by the app from its own content,
+ * and resolve_conversation on the name now shown in the sidebar returned RESOLVED: nothing, while
+ * replies silently landed under the original title. The same shape had already cost hours in a
+ * terminal, where a session answered to one name by title and to another natively — so the defect
+ * is not terminal-only, which is how it had first been filed.
  *
  * Detectable without any app API, which is the useful part: every inbound message stores its
  * sender's label verbatim, so the store already holds what each record has been calling itself. */

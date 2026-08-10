@@ -782,8 +782,8 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     const regDir = path.join(os.tmpdir(), 'hdaemon-reg-' + Date.now());
     fs.mkdirSync(regDir, { recursive: true });
     const uuid = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeffff0000';
-    const cwd = '$HOME/Dev/Github/ai-product-sense';
-    fs.writeFileSync(path.join(regDir, '12345.json'), JSON.stringify({ pid: 12345, sessionId: uuid, cwd, name: 'ai-product-sense-2a' }));
+    const cwd = '$HOME/dev/demo-repo';
+    fs.writeFileSync(path.join(regDir, '12345.json'), JSON.stringify({ pid: 12345, sessionId: uuid, cwd, name: 'repo-agent-2a' }));
     process.env.HANDOFF_NATIVE_SESSIONS_DIR = regDir;
     delete require.cache[require.resolve('./handoff-daemon')];
     const d = require('./handoff-daemon');

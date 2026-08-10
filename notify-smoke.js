@@ -80,7 +80,7 @@ console.log(`\nnotify-smoke — platform ${process.platform}${PROVE ? ', PROVE m
   });
   /* A FAILED DISPATCH MUST BE DISCOVERABLE. Every rung used an empty callback, so a command that
    * failed outright looked exactly like one that rendered — notify() returned fired:true either
-   * way. Measured on a real Windows laptop: the toast threw TypeNotFound before building anything,
+   * way. Measured on a real Windows host: the toast threw TypeNotFound before building anything,
    * and the shipped code would have reported a successful ping. Never block a send; never hide it.
    *
    * Observed in a CHILD PROCESS on purpose. HANDOFF_NOTIFY_LOG short-circuits before any rung runs,

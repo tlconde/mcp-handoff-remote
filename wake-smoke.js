@@ -87,14 +87,14 @@ console.log('wake-smoke:');
 
 const fx = fixtureSessions();
 const OPEN_PID = livePid(), CLOSED_PID = livePid();
-fx.write(OPEN_PID, OPEN_UUID, 'ai-product-sense-72');                       // open: live pid + socket
-fx.write(CLOSED_PID, CLOSED_UUID, 'ai-product-sense-77', { socketExists: false }); // live pid, socket gone
+fx.write(OPEN_PID, OPEN_UUID, 'repo-agent-72');                             // open: live pid + socket
+fx.write(CLOSED_PID, CLOSED_UUID, 'repo-agent-77', { socketExists: false }); // live pid, socket gone
 
 // ---- reachability ----
 test('nativeReach: open when registration + live socket', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
   const r = nativeReach({ session_id: OPEN_UUID });
   assert.strictEqual(r.open, true, 'should be open');
-  assert.strictEqual(r.name, 'ai-product-sense-72');
+  assert.strictEqual(r.name, 'repo-agent-72');
 }));
 
 test('nativeReach: closed when socket is gone', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
@@ -120,11 +120,11 @@ test('nativeReach: closed on null native_ref', () => {
 test('resume: a forked session id makes the binding stale — reported as stale, NOT as closed', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
   // Same live process, new session id written over its row: exactly what `claude --resume` does.
   const RESUMED = '44444444-4444-4444-4444-444444444444';
-  fx.write(OPEN_PID, RESUMED, 'ai-product-sense-72', { cwd: '/repo/one' });
+  fx.write(OPEN_PID, RESUMED, 'repo-agent-72', { cwd: '/repo/one' });
   const r = nativeReach({ session_id: OPEN_UUID, cwd: '/repo/one' }); // caller still holds the OLD id
   assert.strictEqual(r.open, false, 'cannot wake: nothing validates the old id');
   assert.strictEqual(r.stale_binding, true, 'must be reported as a STALE BINDING, not a closed session');
-  fx.write(OPEN_PID, OPEN_UUID, 'ai-product-sense-72'); // restore for later tests
+  fx.write(OPEN_PID, OPEN_UUID, 'repo-agent-72'); // restore for later tests
 }));
 
 test('resume: several live sessions share a cwd → refuses to guess, and says how many', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir }, () => {
@@ -213,7 +213,7 @@ test('attention + open → exactly ONE relay call, correct argv, no notify', () 
   assert.strictEqual(argv[ai + 2], 'SendMessage');
   const prompt = argv[1];
   assert.ok(prompt.includes('ListAgents'), 'relay confirms target via ListAgents');
-  assert.ok(prompt.includes('ai-product-sense-72'), 'relay addresses the target by name');
+  assert.ok(prompt.includes('repo-agent-72'), 'relay addresses the target by name');
   assert.ok(prompt.includes('mail from chat on Wake tier is waiting — checking the inbox will deliver it'), 'relay carries the one wake line, sender named');
   assert.ok(/ref/i.test(prompt), 'relay is told to disambiguate with [ref]');
   assert.ok(/not .*expect.* reply|do not wait/i.test(prompt), 'no-reply-expected');
@@ -337,8 +337,8 @@ test('relay: a real dispatch is reported as UNCONFIRMED, never as a started turn
 }));
 
 test('notifyCopy: return shape — headline + review action', () => {
-  const c = notifyCopy({ kind: 'return', native_ref: { name: 'ai-product-sense-2a' }, status: 'Live test passed.' });
-  assert.strictEqual(c.title, 'ai-product-sense-2a — Live test passed.');
+  const c = notifyCopy({ kind: 'return', native_ref: { name: 'repo-agent-2a' }, status: 'Live test passed.' });
+  assert.strictEqual(c.title, 'repo-agent-2a — Live test passed.');
   assert.strictEqual(c.body, 'Open your chat to review it.');
 });
 
@@ -349,8 +349,8 @@ test('notifyCopy: progress shape — status headline, no action line', () => {
 });
 
 test('notifyCopy: message shape — window+work headline, sender action', () => {
-  const c = notifyCopy({ native_ref: { name: 'ai-product-sense-2a' }, conversation: 'Wake tier', from: 'chat' });
-  assert.strictEqual(c.title, 'ai-product-sense-2a — Wake tier');
+  const c = notifyCopy({ native_ref: { name: 'repo-agent-2a' }, conversation: 'Wake tier', from: 'chat' });
+  assert.strictEqual(c.title, 'repo-agent-2a — Wake tier');
   assert.strictEqual(c.body, 'From chat — open that window to pick it up.');
 });
 
@@ -358,16 +358,16 @@ test('notifyCopy: message shape — window+work headline, sender action', () => 
  * and no socket here, so this notification is its WHOLE wake path — "open it" is not actionable
  * when "it" is on the other laptop. And the copy must still claim nothing false. */
 test('notifyCopy: a target on another device is named, so the ping is actionable', () => {
-  const c = notifyCopy({ native_ref: { name: 'lulu' }, conversation: 'Design review', from: 'chat', device: 'the Windows laptop' });
-  assert.strictEqual(c.title, 'lulu — Design review on the Windows laptop');
+  const c = notifyCopy({ native_ref: { name: 'beta' }, conversation: 'Design review', from: 'chat', device: 'other-host' });
+  assert.strictEqual(c.title, 'beta — Design review on other-host');
   assert.match(c.body, /open that window/, 'says the one action that actually drains it');
 });
 
 test('notifyCopy: never claims a wake, on any shape', () => {
   for (const d of [
-    { native_ref: { name: 'lulu' }, conversation: 'x', device: 'the Windows laptop' },
-    { native_ref: { name: 'lulu' }, conversation: 'x', kind: 'return', status: 'done' },
-    { native_ref: { name: 'lulu' }, conversation: 'x', kind: 'progress' },
+    { native_ref: { name: 'beta' }, conversation: 'x', device: 'other-host' },
+    { native_ref: { name: 'beta' }, conversation: 'x', kind: 'return', status: 'done' },
+    { native_ref: { name: 'beta' }, conversation: 'x', kind: 'progress' },
   ]) {
     const c = notifyCopy(d);
     const blob = (c.title + ' ' + c.body).toLowerCase();
@@ -449,7 +449,7 @@ test('HANDOFF_WAKE_LOG records the relay dispatch instead of spawning', () => {
   });
   const line = JSON.parse(fs.readFileSync(logf, 'utf8').trim().split('\n').pop());
   assert.strictEqual(line.tier, 'relay');
-  assert.strictEqual(line.target, 'ai-product-sense-72');
+  assert.strictEqual(line.target, 'repo-agent-72');
   assert.ok(line.argv.includes('-p'));
 });
 

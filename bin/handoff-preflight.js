@@ -113,12 +113,29 @@ async function main() {
    * matched the context line. It reported "brief carries the task" on the exact run that proved it
    * did not, which is the vacuous-assertion disease this file was written to catch, committed
    * inside the catcher. The marker path and text are the payload; nothing else will do. */
-  const brief = await readBrief(workerId, dir);
-  const carriesTask = brief.includes(MARKER_TEXT) && brief.includes(path.basename(markerPath));
-  link('brief carries the TASK payload (marker path + exact content)', carriesTask,
-    brief
-      ? `${brief.length} chars${carriesTask ? '' : ' — the brief reached the worker but the task was not in it'}`
-      : 'brief unreadable — could not confirm the worker was told anything');
+  /* NO FALLBACK IN A CHAIN-CHECKER. This used to try get_handoff and, on failure, quietly read
+   * HANDOFF.md off disk — so the link went GREEN while the protocol path was broken. A checker with
+   * a fallback inside it is the healthy-artifact trap one layer up: it confirms the payload arrived
+   * without establishing HOW, which is the only thing it was built to establish. Found 2026-08-10
+   * when a real worker reported get_handoff timing out and recovered its task by reading store/v1
+   * off disk — a workaround, and this tool had been scoring that as a pass.
+   *
+   * Two links now, because they are two facts. Retrieving the brief through the protocol is the one
+   * the chain is about; reading it off disk is a WORKAROUND and is labelled as one even when it
+   * succeeds. A chain-checker that cannot show red for a live break is the fallback bug in new
+   * clothes, so this red is allowed to stand. */
+  const viaProtocol = await briefViaProtocol(workerId);
+  const hasPayload = b => b.includes(MARKER_TEXT) && b.includes(path.basename(markerPath));
+  link('brief retrievable via PROTOCOL (get_handoff)', !!viaProtocol && hasPayload(viaProtocol),
+    viaProtocol
+      ? `${viaProtocol.length} chars${hasPayload(viaProtocol) ? '' : ' — returned, but the task was not in it'}`
+      : 'get_handoff did not return a usable brief — recovering it from disk is a workaround, not a pass');
+
+  const viaDisk = readBriefFile(dir);
+  link('brief also on disk (workaround path, not the chain)', !!viaDisk && hasPayload(viaDisk),
+    viaDisk
+      ? `${viaDisk.length} chars — informational: a worker CAN recover from this, but a chain that needs it is broken`
+      : 'no HANDOFF.md either — the worker had no route to its task at all');
 
   // ---- the only verdict that counts ----
   console.log(`\n  waiting up to ${Math.round(TIMEOUT_MS / 1000)}s for the effect…`);
@@ -153,13 +170,18 @@ async function main() {
   return finish(!!content);
 }
 
-async function readBrief(workerId, dir) {
+/** The protocol path, with NO fallback — its failure is the finding, not something to route around. */
+async function briefViaProtocol(workerId) {
   try {
     const r = await core.handleApi('GET', `/api/sessions/${workerId}/brief`, { for: 'code' }, {});
     if (r && r.payload && r.payload.brief) return String(r.payload.brief);
   } catch (_) {}
-  try { return fs.readFileSync(path.join(dir, 'HANDOFF.md'), 'utf8'); } catch (_) {}
   return '';
+}
+
+/** The disk path, reported separately and never allowed to stand in for the one above. */
+function readBriefFile(dir) {
+  try { return fs.readFileSync(path.join(dir, 'HANDOFF.md'), 'utf8'); } catch (_) { return ''; }
 }
 
 async function workerReported(workerId) {
@@ -189,7 +211,16 @@ function finish(ok) {
   const broken = links.filter(l => !l.ok);
   console.log('');
   if (ok) {
+    /* A PASS WITH RED LINKS IS NOT A CLEAN PASS, and burying that is how a chain-checker starts
+     * lying politely. The verdict stays keyed to the EFFECT — work got done, which is the question
+     * asked — but every broken link is named again at the bottom, because "it worked anyway" is
+     * exactly the sentence under which a workaround hardens into the design. */
     console.log(`handoff-preflight: PASS — the dispatch chain delivers work end to end (${links.length} links).`);
+    if (broken.length) {
+      console.log(`\n  ⚠ PASSED WITH ${broken.length} BROKEN LINK(S) — work landed, but not by the route it should have:`);
+      for (const l of broken) console.log(`    ✗ ${l.name}${l.detail ? ` — ${l.detail}` : ''}`);
+      console.log('    A pass here means the EFFECT arrived, not that the chain is healthy.');
+    }
   } else {
     console.log('handoff-preflight: FAIL — first broken link: ' + (broken[0] ? broken[0].name : 'unknown'));
     console.log('A dispatch made now will report success and produce nothing. Fix that link before dispatching real work.');

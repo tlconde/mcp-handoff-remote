@@ -1042,9 +1042,23 @@ async function doLaunch(s, b) {
    * The grant below still gains pick_up/status — a worker legitimately owns its transaction — but
    * that is the belt, and this is the design fix. One less link in a chain that has already shown
    * five, every one of which reported success at the layer that broke it. */
+  /* NAME THE MOUNT, NOT JUST THE VERB — barrier 8.
+   *
+   * The same server answers on TWO mounts: `handoff` (local, stdio to the daemon's unix socket) and
+   * `claude_ai_Handoff_Remote` (HTTPS through the relay, on a 10-second reply budget). Both are
+   * connected, both are granted since c69e4ea, and NOTHING told a worker which to prefer — so it
+   * picked the network one. get_handoff on a large brief triggers compaction, compaction takes
+   * longer than ten seconds, and the worker saw "home-timeout" and recovered its task by reading
+   * store/v1 off disk. Measured 2026-08-10 on the Windows-tier dispatch: the port still landed, by
+   * a workaround, which is exactly how a workaround becomes the design.
+   *
+   * The remote mount stays granted on purpose — denying it is what caused barrier 4, and a worker
+   * that reaches for it should be served rather than refused. This states a PREFERENCE and the
+   * reason for it, so the fast path is the default and the slow one remains a fallback. */
+  const mountNote = 'Prefer the LOCAL handoff mount (tools named mcp__handoff__*): it reaches the daemon over a unix socket. The mcp__claude_ai_Handoff_Remote__* tools are the same server over the network with a 10-second reply budget, and get_handoff on a large brief will time out there. Use the remote mount only if the local one is unavailable.';
   const PROMPT = viaMcp
-    ? `Use the handoff MCP: call get_handoff with session_id "${s.id}" to pull this session's context envelope — pass the id explicitly, do NOT rely on a pinned transaction, you do not have one. Then continue the work from where it left off and call report_progress with a summary when done.`
-    : `Read HANDOFF.md and continue this session from where it left off. If the handoff MCP is available, call get_handoff with session_id "${s.id}" for the full envelope (pass the id explicitly — you have no pinned transaction), and call report_progress when done. Finish with a 2-3 sentence summary of what you did.`;
+    ? `Use the handoff MCP: call get_handoff with session_id "${s.id}" to pull this session's context envelope — pass the id explicitly, do NOT rely on a pinned transaction, you do not have one. ${mountNote} Then continue the work from where it left off and call report_progress with a summary when done.`
+    : `Read HANDOFF.md and continue this session from where it left off. If the handoff MCP is available, call get_handoff with session_id "${s.id}" for the full envelope (pass the id explicitly — you have no pinned transaction). ${mountNote} Call report_progress when done. Finish with a 2-3 sentence summary of what you did.`;
   const command = `cd ${JSON.stringify(dir)} && claude --session-id ${nativeId} ${JSON.stringify(PROMPT)}`;
   if (!claudeCliAvailable()) {
     const env2 = await buildEnvelope(s);

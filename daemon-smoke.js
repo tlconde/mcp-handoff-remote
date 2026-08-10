@@ -461,6 +461,15 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     ok(/do NOT rely on a pinned transaction|no pinned transaction/i.test(cmd),
       '(c6) ...and says so explicitly, so a worker does not fall back to the pin it does not have');
 
+    /* Barrier 8: two mounts answer for one server and nothing said which to prefer, so a worker
+     * took the network one and get_handoff timed out on a large brief. Asserting the PREFERENCE is
+     * stated AND that the slow mount is still named — a worker told only "use local" learns nothing
+     * about why, and a worker told nothing about the remote one cannot fall back deliberately. */
+    ok(/mcp__handoff__/.test(cmd) && /LOCAL/i.test(cmd),
+      '(c6) the prompt names the LOCAL mount by tool prefix — two mounts answer for one server and the network one has a 10s budget');
+    ok(/claude_ai_Handoff_Remote/.test(cmd) && /unavailable|fallback|only if/i.test(cmd),
+      '(c6) ...and still names the remote mount as the fallback, because denying it outright is what caused barrier 4');
+
     /* The grant is built from verbs × mounts. The bug it replaced was a NAME assumed unique: the
      * same server is mounted as `handoff` and as `claude_ai_Handoff_Remote`, and granting one
      * spelling denied every worker that resolved the other. */

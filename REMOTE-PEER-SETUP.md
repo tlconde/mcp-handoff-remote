@@ -225,6 +225,30 @@ node bin/handoff-wake-agent.js --once
 `--once` runs a single cycle and exits. **Run this before anything long-lived**, so the first cycle
 is watched rather than reconstructed from a log afterwards.
 
+### Prove the notification rung on its own, with shipped files only
+
+Before blaming the chain, establish that **this machine can raise a notification at all**. That is a
+separate question from whether the agent delivers, and answering them together is how an evening
+gets lost.
+
+**The smoke suites are NOT on a peer.** They are lab-owned and untracked (ADR-0002), so a fresh
+clone has none by design — `node notify-smoke.js --prove` will fail with `MODULE_NOT_FOUND`, and
+that failure is the ship/lab split working, not a broken install. Use the shipped runtime instead:
+
+```powershell
+node -e "console.log(require('./bin/handoff-notify').notify({title:'handoff', body:'toast rung test — if you can see this, this machine can notify', conversation:'toast-test', meta:{surface:'code'}}))"
+```
+
+**Expect a toast on screen, and a printed result** like `{ fired: true, channel: 'windows-toast' }`.
+
+- **Toast appears** → the rung works; any missing delivery is upstream of it.
+- **`{ fired: false, channel: 'disabled' }`** → `HANDOFF_NO_NOTIFY` is set in this shell.
+- **No toast but `fired: true`** → the notification was raised and the OS suppressed it. Check
+  Windows notification settings for the app raising it; the code did its part.
+
+`fired` is what the wake tier branches on, so this one-liner tests exactly the value the rest of the
+system reads.
+
 ### What you should see
 
 These lines are copied from a real run, not written from memory:

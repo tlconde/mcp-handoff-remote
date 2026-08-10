@@ -1678,12 +1678,37 @@ async function handleApi(method, p, query, b) {
     if (method === 'POST' && p === '/api/agents/heartbeat') {
       if (!b.host) return { code: 400, payload: { error: 'host required — a heartbeat that cannot name its host asserts liveness on behalf of nobody' } };
       const host = String(b.host);
+      /* DEFAULT_VERDICT EXPANSION — the verb's documented shape, which until now wrote nothing.
+       *
+       * A REMOTE agent cannot enumerate the store, so it cannot name the records it owns. The
+       * design answer was always that it sends ONE verdict and the store expands it over the
+       * records declaring that host. The agent has been sending exactly that — `sessions: {}` plus
+       * `default_verdict: 'process'` — and this handler stored the empty map and dropped the
+       * default on the floor: a call that returned 200, wrote a row, and asserted nothing about
+       * any record. The lying class again, in the verb whose whole purpose is to stop a record
+       * ageing into 'unknown'.
+       *
+       * The expansion is deliberately narrow: ONLY records whose own `remote.host` equals the
+       * caller's declared host. A verdict for anyone else's records is exactly what the ownership
+       * rule refuses, and expansion must not become the loophole that reintroduces it. An explicit
+       * `sessions` map still wins — a host that CAN enumerate speaks for itself, record by record. */
+      const explicit = (b.sessions && typeof b.sessions === 'object') ? b.sessions : {};
+      let sessions = explicit;
+      let expanded = 0;
+      if (!Object.keys(explicit).length && b.default_verdict) {
+        const verdict = String(b.default_verdict);
+        sessions = {};
+        for (const s of Object.values(db.sessions)) {
+          if (s.archived) continue;
+          if (s.remote && s.remote.host === host) { sessions[s.id] = verdict; expanded++; }
+        }
+      }
       const rec = {
         id: host, host,
         last_seen: b.last_seen || now(),
         agent_version: b.agent_version || null,
-        sessions: (b.sessions && typeof b.sessions === 'object') ? b.sessions : {},
-        owns: Number(b.owns) || 0,
+        sessions,
+        owns: Number(b.owns) || expanded || 0,
       };
       db.agents[host] = rec;
       ops('agent_heartbeat', { host, sessions: Object.keys(rec.sessions).length, agent_version: rec.agent_version });

@@ -753,7 +753,7 @@ function evidenceIsCheckable(ev) {
   });
 }
 
-function appendEvent(obj, b) {
+function appendObjectEvent(obj, b) {
   const kind = String((b && b.kind) || '');
   if (!EVENT_KINDS.has(kind)) {
     return { code: 400, payload: { error: `unknown event kind "${kind}" — absence is never permission; known kinds: ${[...EVENT_KINDS].join(', ')}` } };
@@ -1715,7 +1715,7 @@ async function handleApi(method, p, query, b) {
       if (obj.superseded_by) {
         return { code: 409, payload: { error: `${obj.id} is superseded by ${obj.superseded_by} — append to the successor; history stays here and is never rewritten` } };
       }
-      const r = appendEvent(obj, b || {});
+      const r = appendObjectEvent(obj, b || {});
       if (r.code >= 300) return r;
       save();
       return r;

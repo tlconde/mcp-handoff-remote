@@ -36,7 +36,9 @@ Full guide, including remote access from your phone or a second laptop: [INSTALL
   claimed, and never re-offered once shaken.
 - **Waking** — mail for an *open* terminal starts a turn there with no taps. If it cannot be
   reached, the message waits in the store and the reply says so — say anything in that
-  window and it arrives on the next turn.
+  window and it arrives on the next turn. **Only Code terminals can be woken**; every other
+  surface is pull, by platform design. Which pairs wake, which wait, and how long each actually
+  took: [TRANSPORT-MATRIX.md](TRANSPORT-MATRIX.md).
 - **`whoami` / `/name`** — name a terminal in one word and address it by that name.
 - **Returns** — a session can owe a result back, and the origin sees it arrive.
 

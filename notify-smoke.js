@@ -78,6 +78,32 @@ console.log(`\nnotify-smoke — platform ${process.platform}${PROVE ? ', PROVE m
     try { fresh().notify(null); fresh().notify({ title: { bad: 1 }, body: [1, 2] }); } catch (_) { threw = true; }
     ok(!threw, 'notify never throws — a failed ping must not break the durable write that already happened');
   });
+  /* A FAILED DISPATCH MUST BE DISCOVERABLE. Every rung used an empty callback, so a command that
+   * failed outright looked exactly like one that rendered — notify() returned fired:true either
+   * way. Measured on a real Windows laptop: the toast threw TypeNotFound before building anything,
+   * and the shipped code would have reported a successful ping. Never block a send; never hide it.
+   *
+   * Observed in a CHILD PROCESS on purpose. HANDOFF_NOTIFY_LOG short-circuits before any rung runs,
+   * so a test that sets it proves nothing about dispatch — the first version of this test did
+   * exactly that and passed vacuously until it didn't. The failure is asynchronous and lands on
+   * stderr, so the only honest way to see it is to run the real thing and read what it printed. */
+  {
+    const { spawnSync } = require('child_process');
+    const run = spawnSync(process.execPath, ['-e',
+        "const n=require('./bin/handoff-notify');" +
+        "const r=n.notify({title:'x',body:'y'});" +
+        "console.log(JSON.stringify(r));" +
+        "setTimeout(()=>{},400);"
+      ], { cwd: __dirname, encoding: 'utf8',
+           env: Object.assign({}, process.env, { HANDOFF_DISPATCH_HOOK: '/nonexistent/definitely-not-a-command', HANDOFF_NOTIFY_LOG: '' }) });
+    const stderr = String(run.stderr || '');
+    // No "|| stderr === ''" escape hatch: an empty stderr is the FAILURE this asserts against, not
+    // a pass. The first version of this line had that fallback and passed while observing nothing.
+    ok(/dispatch FAILED/.test(stderr),
+      'a failed dispatch is REPORTED on stderr rather than swallowed by an empty callback');
+    console.log('        observed: ' + (stderr.trim().split('\n')[0] || '(nothing on stderr)').slice(0, 130));
+  }
+
   withEnv({ HANDOFF_NO_NOTIFY: '1', HANDOFF_NOTIFY_LOG: null }, () => {
     ok(fresh().notify({ title: 't' }).channel === 'disabled', 'HANDOFF_NO_NOTIFY disables the layer entirely');
   });

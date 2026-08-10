@@ -125,6 +125,26 @@ function notifyTarget(ev) {
   return { activate: owningAppBundleId(meta.pid), name, surface };
 }
 
+/* FIRE-AND-FORGET IS NOT FIRE-AND-IGNORE. Every rung here dispatched with an empty callback,
+ * so a command that failed outright looked exactly like one that rendered: notify() returned
+ * fired:true either way. Measured 2026-08-09 on a real Windows laptop — the toast threw
+ * TypeNotFound before it ever built a notification, and the shipped code would have reported a
+ * successful ping. That is the silent-success class this file's own comments spend paragraphs
+ * on, reintroduced by the callback style rather than by the logic.
+ *
+ * We still never block a send: the durable write already happened and a ping must not hold it up.
+ * But a failure is written to stderr and to HANDOFF_NOTIFY_LOG when set, so it is discoverable
+ * rather than invisible, and the return says confirmed:false because dispatch is not appearance. */
+function dispatch(cmd, argv, rung) {
+  execFile(cmd, argv, (err, _stdout, stderr) => {
+    if (!err && !stderr) return;
+    const detail = (err && err.message) || String(stderr || '').trim();
+    try { process.stderr.write(`[handoff-notify] ${rung} dispatch FAILED — no notification appeared: ${detail.slice(0, 300)}\n`); } catch (_) {}
+    const lp = process.env.HANDOFF_NOTIFY_LOG;
+    if (lp) { try { require('fs').appendFileSync(lp, JSON.stringify({ at: new Date().toISOString(), rung, failed: true, detail: detail.slice(0, 300) }) + '\n'); } catch (_) {} }
+  });
+}
+
 function notify(ev) {
   try {
     if (process.env.HANDOFF_NO_NOTIFY) return { fired: false, channel: 'disabled' };
@@ -151,8 +171,8 @@ function notify(ev) {
     // takes title + body as argv; if present we prefer it (reaches their phone).
     const hook = process.env.HANDOFF_DISPATCH_HOOK;
     if (hook) {
-      execFile(hook, [title, body], () => {}); // fire-and-forget
-      return { fired: true, channel: 'dispatch' };
+      dispatch(hook, [title, body], 'dispatch');
+      return { fired: true, channel: 'dispatch', confirmed: false };
     }
 
     if (process.platform === 'darwin') {
@@ -176,7 +196,7 @@ function notify(ev) {
         // without guessing which of several windows it is (§I2b — several can share one workspace), so it
         // gets no false promise: the ping names the window and the body says where to look.
         if (target.activate) argv.push('-activate', target.activate);
-        execFile(tn, argv, () => {}); // fire-and-forget
+        dispatch(tn, argv, 'terminal-notifier');
         return { fired: true, channel: 'terminal-notifier', click: target.activate || 'none', target: target.name || null };
       }
       // Channel 3: osascript — DISPLAY ONLY. macOS attributes it to Script Editor, so a click
@@ -184,7 +204,7 @@ function notify(ev) {
       const esc = s => String(s).replace(/["\\]/g, '\\$&');
       const suffix = ' (notification only — clicking does nothing: brew install terminal-notifier)';
       const script = `display notification "${esc(body + suffix)}" with title "${esc(title)}"`;
-      execFile('osascript', ['-e', script], () => {}); // fire-and-forget
+      dispatch('osascript', ['-e', script], 'osascript');
       return { fired: true, channel: 'macos', click: 'none', degraded: 'terminal-notifier not installed' };
     }
 
@@ -216,16 +236,25 @@ function notify(ev) {
       const AUMID = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe';
       const ps = [
         `$ErrorActionPreference='Stop'`,
+        /* THREE separate WinRT loads, because each type must be accelerated on its own. The first
+         * version loaded only ToastNotificationManager, then called New-Object on XmlDocument — a
+         * different type in a different namespace, never loaded. It failed with TypeNotFound on the
+         * first real Windows run, and every later line cascaded from the resulting null: LoadXml on
+         * null, no ctor match for ToastNotification, and finally Show(null) returning WITHOUT error.
+         * That last one is its own lesson — the failing call was the quiet one. */
         `$null=[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]`,
+        `$null=[Windows.UI.Notifications.ToastNotification,Windows.UI.Notifications,ContentType=WindowsRuntime]`,
+        `$null=[Windows.Data.Xml.Dom.XmlDocument,Windows.Data.Xml.Dom.XmlDocument,ContentType=WindowsRuntime]`,
         `$x=New-Object Windows.Data.Xml.Dom.XmlDocument`,
         `$x.LoadXml('${q(doc)}')`,
         `$t=New-Object Windows.UI.Notifications.ToastNotification $x`,
         `[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('${q(AUMID)}').Show($t)`
       ].join('; ');
-      execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], () => {}); // fire-and-forget
+      dispatch('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], 'windows-toast');
       // click:'none' deliberately. The toast belongs to PowerShell's AUMID, so activating it
       // cannot route back here. Same honesty as the osascript rung: say the tap does nothing.
-      return { fired: true, channel: 'windows-toast', click: 'none' };
+      // confirmed:false — Windows exposes no delivered-list, so nothing here can prove it appeared.
+      return { fired: true, channel: 'windows-toast', click: 'none', confirmed: false };
     }
 
     return { fired: false, channel: 'unavailable' }; // no channel on this platform

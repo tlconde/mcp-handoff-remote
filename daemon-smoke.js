@@ -331,6 +331,42 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     ok(ok3, '(c4) records that carry no id field are unaffected — agents and links still persist' + (why3 ? ' :: ' + why3.slice(0, 80) : ''));
   }
 
+  // ---- (c5) a worker's brief carries the caller's task, not the delivery address ----
+  // Measured 2026-08-10: EVERY headless worker ever dispatched received an empty brief. The store
+  // held both records intact -- origin with a 4,431-char task and 1,746-char context, dest with one
+  // 203-char handoff_card -- and the envelope was built from the DEST. supplied_context was empty,
+  // the transcript filter dropped the card, and the brief said "Full context attached - 1 messages
+  // travel whole (203 chars)". The worker read it, found no work described, and exited 0.
+  //
+  // The earlier payload-integrity fix protects send_to, where the envelope is built from the session
+  // holding the words. Both verbs LOOK like they call the same function; they pass different
+  // sessions. Fixed at the single construction point so an unwritten verb inherits it.
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'workerbrief-'));
+    const home = tmpHome();
+    const prev = process.env.HANDOFF_HOME, prevCli = process.env.HANDOFF_NO_CLI;
+    process.env.HANDOFF_HOME = home;
+    process.env.HANDOFF_NO_CLI = '1'; // force the HANDOFF.md path rather than the MCP prompt
+    delete require.cache[require.resolve('./handoff-core')];
+    const c5 = require('./handoff-core');
+    await c5.handleApi('POST', '/api/workers', {}, {
+      task: 'TASK-MARKER: the specific work the caller asked for',
+      context: 'CONTEXT-MARKER: the surrounding facts the caller supplied',
+      dir, mode: 'headless'
+    });
+    let md = '';
+    try { md = fs.readFileSync(path.join(dir, 'HANDOFF.md'), 'utf8'); } catch (_) {}
+    ok(md.includes('TASK-MARKER'),
+      "(c5) worker brief carries the caller's TASK — without this the worker is told to continue work nothing describes");
+    ok(md.includes('CONTEXT-MARKER'),
+      '(c5) worker brief carries the caller-supplied CONTEXT, which rides separately so compaction cannot reach it');
+    ok(!/1 messages travel whole/.test(md),
+      '(c5) the brief is not the dest\'s lone handoff_card described as "full context attached"');
+    if (prev === undefined) delete process.env.HANDOFF_HOME; else process.env.HANDOFF_HOME = prev;
+    if (prevCli === undefined) delete process.env.HANDOFF_NO_CLI; else process.env.HANDOFF_NO_CLI = prevCli;
+    delete require.cache[require.resolve('./handoff-core')];
+  }
+
   // ---- (d) rollout smoke: 10 forwarders under load across a restart, zero lost writes ----
   {
     const home = tmpHome();

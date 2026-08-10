@@ -370,7 +370,29 @@ function projectStateBlock(env) {
   }
   return L.join('\n');
 }
+/* THE PAYLOAD LIVES ON THE ORIGIN, SO THE ENVELOPE READS FROM THE ORIGIN.
+ *
+ * Measured 2026-08-10: every headless worker ever dispatched received an EMPTY brief. The store
+ * showed both records intact — origin sess_…S5XQ carrying a 4,431-char task and a 1,746-char
+ * context, dest sess_…E8HC2 carrying one 203-char handoff_card — and the brief was built from the
+ * DEST. So supplied_context was empty, the transcript filter dropped the card, and contextBlock
+ * fell through to the summary. The worker read "Full context attached — 1 messages travel whole
+ * (203 chars)", found no work described anywhere, and exited 0 having done nothing.
+ *
+ * WHY THE EARLIER PAYLOAD-INTEGRITY FIX MISSED IT: that fix added supplied_context so a caller's
+ * own words survive compaction, and it works — on the send_to path, where the envelope is built
+ * from the session holding those words. Worker dispatch builds from the dest. Same defect class,
+ * different verb, and the reason it was invisible is that both verbs LOOK like they call the same
+ * function; they just pass different sessions.
+ *
+ * Resolved here, at the single construction point, rather than at each call site: a verb nobody has
+ * written yet inherits the fix, the same way the id invariant covers verbs nobody has written. A
+ * dest is a delivery address; the origin is where the work is described. Identity fields still come
+ * from the session asked about — only the PAYLOAD follows origin_ref. */
 async function buildEnvelope(session) {
+  const origin = (session.origin_ref && db.sessions[session.origin_ref.session_id]) || null;
+  const payloadSrc = origin || session;
+  if (payloadSrc !== session) session = Object.assign({}, session, { messages: payloadSrc.messages, decisions: payloadSrc.decisions, artifacts: payloadSrc.artifacts, open_items: payloadSrc.open_items, project_state: payloadSrc.project_state, notes: payloadSrc.notes });
   const size = session.messages.reduce((n, m) => n + m.text.length, 0);
   const full = size <= FULL_THRESHOLD;
   return {

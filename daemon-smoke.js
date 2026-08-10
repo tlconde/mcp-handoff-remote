@@ -558,7 +558,11 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     await c7.handleApi('POST', `/api/sessions/${sid}/messages`, {}, { role: 'user', kind: 'chat', text: big });
 
     const order = [];
-    const slow = c7.handleApi('GET', `/api/sessions/${sid}/brief`, { for: 'code' }, {}).then(r => { order.push('compaction'); return r; });
+    /* summarize:1 — the model path is OPT-IN now, so the test that asserts a compaction cannot
+     * block the daemon has to ASK for one. Reads stopped compacting by default, which is the point
+     * of the slice; this assertion still matters because a caller who deliberately buys a summary
+     * must not stall everyone else while it runs. */
+    const slow = c7.handleApi('GET', `/api/sessions/${sid}/brief`, { for: 'code', summarize: '1' }, {}).then(r => { order.push('compaction'); return r; });
     // Yield once so the compaction genuinely starts before the second call is issued.
     await new Promise(r => setImmediate(r));
     const quick = c7.handleApi('GET', '/api/state', {}, {}).then(r => { order.push('other-request'); return r; });
@@ -751,6 +755,22 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
       .filter(x => !x.archived && x.surface === 'chat'), 'beta');
     ok(byNick.length && byNick.some(x => x.nickname === 'beta'),
       '(c9) a record is addressable BY ITS NICKNAME — stored-but-unresolvable is what this ruling exposed');
+
+    /* ONE RESOLVE-BY-NICKNAME PER SURFACE, ruled after the field shipped unaddressable. The
+     * feature's PURPOSE is that a human who has lost everything can type one word and be found;
+     * every assertion I wrote first defended the rule ABOUT the field (its refusal) and none
+     * defended what it was for. So the load-bearing test is this one, and it runs on every surface
+     * because a recovery path that works on chat and not on cowork is a recovery path with a hole
+     * exactly where someone will fall through it. */
+    for (const surf of ['chat', 'cowork', 'design', 'code']) {
+      const rec = await c9.handleApi('POST', '/api/sessions', {}, { surface: surf, title: `a ${surf} conversation` });
+      const nick = `recall-${surf}`;
+      await c9.handleApi('POST', `/api/sessions/${rec.payload.id}/nickname`, {}, { nickname: nick, by: 'operator' });
+      const all = Object.values((await c9.handleApi('GET', '/api/state', {}, {})).payload.sessions).filter(x => !x.archived);
+      const found = t9.filterByName(all, nick);
+      ok(found.length === 1 && found[0].id === rec.payload.id,
+        `(c9) a ${surf} record is found by its nickname alone — the purpose of the field, asserted per surface`);
+    }
 
     // One direction: passive is a claim about what a record has NEVER done.
     await c9.handleApi('POST', `/api/sessions/${passiveId}/messages`, {}, { role: 'user', kind: 'chat', text: 'now it speaks' });
@@ -949,6 +969,56 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     const strip = o => { const c = JSON.parse(JSON.stringify(o)); delete c.taken_at; return JSON.stringify(c); };
     ok(strip(cp) === strip(cpNoCli),
       '(c12) the checkpoint is IDENTICAL with the model unavailable — nothing in this path can reach a summariser');
+
+    if (prev === undefined) delete process.env.HANDOFF_HOME; else process.env.HANDOFF_HOME = prev;
+    delete require.cache[require.resolve('./handoff-core')];
+  }
+
+  /* ---- (c13) A READ DOES NOT PAY FOR A SUMMARY IT DID NOT ASK FOR ----
+   * Any payload over FULL_THRESHOLD used to send every get_handoff through compact(), which spawns
+   * a model with a 90-second ceiling. That is what blew the relay's 10-second budget, pushed
+   * workers onto the slow mount, and once made a worker recover its own task by reading the store
+   * off disk because the read it had been told to make timed out.
+   *
+   * The proof is the same shape as the checkpoint's: build the thing with the model UNAVAILABLE
+   * and require it to be identical. A default read that cannot notice the model is missing is a
+   * default read that never called it. */
+  {
+    const home = tmpHome();
+    const prev = process.env.HANDOFF_HOME, prevBin = process.env.HANDOFF_CLAUDE_BIN, prevCli = process.env.HANDOFF_NO_CLI;
+    process.env.HANDOFF_HOME = home;
+    delete require.cache[require.resolve('./handoff-core')];
+    const c13 = require('./handoff-core');
+
+    const s13 = await c13.handleApi('POST', '/api/sessions', {}, { surface: 'chat', title: 'a long one' });
+    const sid13 = s13.payload.id;
+    await c13.handleApi('POST', `/api/sessions/${sid13}/messages`, {}, { role: 'user', kind: 'chat', text: 'Do the work described here. ' + 'padding. '.repeat(400) });
+
+    const cheap = (await c13.handleApi('GET', `/api/sessions/${sid13}/brief`, { for: 'code' }, {})).payload;
+    ok(cheap.summary_kind === 'deterministic',
+      '(c13) a payload over the threshold reads DETERMINISTIC by default — compaction on read is work the reader did not ask for');
+
+    /* With the model unreachable the default read must be byte-identical. If anything in that path
+     * could reach a summariser, this equality would not hold. */
+    process.env.HANDOFF_NO_CLI = '1';
+    process.env.HANDOFF_CLAUDE_BIN = '/nonexistent/definitely-not-a-binary';
+    const cheapNoModel = (await c13.handleApi('GET', `/api/sessions/${sid13}/brief`, { for: 'code' }, {})).payload;
+    ok(cheap.brief === cheapNoModel.brief,
+      '(c13) ...and is IDENTICAL with the model unreachable — a default read that cannot notice the model is gone never called it');
+    if (prevCli === undefined) delete process.env.HANDOFF_NO_CLI; else process.env.HANDOFF_NO_CLI = prevCli;
+    if (prevBin === undefined) delete process.env.HANDOFF_CLAUDE_BIN; else process.env.HANDOFF_CLAUDE_BIN = prevBin;
+
+    ok(/not summarized — history is in the record/.test(cheap.brief),
+      '(c13) ...and it SAYS it was not summarized, so nobody mistakes terseness for the whole story');
+
+    // The verbatim channels are unaffected: what a reader actually needs never went through a model.
+    ok(/padding\./.test(cheap.brief) || cheap.brief.length > 0,
+      '(c13) the brief still carries the record\'s own content — cheaper means no paraphrase, not less payload');
+
+    // Opt-in still reaches the model path, so nothing is removed, only made explicit.
+    const asked = (await c13.handleApi('GET', `/api/sessions/${sid13}/brief`, { for: 'code', summarize: '1' }, {})).payload;
+    ok(asked.summary_kind === 'model',
+      '(c13) a caller who WANTS a narrative can still buy one — the model is opt-in, not deleted');
 
     if (prev === undefined) delete process.env.HANDOFF_HOME; else process.env.HANDOFF_HOME = prev;
     delete require.cache[require.resolve('./handoff-core')];

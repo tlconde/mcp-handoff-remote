@@ -390,18 +390,30 @@ async function llmSummarize(text) {
   }
   return null;
 }
-async function compact(session) {
+/* THE DETERMINISTIC SUMMARY, extracted so it can be reached WITHOUT a model.
+ *
+ * It was already here — as compact()'s fallback, unreachable whenever the model answered. So the
+ * cheap honest path existed all along and every read paid for the expensive one first.
+ *
+ * It is assembled from fields that already travel verbatim: the caller's opening intent, the
+ * locked decisions, the progress notes. Failure mode is TOO TERSE, which is the property a reader
+ * who cannot verify is owed — the same asymmetry the deterministic checkpoint turns on. */
+function mechanicalSummary(session) {
   const msgs = session.messages.filter(m => m.role !== 'system' || m.kind === 'progress');
-  const llm = await llmSummarize(msgs.map(m => `${m.role}: ${m.text}`).join('\n'));
-  if (llm) return llm;
   const intent = msgs.find(m => m.role === 'user' && m.kind === 'chat');
   const progress = session.messages.filter(m => m.kind === 'progress').map(m => m.text);
   const parts = [];
   if (intent) parts.push(`Goal: ${intent.text.slice(0, 140)}`);
   if (session.decisions.length) parts.push(`Locked: ${session.decisions.map(d => d.text).join('; ')}`);
   if (progress.length) parts.push(`Progress: ${progress.join('; ')}`);
-  parts.push(`(${msgs.length} messages compacted from ${NAMES[session.surface]})`);
+  parts.push(`(${msgs.length} messages, not summarized — history is in the record)`);
   return parts.join(' · ');
+}
+async function compact(session) {
+  const msgs = session.messages.filter(m => m.role !== 'system' || m.kind === 'progress');
+  const llm = await llmSummarize(msgs.map(m => `${m.role}: ${m.text}`).join('\n'));
+  if (llm) return llm;
+  return mechanicalSummary(session);
 }
 
 /* ---------------- envelope & briefs ---------------- */
@@ -459,7 +471,7 @@ function projectStateBlock(env) {
  * written yet inherits the fix, the same way the id invariant covers verbs nobody has written. A
  * dest is a delivery address; the origin is where the work is described. Identity fields still come
  * from the session asked about — only the PAYLOAD follows origin_ref. */
-async function buildEnvelope(session) {
+async function buildEnvelope(session, opts) {
   const origin = (session.origin_ref && db.sessions[session.origin_ref.session_id]) || null;
   const payloadSrc = origin || session;
   if (payloadSrc !== session) session = Object.assign({}, session, { messages: payloadSrc.messages, decisions: payloadSrc.decisions, artifacts: payloadSrc.artifacts, open_items: payloadSrc.open_items, project_state: payloadSrc.project_state, notes: payloadSrc.notes });
@@ -476,9 +488,23 @@ async function buildEnvelope(session) {
      * invariant and every mirror failure this week was a mirror-model failure. */
     supplied_context: (session.messages || []).filter(m => m.kind === 'context').map(m => m.text).filter(Boolean),
     transcript: full ? session.messages : undefined,
+    /* COMPACTION ON READ IS WORK THE READER DID NOT ASK FOR — and it was the default.
+     *
+     * Any payload over FULL_THRESHOLD sent every get_handoff through compact(), which spawns a
+     * model with a 90-second ceiling. Measured 2026-08-10: that is what blew the relay's
+     * 10-second reply budget, sending workers down the slow mount and, once, making a worker
+     * recover its own task by reading the store off disk because the read it was told to make
+     * timed out. A READ that quietly pays for a summary is a read that can fail for reasons
+     * having nothing to do with what was asked.
+     *
+     * So reads are deterministic by default and the model is OPT-IN. The summary a caller gets
+     * is assembled from fields that already travel verbatim; the history it describes is in the
+     * record, unchanged, for anyone who wants it. Summaries are cache-warming; the log is truth.
+     * A caller who genuinely wants a narrative asks for one — and pays for it knowingly. */
     summary: full
       ? `Full context attached — ${session.messages.length} messages travel whole (${size} chars, under compaction threshold).`
-      : await compact(session),
+      : (opts && opts.summarize ? await compact(session) : mechanicalSummary(session)),
+    summary_kind: full ? 'full' : ((opts && opts.summarize) ? 'model' : 'deterministic'),
     decisions: session.decisions,
     artifacts: session.artifacts,
     open_items: session.open_items,
@@ -1905,15 +1931,18 @@ async function handleApi(method, p, query, b) {
       return { code: 200, payload: { id: s.id, nickname: s.nickname, surface: s.surface, provenance: 'asserted',
         note: r && r.advisory ? r.advisory : undefined, duplicates: r && r.duplicates ? r.duplicates : undefined } };
     }
+    /* summarize=1 is OPT-IN and costs a model call of up to 90 seconds. Absent it, both routes are
+     * deterministic and fast — a read pays for what it asked for and nothing else. */
     if ((m = p.match(/^\/api\/sessions\/([^/]+)\/envelope$/)) && method === 'GET') {
       const s = db.sessions[m[1]]; if (!s) return { code: 404, payload: { error: 'not found' } };
-      return { code: 200, payload: await buildEnvelope(s) };
+      return { code: 200, payload: await buildEnvelope(s, { summarize: !!(query && query.summarize) }) };
     }
     if ((m = p.match(/^\/api\/sessions\/([^/]+)\/brief$/)) && method === 'GET') {
       const s = db.sessions[m[1]]; if (!s) return { code: 404, payload: { error: 'not found' } };
       const target = query.for || 'code';
       if (!SURFACES.includes(target)) return { code: 400, payload: { error: 'for must be one of ' + SURFACES } };
-      return { code: 200, payload: { for: target, brief: buildBrief(target, await buildEnvelope(s), s) } };
+      const env = await buildEnvelope(s, { summarize: !!(query && query.summarize) });
+      return { code: 200, payload: { for: target, brief: buildBrief(target, env, s), summary_kind: env.summary_kind } };
     }
     if ((m = p.match(/^\/api\/sessions\/([^/]+)\/continue$/)) && method === 'POST') {
       const s = db.sessions[m[1]]; if (!s) return { code: 404, payload: { error: 'not found' } };

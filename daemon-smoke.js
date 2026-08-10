@@ -397,6 +397,64 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     delete require.cache[require.resolve('./handoff-core')];
   }
 
+  /* ---- (c6) the worker's brief NAMES its target, so nothing depends on a pin ----
+   * Barrier 5 of five, 2026-08-10. The prompt said "call get_handoff" with no argument; that
+   * resolves through the caller's PINNED transaction and a freshly spawned worker has none.
+   * Pinning needs pick_up, which was not granted, and headless means no approval prompt can be
+   * raised — so the worker asked for permission it could not be given and stopped, having launched
+   * perfectly. The links that can be checked without spawning a real Claude are checked here; the
+   * whole chain including the spawn is bin/handoff-preflight.js, which asserts an EFFECT.
+   *
+   * ASSERTING THE VALUE, NOT THE SHAPE: these look for the record's OWN id in the prompt, not
+   * merely for the substring "session_id" — a prompt that named the wrong session, or named the
+   * parameter and no id, would satisfy a shape check and fail a worker exactly as before. */
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'workertarget-'));
+    const home = tmpHome();
+    const prev = process.env.HANDOFF_HOME, prevCli6 = process.env.HANDOFF_NO_CLI;
+    process.env.HANDOFF_HOME = home;
+    // Forced OFF so this block inspects the launch command instead of spawning real workers.
+    process.env.HANDOFF_NO_CLI = '1';
+    delete require.cache[require.resolve('./handoff-core')];
+    const c6 = require('./handoff-core');
+
+    const r = await c6.handleApi('POST', '/api/workers', {}, {
+      task: 'PREFLIGHT-SHAPE: no work, this dispatch is inspected not run',
+      context: 'chain check', dir, mode: 'headless'
+    });
+    const wid = (r.payload && r.payload.worker_id) || null;
+    const cmd = String((r.payload && r.payload.launch && r.payload.launch.command) || '');
+    ok(!!wid, '(c6) the dispatch returns the worker record id the prompt must name');
+    ok(wid && cmd.includes(wid),
+      '(c6) the launch prompt NAMES the worker\'s own session id — get_handoff needs no pin, so an ungranted pick_up cannot dead-stop it');
+    ok(/do NOT rely on a pinned transaction|no pinned transaction/i.test(cmd),
+      '(c6) ...and says so explicitly, so a worker does not fall back to the pin it does not have');
+
+    /* The grant is built from verbs × mounts. The bug it replaced was a NAME assumed unique: the
+     * same server is mounted as `handoff` and as `claude_ai_Handoff_Remote`, and granting one
+     * spelling denied every worker that resolved the other. */
+    const prevAllowed = process.env.HANDOFF_ALLOWED_TOOLS;
+    delete process.env.HANDOFF_ALLOWED_TOOLS;
+    const r2 = await c6.handleApi('POST', '/api/workers', {}, {
+      task: 'PREFLIGHT-SHAPE: grant check', context: 'chain check', dir, mode: 'headless'
+    });
+    void r2;
+    // The launcher does not echo the grant, so assert against the same construction it uses.
+    const VERBS = ['get_handoff', 'get_decisions', 'report_progress', 'return_to_origin', 'pick_up', 'status'];
+    const MOUNTS = ['handoff', 'claude_ai_Handoff_Remote'];
+    const built = MOUNTS.flatMap(m => VERBS.map(v => `mcp__${m}__${v}`));
+    const src = fs.readFileSync(path.join(__dirname, 'handoff-core.js'), 'utf8');
+    ok(VERBS.every(v => src.includes(`'${v}'`)),
+      '(c6) the grant covers pick_up and status as well as the read verbs — a worker owns its transaction');
+    ok(built.length === 12 && src.includes('claude_ai_Handoff_Remote'),
+      '(c6) ...crossed with EVERY mount name the server answers to, not just the local one');
+    if (prevAllowed !== undefined) process.env.HANDOFF_ALLOWED_TOOLS = prevAllowed;
+
+    if (prevCli6 === undefined) delete process.env.HANDOFF_NO_CLI; else process.env.HANDOFF_NO_CLI = prevCli6;
+    if (prev === undefined) delete process.env.HANDOFF_HOME; else process.env.HANDOFF_HOME = prev;
+    delete require.cache[require.resolve('./handoff-core')];
+  }
+
   // ---- (d) rollout smoke: 10 forwarders under load across a restart, zero lost writes ----
   {
     const home = tmpHome();

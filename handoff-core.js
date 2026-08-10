@@ -964,9 +964,22 @@ async function doLaunch(s, b) {
     fp = path.join(dir, 'HANDOFF.md');
     fs.writeFileSync(fp, renderHandoffMd(env2, s, 'code'));
   }
+  /* NAME THE TARGET, SO THERE IS NO PIN TO DEPEND ON.
+   *
+   * The old prompt said "call get_handoff" with no argument, which resolves through the caller's
+   * PINNED transaction — and a freshly spawned worker has no pin. Pinning needs `pick_up`, which
+   * was not in the grant, so the worker asked for permission it could not be given (headless is
+   * non-interactive) and stopped. Measured 2026-08-10, the fifth barrier in one morning between a
+   * dispatch and a worker doing work.
+   *
+   * doLaunch KNOWS the id at this point. Writing it into the prompt deletes the pin from the chain
+   * instead of greasing it: get_handoff carries its own target and needs no session state at all.
+   * The grant below still gains pick_up/status — a worker legitimately owns its transaction — but
+   * that is the belt, and this is the design fix. One less link in a chain that has already shown
+   * five, every one of which reported success at the layer that broke it. */
   const PROMPT = viaMcp
-    ? "Use the handoff MCP: call get_handoff to pull this session's context envelope, continue the work from where it left off, and call report_progress with a summary when done."
-    : 'Read HANDOFF.md and continue this session from where it left off. If the handoff MCP is available, call report_progress when done. Finish with a 2-3 sentence summary of what you did.';
+    ? `Use the handoff MCP: call get_handoff with session_id "${s.id}" to pull this session's context envelope — pass the id explicitly, do NOT rely on a pinned transaction, you do not have one. Then continue the work from where it left off and call report_progress with a summary when done.`
+    : `Read HANDOFF.md and continue this session from where it left off. If the handoff MCP is available, call get_handoff with session_id "${s.id}" for the full envelope (pass the id explicitly — you have no pinned transaction), and call report_progress when done. Finish with a 2-3 sentence summary of what you did.`;
   const command = `cd ${JSON.stringify(dir)} && claude --session-id ${nativeId} ${JSON.stringify(PROMPT)}`;
   if (!claudeCliAvailable()) {
     const env2 = await buildEnvelope(s);
@@ -1022,7 +1035,9 @@ async function doLaunch(s, b) {
    * by, instead of being written out once against one spelling. A mount that gets added later needs
    * its name added here, and that is the point: an unlisted mount fails loudly at the grant rather
    * than silently at the first tool call inside a session nobody is watching. */
-  const HANDOFF_VERBS = ['get_handoff', 'get_decisions', 'report_progress', 'return_to_origin'];
+  /* pick_up and status join the read verbs: a worker legitimately OWNS its transaction, and being
+   * unable to claim or inspect it is what turned barrier 5 into a dead stop rather than a detour. */
+  const HANDOFF_VERBS = ['get_handoff', 'get_decisions', 'report_progress', 'return_to_origin', 'pick_up', 'status'];
   const HANDOFF_MOUNTS = ['handoff', 'claude_ai_Handoff_Remote'];
   const ALLOWED = process.env.HANDOFF_ALLOWED_TOOLS ||
     ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash']

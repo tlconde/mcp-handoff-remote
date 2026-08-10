@@ -16,7 +16,13 @@ artifacts from your Claude conversations, in plain files under `~/.claude-handof
 own machine. It is not encrypted at rest beyond your filesystem's own protections. Treat that
 directory as you would treat your notes.
 
-Nothing is uploaded anywhere by this software. See `DATA-RESIDENCY.md` for the full map.
+**At tier 1, nothing leaves your machine** — no network interface is touched at all. **Tier 2 is
+opt-in and does put your envelopes on a network:** the route is device → Claude → the CDN edge →
+your tunnel → the relay on your home machine, and **the tunnel provider terminates TLS at its
+edge**, so that hop is trusted infrastructure rather than end-to-end encryption. There is still no
+account with us and no hosted database — the store stays on your machine — but "self-hosted" is not
+"never traverses a third party" once tier 2 is on. See `DATA-RESIDENCY.md` for the full map,
+including that caveat in detail.
 
 ## The security model, in one paragraph
 

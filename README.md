@@ -8,7 +8,10 @@ that mattered. This carries the thread instead: the summary, the decisions *verb
 items, the artifacts by value, and what would break on the other machine.
 
 **Self-hosted.** The store is plain files on your own machine. No account with us, no hosted
-database, no telemetry. See [DATA-RESIDENCY.md](DATA-RESIDENCY.md) for exactly what lives where.
+database, no telemetry. Tier 1 touches no network at all; **tier 2 is opt-in and does send your
+envelopes over a tunnel whose provider terminates TLS at its edge** — self-hosted storage, not
+end-to-end encryption. See [DATA-RESIDENCY.md](DATA-RESIDENCY.md) for exactly what lives where and
+which hops are trusted.
 
 ## Install
 

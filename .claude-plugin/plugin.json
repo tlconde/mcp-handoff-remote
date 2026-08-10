@@ -21,15 +21,5 @@
         "${CLAUDE_PLUGIN_ROOT}/mcp-handoff.js"
       ]
     }
-  },
-  "experimental": {
-    "monitors": [
-      {
-        "name": "wake-agent",
-        "command": "node ${CLAUDE_PLUGIN_ROOT}/bin/handoff-wake-agent.js",
-        "description": "Watches the store for mail addressed to this machine and delivers it locally; writes this host's own reachability verdict.",
-        "when": "always"
-      }
-    ]
   }
 }

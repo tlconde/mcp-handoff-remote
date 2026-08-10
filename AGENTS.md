@@ -66,15 +66,18 @@ landed individually; its summary line is not evidence.
 | lane | files | owner (leads) | mirror direction |
 |---|---|---|---|
 | **Runtime** | `handoff-core.js`, `handoff-tools.js`, `handoff-daemon.js`, `handoff-contract.js`, `handoff-relay.js`, `handoff-jwt.js`, `handoff-tool-schemas.js`, `mcp-handoff.js`, `server.js`, everything in `bin/`, `hooks/`, `plugin.json` + `mcp.json` | **this repo** | here → notebook |
-| **Proofs** | `*-smoke.js`, `protocol-test.js`, `drift-eval.js`, `forwarder-runbook.js` | **`<PROOF_OWNER>`** (see below) | proof owner → wherever a copy is needed |
-| **Design specs** | `*-SPEC.md`, `THREAT-MODEL.md` | **`<PROOF_OWNER>`** | proof owner only |
+| **Proofs** | `*-smoke.js`, `protocol-test.js`, `drift-eval.js`, `forwarder-runbook.js` | **the notebook** (see below) | notebook only — copies on a maintainer disk are fine, but they are copies |
+| **Design specs** | `*-SPEC.md`, `THREAT-MODEL.md` | **the notebook** | notebook only |
 | **Evaluation receipts, trials, pitch material** | see the never-travels list below | notebook | never travels here |
 
-**`<PROOF_OWNER>` is a one-line fill-in awaiting the operator**, and it is deliberately left visible
-rather than guessed: the candidates are the existing notebook or a future private `handoff-lab`
-repo, and they differ in ways an agent must not paper over. Until it is filled, treat the proof
-lane as **not owned by this repo** — which is the part that is already decided and the part the old
-shared list got wrong.
+**The proof owner is the notebook (`$HANDOFF_NOTEBOOK`) — not a separate `handoff-lab` repo until CI
+or a second maintainer needs proofs without trials.** The notebook already *is* the lab lane, so a
+third repo would recreate two-tree drift with three trees. Ownership means **tracked somewhere**:
+gitignored orphans sitting on a maintainer's disk are not owned, they are copies.
+
+**Absence of proofs here is correct, and agents must not "fix" it.** A smoke, protocol test, drift
+eval, or design spec that exists in the notebook and not in this tree is the decision working. Do
+not re-add proofs to this repo — copying them back breaks ADR-0002.
 
 **A runtime change still lands in BOTH trees.** That rule is unchanged and is the one the drift
 measurement above exists for. What changed is that it applies to the runtime lane only: a proof
@@ -93,6 +96,12 @@ Not shared, and must **never** travel from the notebook to here:
 was TRACKED here, carrying real record ids and real CLI transcript uuids, and the notebook's own
 privacy-guard independently classes those files as personal content that must never be copied
 anywhere public. Untracked and gitignored 2026-08-10.
+
+**Public release is on the clock; history scrub is release-blocking. Runbook + verified empty greps
+on a fresh clone before visibility change.** Target is end of this week (from 2026-08-10), so the
+scrub is a critical-path item, not a someday one. Two things are decided and are not to be
+re-litigated: **untracking ≠ clean history**, and **public without scrub is a policy breach of this
+gate.**
 
 **PUBLICATION GATE — untracking stops FUTURE commits only.** The ids are in the commit history and
 `git rm --cached` does not touch it, so a clone of this repo still carries them. Before this repo is

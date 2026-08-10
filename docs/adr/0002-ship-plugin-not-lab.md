@@ -18,14 +18,22 @@ comply with this ADR and still be instructed to mirror the lab back in.
 | lane | owner (leads) | mirror direction |
 |---|---|---|
 | Runtime (`handoff-*.js`, `mcp-handoff.js`, `server.js`, `bin/`, `hooks/`, `plugin.json`, `mcp.json`) | **this repo** | here → notebook |
-| Proofs (`*-smoke.js`, `protocol-test.js`, `drift-eval.js`, `forwarder-runbook.js`) | **`<PROOF_OWNER>`** | proof owner outward |
-| Design specs (`*-SPEC.md`, `THREAT-MODEL.md`) | **`<PROOF_OWNER>`** | proof owner only |
+| Proofs (`*-smoke.js`, `protocol-test.js`, `drift-eval.js`, `forwarder-runbook.js`) | **the notebook** | notebook only |
+| Design specs (`*-SPEC.md`, `THREAT-MODEL.md`) | **the notebook** | notebook only |
 | Receipts, trials, pitch material | notebook | never travels here |
 
-`<PROOF_OWNER>` is an open question for the operator — the existing notebook, or a future private
-`handoff-lab` repo. It is left as a visible fill-in rather than guessed, because the two answers
-imply different mirror tooling. What is already decided, and is the half that was getting acted on
-wrongly: **this repo does not own or lead the proofs.**
+The proof owner is **the notebook (`$HANDOFF_NOTEBOOK`) — not a separate `handoff-lab` repo until CI
+or a second maintainer needs proofs without trials.** Three grounds:
+
+1. The notebook already *is* the lab lane. Naming a new repo would not create the capability, it
+   would relocate it.
+2. A third tree recreates the failure this ADR exists to stop — two-tree drift, now with three
+   trees and one more mirroring pass nobody measures.
+3. Ownership means **tracked somewhere**. Gitignored files on a maintainer's disk are copies, not
+   an owner; copies on disk for local runs are fine, but they cannot be what the table points at.
+
+The half that was already decided and getting acted on wrongly is unchanged: **this repo does not
+own or lead the proofs**, and an agent that restores them here has broken this ADR.
 
 ## Rejected alternatives
 
@@ -53,11 +61,19 @@ tree: `mcp-roundtrip-evals/` in **5** commits, `docs-seed/` in **5** commits, an
 the `sess_`-class id pattern across `git log --all -p`. HEAD is clean; history is not. See
 `AGENTS.md` → publication gate, and the runbook in `docs/runbooks/history-scrub.md`.
 
+**Public release is on the clock; history scrub is release-blocking. Runbook + verified empty greps
+on a fresh clone before visibility change.** Target end of week from 2026-08-10 — which moves the
+scrub from prepared-and-waiting onto the critical path.
+
 ## What would reopen this
 
 - The operator chooses the export-script model (rejected alternative 3), which supersedes the
   boundary rather than the ownership table.
 - The proof lane finds an owner that is *this* repo — which would mean the publication decision
   itself changed.
+- **The moment public CI proofs are wanted, proofs consolidate under `handoff-poc`; no new repo.**
+  That is the split trigger and its destination in one line: a lab split reuses the repo that
+  already exists rather than minting `handoff-lab`. The trigger is CI, or a second maintainer who
+  needs proofs without trials — not inconvenience.
 - A shipped doc is found claiming something only a lab-side test asserts. That is the signal the
   boundary has gone soft in prose while holding in git.

@@ -744,6 +744,78 @@ const waitFor = async (fn, ms = 3000) => { const t = Date.now(); while (Date.now
     delete require.cache[require.resolve('./handoff-tools')];
   }
 
+  /* ---- (c10) THE OBJECT TYPE — first build against OBJECT-RECORD-SPEC §13-§17 ----
+   * The spec is design-only; this asserts the slice that shipped and nothing it merely proposes.
+   * The evidence law gets the most, because it is the rule with teeth: an outcome without
+   * machine-checkable evidence is refused, and the refusal must offer the downgrade — a law that
+   * makes honest reporting impossible gets routed around. */
+  {
+    const home = tmpHome();
+    const prev = process.env.HANDOFF_HOME;
+    process.env.HANDOFF_HOME = home;
+    delete require.cache[require.resolve('./handoff-core')];
+    const c10 = require('./handoff-core');
+
+    const mk = await c10.handleApi('POST', '/api/sessions', {}, { surface: 'code', title: 'the board', type: 'todo' });
+    const oid = mk.payload.id;
+    const st0 = (await c10.handleApi('GET', '/api/state', {}, {})).payload;
+    ok(st0.sessions[oid].type === 'todo',
+      '(c10) a record carries a TYPE — §13 resolution (A): a type over existing records, no new collection and no second identity implementation');
+
+    // Ordinary events append and flip participation, because append IS the write-shaped act.
+    const e1 = await c10.handleApi('POST', `/api/objects/${oid}/events`, {}, { kind: 'proposed', body: 'ship the pilot', actor: 'operator', actor_kind: 'human' });
+    ok(e1.code === 201 && e1.payload.participation === 'active',
+      '(c10) append is a write-shaped act and flips participation passive→active (§16.4)');
+
+    /* THE EVIDENCE LAW. Prose in an evidence field is malformed input — not a weaker outcome. */
+    const bad = await c10.handleApi('POST', `/api/objects/${oid}/events`, {}, {
+      kind: 'suite_passed', evidence: 'I ran the tests and they all passed, honestly'
+    });
+    ok(bad.code === 400 && bad.payload.field === 'evidence',
+      '(c10) an outcome whose evidence is PROSE is refused and the refusal NAMES THE FIELD — not asking the caller to guess which of five looked wrong');
+    ok(bad.payload.downgrade === 'claim' && /kind:"claim"/.test(bad.payload.error),
+      '(c10) ...and offers the lossless downgrade, because a law that makes honest reporting impossible gets routed around');
+
+    const good = await c10.handleApi('POST', `/api/objects/${oid}/events`, {}, {
+      kind: 'suite_passed', evidence: { suite: 'daemon', passed: 129, exit_status: 0 }, evidence_class: 'verified'
+    });
+    ok(good.code === 201, '(c10) ...while an outcome carrying values a rechecker could compare is accepted');
+
+    const claim = await c10.handleApi('POST', `/api/objects/${oid}/events`, {}, { kind: 'claim', body: 'I ran the tests and they all passed, honestly' });
+    ok(claim.code === 201, '(c10) the same words file cleanly as a CLAIM — the caller\'s report is never destroyed, only classified');
+
+    const unknown = await c10.handleApi('POST', `/api/objects/${oid}/events`, {}, { kind: 'vibes' });
+    ok(unknown.code === 400 && /absence is never permission/.test(unknown.payload.error),
+      '(c10) an unrecognised kind is refused rather than stored — absence is never permission');
+
+    /* THE §16.4 CARVE-OUT, flagged by BLOB-SPLIT-SPEC before anything could depend on it. */
+    const quiet = await c10.handleApi('POST', '/api/sessions', {}, { surface: 'code', title: 'never spoke', type: 'todo' });
+    await c10.handleApi('POST', `/api/objects/${quiet.payload.id}/events`, {}, { kind: 'blob_pruned', actor_kind: 'system', body: 'retention pass' });
+    const st1 = (await c10.handleApi('GET', '/api/state', {}, {})).payload;
+    ok(st1.sessions[quiet.payload.id].participation === 'passive',
+      '(c10) a SYSTEM lifecycle event does not activate a passive object — a retention pass must not silently mark every quiet object as having spoken');
+
+    // read: three modes, and a dangling cursor refuses rather than restarting from the beginning.
+    const proj = await c10.handleApi('GET', `/api/objects/${oid}`, { as: 'projection' }, {});
+    /* THREE events, not five: the prose outcome and the unknown kind were REFUSED, and a refusal
+     * appends nothing. Worth asserting the exact number rather than "some events" — it is the only
+     * assertion here that would catch a refusal that returned 400 while still writing. */
+    ok(proj.payload.events === 3 && proj.payload.claims === 1 && proj.payload.outcomes.length === 1,
+      '(c10) the projection is DERIVED from the history — and a refused event appended NOTHING, which only an exact count catches');
+    const hist = await c10.handleApi('GET', `/api/objects/${oid}`, { as: 'history', after: e1.payload.event_id }, {});
+    ok(hist.payload.events.length === 2 && hist.payload.total === 3,
+      '(c10) history returns events AFTER a cursor — the diff path a recap needs');
+    const dangling = await c10.handleApi('GET', `/api/objects/${oid}`, { as: 'history', after: 'evt_nope' }, {});
+    ok(dangling.code === 400,
+      '(c10) ...and a cursor naming no event REFUSES, rather than silently meaning "from the beginning"');
+    const snap = await c10.handleApi('GET', `/api/objects/${oid}`, { as: 'snapshot' }, {});
+    ok(!!snap.payload.snapshot && !!snap.payload.taken_at,
+      '(c10) a snapshot is the projection frozen and addressed, delivered by value');
+
+    if (prev === undefined) delete process.env.HANDOFF_HOME; else process.env.HANDOFF_HOME = prev;
+    delete require.cache[require.resolve('./handoff-core')];
+  }
+
   // ---- (d) rollout smoke: 10 forwarders under load across a restart, zero lost writes ----
   {
     const home = tmpHome();

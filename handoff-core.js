@@ -658,7 +658,7 @@ function createSession({ surface, title }) {
    * easy one.
    *
    * Existing ids stay valid: matching is exact-string, so nothing is rewritten or migrated. */
-  const s = { id: id('sess_' + (surface || 'x')), surface, title: title || 'Untitled', created_at: now(), messages: [], decisions: [], artifacts: [], open_items: [], archived: false, participation: 'passive' };
+  const s = { id: id('sess_' + (surface || 'x')), surface, title: title || 'Untitled', created_at: now(), messages: [], decisions: [], artifacts: [], open_items: [], archived: false, participation: 'passive', type: (arguments[0] && arguments[0].type) || 'session' };
   db.sessions[s.id] = s;
   return s;
 }
@@ -714,6 +714,98 @@ function applyNickname(s, raw) {
   if (shadowed.length) s.nickname_shadows = shadowed;
   return null;
 }
+/* ---------------- OBJECTS (v2 pilot) ----------------
+ *
+ * FIRST BUILD OF THE OBJECT TYPE, implementing OBJECT-RECORD-SPEC §13-§17 minimally. The spec is
+ * design-only and this is deliberately the smallest honest slice of it: a type over existing
+ * records (§13's resolution (A) — no new collection, no migration, no second identity
+ * implementation), an append-only history (§14), the three verbs (§15), and the evidence law's
+ * refusal (§17). Everything the spec proposes beyond that is still unbuilt and still proposed.
+ *
+ * WHY A TYPE AND NOT A COLLECTION, in one line, because the spec argues it at length: a parallel
+ * collection would need uniqueness-at-set-time and passive-until-first-write of its own, and
+ * applyNickname's own comment already records what a second copy of one rule costs — "two call
+ * sites, one rule: if the check lived in the route, the second route would have grown its own
+ * slightly-different copy, which is how 'unique per surface' quietly stops being true."
+ *
+ * An OUTCOME event claims something happened in the world. Per §17 it carries machine-checkable
+ * evidence or it is refused — and the refusal offers the lossless downgrade the spec insists on:
+ * the caller's words are filed as kind:'claim', never destroyed. A law that makes honest
+ * reporting impossible gets routed around, so this one makes honesty the cheap path. */
+const OBJECT_TYPES = ['session', 'todo'];
+const OUTCOME_KINDS = new Set(['mirrored', 'delivered', 'suite_passed', 'live']);
+const EVENT_KINDS = new Set(['proposed', 'settled', 'claim', 'note', 'blob_pruned', ...OUTCOME_KINDS]);
+
+/* Evidence is machine-checkable when a rechecker COULD recompute it and return false — the same
+ * "check that the assertion can fail" rule this repo applies to tests, turned on outcomes. Prose
+ * is malformed input, not weak evidence: a string cannot be rechecked, so it cannot be falsified,
+ * so it is not evidence. Structural check only here; per-kind rechecker functions are proposed in
+ * §17 and NOT built, which is stated rather than implied. */
+function evidenceIsCheckable(ev) {
+  if (!ev || typeof ev !== 'object' || Array.isArray(ev)) return false;
+  const keys = Object.keys(ev);
+  if (!keys.length) return false;
+  // At least one field must be a value a rechecker could compare against, not a sentence about it.
+  return keys.some(k => {
+    const v = ev[k];
+    return typeof v === 'number' || typeof v === 'boolean' ||
+      (typeof v === 'string' && v.length > 0 && v.length <= 200 && !/\s{2,}|[.!?]\s/.test(v));
+  });
+}
+
+function appendEvent(obj, b) {
+  const kind = String((b && b.kind) || '');
+  if (!EVENT_KINDS.has(kind)) {
+    return { code: 400, payload: { error: `unknown event kind "${kind}" — absence is never permission; known kinds: ${[...EVENT_KINDS].join(', ')}` } };
+  }
+  const actorKind = (b && b.actor_kind) || 'agent';
+  if (OUTCOME_KINDS.has(kind) && !evidenceIsCheckable(b && b.evidence)) {
+    /* THE REFUSAL NAMES THE FIELD, NAMES THE REMEDY, AND OFFERS THE DOWNGRADE — §17's three
+     * deliberate properties. The caller is not asked to guess which field was wrong, and its
+     * claim survives as what it actually is. */
+    return { code: 400, payload: {
+      error: `outcome "${kind}" refused: field "evidence" must be machine-checkable — an object of values a rechecker could compare and find FALSE, not prose. Re-send as kind:"claim" to file the same words honestly, or attach evidence (e.g. {commit:"<sha>", suite:"daemon", passed:129}).`,
+      field: 'evidence', downgrade: 'claim'
+    } };
+  }
+  const ev = {
+    id: id('evt'), ts: now(), kind,
+    actor: (b && b.actor) || null,
+    actor_kind: actorKind,
+    body: (b && b.body) !== undefined ? b.body : null,
+  };
+  if (OUTCOME_KINDS.has(kind)) { ev.evidence = b.evidence; ev.evidence_class = (b && b.evidence_class) || 'asserted'; }
+  obj.history = Array.isArray(obj.history) ? obj.history : [];
+  obj.history.push(ev);
+  /* §16.4 CARVE-OUT, flagged by BLOB-SPLIT-SPEC before anything could rely on it: append is the
+   * sole participation trigger, but a SYSTEM-actor lifecycle event is the store maintaining
+   * itself, not a participant speaking. Inheriting §16.4 naively would let a retention pass
+   * silently activate every quiet object in the store — the state would then mean "something
+   * happened to this" rather than "this did something", which is not what passive/active is for. */
+  if (actorKind !== 'system') markActive(obj, 'append');
+  ops('object_event', { object: obj.id, kind, actor_kind: actorKind, event: ev.id });
+  return { code: 201, payload: { event_id: ev.id, object: obj.id, participation: obj.participation } };
+}
+
+/* PROJECTION IS DERIVED, NEVER STORED AS TRUTH. §14: the history is the log and the projection is
+ * a join over it, so a projection that disagrees with the events is a bug in this function rather
+ * than a record to be repaired. Cheap enough to recompute per read at pilot scale; a snapshot is
+ * the same bytes, frozen and addressed. */
+function projectObject(obj) {
+  const h = Array.isArray(obj.history) ? obj.history : [];
+  const settled = h.filter(e => e.kind === 'settled');
+  return {
+    id: obj.id, type: obj.type || 'session', title: obj.title,
+    participation: obj.participation || 'passive',
+    nickname: obj.nickname || null,
+    events: h.length,
+    open: h.filter(e => e.kind === 'proposed').length - settled.length,
+    outcomes: h.filter(e => OUTCOME_KINDS.has(e.kind)).map(e => ({ kind: e.kind, evidence_class: e.evidence_class, at: e.ts })),
+    claims: h.filter(e => e.kind === 'claim').length,
+    last_event_at: h.length ? h[h.length - 1].ts : null,
+  };
+}
+
 /* PARTICIPATION — R1 as amended. Every record starts 'passive' and becomes 'active' at its first
  * write-shaped act. One transition, one direction, recorded as an event.
  *
@@ -1614,6 +1706,42 @@ async function handleApi(method, p, query, b) {
      * to name that record, exactly as a caller naming its own conversation asserts which one it
      * is. The rule is unchanged — the same applyNickname, the same per-surface refusal — because
      * the check belongs to the name, not to the caller. */
+    /* THE THREE VERBS — §15. resolve is deliberately NOT a new route: an object is a record, so
+     * resolution is the machinery that already exists, plus a type filter. A second resolver would
+     * be the second identity implementation §13 rejected. */
+    if ((m = p.match(/^\/api\/objects\/([^/]+)\/events$/)) && method === 'POST') {
+      const obj = db.sessions[m[1]];
+      if (!obj) return { code: 404, payload: { error: `no object ${m[1]} — nothing was appended` } };
+      if (obj.superseded_by) {
+        return { code: 409, payload: { error: `${obj.id} is superseded by ${obj.superseded_by} — append to the successor; history stays here and is never rewritten` } };
+      }
+      const r = appendEvent(obj, b || {});
+      if (r.code >= 300) return r;
+      save();
+      return r;
+    }
+    if ((m = p.match(/^\/api\/objects\/([^/]+)$/)) && method === 'GET') {
+      const obj = db.sessions[m[1]];
+      if (!obj) return { code: 404, payload: { error: `no object ${m[1]}` } };
+      const as = (query && query.as) || 'projection';
+      if (as === 'history') {
+        /* The diff path: events after a caller-supplied id. A recap needs this; a cold start does
+         * not, and asking for the whole log when you wanted the tail is how a cheap read becomes
+         * an expensive one. */
+        const h = Array.isArray(obj.history) ? obj.history : [];
+        const after = query && query.after;
+        const from = after ? h.findIndex(e => e.id === after) : -1;
+        if (after && from === -1) return { code: 400, payload: { error: `no event ${after} in this object's history — a dangling cursor is refused, never silently treated as "from the beginning"` } };
+        return { code: 200, payload: { id: obj.id, events: h.slice(from + 1), total: h.length } };
+      }
+      if (as === 'snapshot') {
+        // Frozen, addressed, delivered BY VALUE — never a path a receiver may be unable to deref.
+        const proj = projectObject(obj);
+        return { code: 200, payload: { id: obj.id, taken_at: now(), snapshot: proj } };
+      }
+      if (as !== 'projection') return { code: 400, payload: { error: `unknown read mode "${as}" — one of projection | history | snapshot` } };
+      return { code: 200, payload: projectObject(obj) };
+    }
     if ((m = p.match(/^\/api\/sessions\/([^/]+)\/nickname$/)) && method === 'POST') {
       const s = db.sessions[m[1]];
       if (!s) return { code: 404, payload: { error: `no record ${m[1]} — nothing was changed` } };

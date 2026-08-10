@@ -228,15 +228,32 @@ function resolveAutosend(callValue, pref, env) {
 }
 
 /* Auto-tracing: every round-trip lifecycle event (dispatch / worker_done / resolve)
- * generates a graded receipt automatically — traces ON by default, disable with
- * HANDOFF_NO_AUTORECEIPT=1 once confidence is earned. Fire-and-forget; never blocks
- * or fails the protocol operation itself. */
+ * generates a graded receipt automatically — traces are ON WHEN THE LAB IS PRESENT, and
+ * disabled with HANDOFF_NO_AUTORECEIPT=1 once confidence is earned. Fire-and-forget; never
+ * blocks or fails the protocol operation itself.
+ *
+ * ON-WHEN-LAB-PRESENT IS THE HONEST CLAIM, and it used to read "on by default". The grader
+ * lives in mcp-roundtrip-evals/, which 95a7ae3 untracked — it is development lab, not shipped
+ * runtime — so on a clone the existsSync guard below returns and no receipt is ever written.
+ * That was true before this comment was; the code degraded silently while the comment promised
+ * the feature. A capability that quietly is not there is the failure mode this repo hunts, so
+ * absence now SAYS SO, once per process, and the sentence above no longer overpromises to a
+ * reader who has only the shipped tree. */
+let receiptAbsenceAnnounced = false;
 function autoReceipt() {
   if (process.env.HANDOFF_NO_AUTORECEIPT) return;
   try {
     const pkg = path.join(__dirname, 'mcp-roundtrip-evals');
     const script = path.join(pkg, 'scripts', 'receipt_from_ops.py');
-    if (!fs.existsSync(script)) return;
+    if (!fs.existsSync(script)) {
+      /* Once per process, on stderr: stdout is protocol on the forwarder, and a line repeated
+       * per lifecycle event would be noise nobody reads rather than notice anybody acts on. */
+      if (!receiptAbsenceAnnounced) {
+        receiptAbsenceAnnounced = true;
+        try { console.error('auto-receipts disabled: evals module not present (mcp-roundtrip-evals/ is development lab, not shipped)'); } catch (_) {}
+      }
+      return;
+    }
     const child = spawn('python3', [script, pkg], { detached: true, stdio: 'ignore', env: process.env });
     child.unref();
     child.on('error', () => {});

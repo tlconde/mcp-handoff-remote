@@ -133,7 +133,7 @@ async function main() {
     statusText = await probeStatus();
   } catch (e) {
     console.error('status tool did not respond:', e.message);
-    console.error('Tip: unset HANDOFF_HOME if you just ran protocol-test, then retry.');
+    console.error('Tip: unset HANDOFF_HOME if it points somewhere other than your real store, then retry.');
     console.error('Or skip this self-check and run /status inside a new Claude Code session.');
     process.exit(1);
   }

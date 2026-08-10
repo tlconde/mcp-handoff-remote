@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * handoff-daemon — ONE process owns the protocol (DAEMON-SPEC.md).
+ * handoff-daemon — ONE process owns the protocol (DAEMON-SPEC.md — a design spec that lives in
+ * the development lab, not in the shipped tree; see repo history).
  *
  * Owns: all logic (handoff-core, unchanged), sole store access, and — when the notification
  * layer is wired — the wake pings. Binds ONE socket we own ($HANDOFF_HOME/daemon.sock,
  * mode 0600). Per-session bridges become pure forwarders over that socket. NO new storage:
  * the store stays store/v1/ files.
  *
- * Acceptance tests (see daemon-smoke.js), each a former frozen-bridge gap:
+ * Acceptance tests (see daemon-smoke.js — lab tooling, not shipped), each a former
+ * frozen-bridge gap:
  *   (a) contract version on every call — mismatch → refuse loud + forwarder exits.
  *   (b) load-safety — atomic writes (core), load in try/catch (core), and here a long-lived
  *       LAST-GOOD fallback: a reload that finds a record corrupt keeps the in-memory good

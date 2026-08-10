@@ -15,6 +15,13 @@ shared files had drifted apart while both sides believed they were mirroring.
 version across" but "is the notebook's version a divergence to correct back". Changes flow here
 first and the notebook follows. A change that exists only in the notebook is not yet real.
 
+> **The development lab is no longer tracked.** As of `95a7ae3` ("Ship the plugin, not the lab")
+> the smokes (`*-smoke.js`), `protocol-test.js`, `drift-eval.js`, `forwarder-runbook.js`, the
+> `*-SPEC.md` design specs, `THREAT-MODEL.md` and `mcp-roundtrip-evals/` are gitignored: they stay
+> on the maintainer's disk and in repo history, and they do not ship. Every command below that
+> names one of them still works **where the lab is present** and will be missing from a fresh
+> clone. That is deliberate — the repo ships the plugin, not the workbench.
+
 Before assuming the trees match, measure it:
 `HANDOFF_MIRROR=$HANDOFF_NOTEBOOK node drift-eval.js` separates comment-only and
 placeholder-value differences (both expected) from structural ones — the only kind that means

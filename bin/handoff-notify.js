@@ -33,8 +33,9 @@
  *      PowerShell for the same reason osascript is attributed to Script Editor: a toast must be
  *      shown by a registered app and handoff is not one. VERIFIED on real Windows hardware
  *      2026-08-10: the toast rendered, attributed to Windows PowerShell, and was seen. Re-check on
- *      any new machine with `node notify-smoke.js --prove` — Windows exposes no delivered-list, so
- *      a human's eyes remain the only receipt available there.
+ *      any new machine with `node notify-smoke.js --prove` (part of the development lab, not
+ *      shipped — see repo history) — Windows exposes no delivered-list, so a human's eyes remain
+ *      the only receipt available there.
  *
  * Test / CI mode: HANDOFF_NOTIFY_LOG=<file> appends one JSON line INSTEAD of firing, so tests
  * never spawn OS notifications. HANDOFF_NO_NOTIFY=1 disables the layer. Never throws: a failed
@@ -63,7 +64,8 @@ let TN_CACHE;
  * ad-hoc signed and spctl-rejected, and whether a particular machine's Notification Center
  * honours it depends on that machine's policy — n=1 here, and one machine does not settle it.
  * The general lesson, which cost two false claims in one day: exit 0 proves the binary ran.
- * Only a delivered-record proves delivery. Run `node notify-smoke.js --prove` per machine. */
+ * Only a delivered-record proves delivery. Run `node notify-smoke.js --prove` per machine — that
+ * smoke is part of the development lab, not shipped; see repo history. */
 function clickableRungEnabled() {
   const v = process.env.HANDOFF_TERMINAL_NOTIFIER;
   return !!v && v !== 'none' ? terminalNotifierPath() : null;
@@ -238,8 +240,9 @@ function notify(ev) {
      *
      * Windows exposes no delivered-list, unlike macOS where terminal-notifier -list reads the
      * notification centre's own records. So a human's eyes are the receipt here and always will be:
-     * `node notify-smoke.js --prove` fires one to be confirmed by eye on any new machine. That is
-     * why this comment names a DATE and a WITNESS rather than saying it works. */
+     * `node notify-smoke.js --prove` fires one to be confirmed by eye on any new machine (lab
+     * tooling, not shipped — see repo history). That is why this comment names a DATE and a
+     * WITNESS rather than saying it works. */
     if (process.platform === 'win32') {
       const xml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       const q = s => String(s).replace(/'/g, "''"); // PowerShell single-quote escape

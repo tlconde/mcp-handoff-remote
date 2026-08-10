@@ -39,6 +39,55 @@ function targetNames(s) {
   if (s && s.native_ref && typeof s.native_ref.name === 'string') out.push(s.native_ref.name);
   return out;
 }
+/* THE DELIVERY SENTENCE, EXTRACTED SO IT CAN BE TESTED WITHOUT SPAWNING ANYTHING.
+ *
+ * Every branch below is doctrine written as user-facing copy, and each one was paid for:
+ *
+ *   relay        — A12. It used to read "Started a turn in X — no tap needed": an effect of the
+ *                  operation just performed, asserted as history, in the tool result the sender
+ *                  repeats to the user. Never measured — the relay is detached and fire-and-forget,
+ *                  so a dispatch proves a process started and NOTHING about whether ListAgents
+ *                  found the target or SendMessage delivered. While the launchd-PATH defect stood,
+ *                  no process started at all, so the sentence was not merely unverified but false
+ *                  every time. Say what was measured; phrase the effect as intent.
+ *   notify+stale — NEVER say "closed" here; it may well be open. Native exposes no session lineage
+ *                  (parentUuid is null across a resume), so a resumed terminal we have not heard
+ *                  from is unknowable from outside. Say that, and say the two-step out loud.
+ *   notify/store — DIFFERENT FACTS, so different sentences. 'notify' means a human was told.
+ *                  'store' means nobody was told and the mail waits on someone happening to look.
+ *                  Reporting them identically is what let a silent degrade hide for a whole
+ *                  platform (Windows had no notify rung at all and said nothing). Neither claims a
+ *                  turn started, because neither did.
+ *   remote       — UNREACHABLE is its own outcome, not a flavour of the generic line, and the
+ *                  difference is a promise. A record owned by another device has native_ref NULL by
+ *                  design, so no rung is ever attempted. The old fallback said "It arrives when
+ *                  that conversation next checks", which nothing in any build could cause; two
+ *                  messages went to a remote record on that promise. Not `held` — held implies a
+ *                  holder that might release, and there is none. Not a refusal either: the durable
+ *                  write is correct and BECOMES deliverable the instant an agent claims the record,
+ *                  so refusing would fix a sentence by breaking the feature.
+ *
+ * WHY IT IS A FUNCTION NOW. This chain lived inline in the send handler, so the only way to reach
+ * a branch was to drive the whole send path with a real wake result — which is exactly why the CI
+ * seam returned woke:true, and therefore why the seam LIED. The lying seam existed to make
+ * untestable copy testable. Extracting it is the seam fix's completion: leaving the pressure that
+ * created the lie would leave the lie's cause. Pure, no state, no I/O — every sentence assertable
+ * byte-for-byte without a subprocess. Coverage went 1-of-8 to 8-of-8 in the same change.
+ */
+function deliveryNoteFor(woke, dest, windowName) {
+  if (woke && woke.tier === 'relay') return `Asked "${windowName}" to start a turn (relay dispatched — not yet confirmed; if it does not pick up, the message is waiting in its inbox). `;
+  if (woke && woke.tier === 'channel') return `Delivered straight into "${windowName}" — no tap needed. `;
+  if (woke && woke.tier === 'notify' && woke.stale_binding) {
+    return `"${windowName}" could not be verified as open — its identity pointer is stale, which is what a resume looks like from outside${woke.candidates ? ` (${woke.candidates} live session(s) in that workspace; I will not guess which)` : ''}. Notified instead; opening it heals the binding and the next send wakes it with no tap. `;
+  }
+  if (woke && woke.tier === 'notify') return `"${windowName}" is closed — a notification went out naming that window. Nothing has started there; opening it delivers the message. `;
+  if (woke && woke.tier === 'store') return `"${windowName}" is closed and no notification could be sent — the message is stored; say anything in that window and it arrives on the next turn. `;
+  if (dest && dest.remote && !dest.native_ref) {
+    return `Stored for "${dest.title}" on ${dest.remote.host}. NOT IN FLIGHT: no transport leg can reach that device yet, so nothing will cause it to be read. It drains when an agent on ${dest.remote.host} claims that record. `;
+  }
+  return `It arrives when that conversation next checks. `;
+}
+
 /** Substring match on any addressable name. */
 function matchesName(s, q) {
   const t = String(q == null ? '' : q).trim().toLowerCase();
@@ -914,48 +963,7 @@ async function callTool(name, args, ctx, core) {
     // The user's name for it, not the process's. Native `name` is nameSource:"derived" and
     // drifts per process (d1 -> d9); the title is what they typed and would type again.
     const windowName = dest.title || (dest.native_ref && dest.native_ref.name);
-    let deliveryNote;
-    /* A12, IN CODE. This line used to read "Started a turn in X — no tap needed": an effect
-     * of the operation just performed, asserted as history, in the tool result the sender
-     * repeats to the user. It was never measured — the relay is detached and fire-and-forget,
-     * so a dispatch tells us a process started and NOTHING about whether ListAgents found the
-     * target or SendMessage delivered. And while the launchd-PATH defect stood, no process
-     * started at all, so the sentence was not merely unverified but false, every time.
-     * Say what was measured; phrase the effect as intent. */
-    if (woke && woke.tier === 'relay') deliveryNote = `Asked "${windowName}" to start a turn (relay dispatched — not yet confirmed; if it does not pick up, the message is waiting in its inbox). `;
-    else if (woke && woke.tier === 'channel') deliveryNote = `Delivered straight into "${windowName}" — no tap needed. `;
-    else if (woke && woke.tier === 'notify' && woke.stale_binding) {
-      // NEVER say "closed" here — it may well be open. Native exposes no session lineage
-      // (parentUuid is null across a resume), so a resumed terminal we have not heard from
-      // since is unknowable from outside. Say that, and say the two-step out loud.
-      deliveryNote = `"${windowName}" could not be verified as open — its identity pointer is stale, which is what a resume looks like from outside${woke.candidates ? ` (${woke.candidates} live session(s) in that workspace; I will not guess which)` : ''}. Notified instead; opening it heals the binding and the next send wakes it with no tap. `;
-    // The notification rung was removed 2026-08-09, so this line stopped promising a ping that
-    // no longer fires. It names where the mail IS and the one action that drains it, which is
-    // what the reader can act on — a closed window is a fact, not a failure.
-    /* Two closed-target outcomes, and they are DIFFERENT FACTS, so they get different sentences.
-     * 'notify' means a human was told a message is waiting. 'store' means nobody was told and the
-     * mail waits on someone happening to look. Reporting them identically is what let a silent
-     * degrade hide for a whole platform (Windows had no notify rung at all and said nothing).
-     * Neither sentence claims a turn started, because neither did. */
-    } else if (woke && woke.tier === 'notify') deliveryNote = `"${windowName}" is closed — a notification went out naming that window. Nothing has started there; opening it delivers the message. `;
-    else if (woke && woke.tier === 'store') deliveryNote = `"${windowName}" is closed and no notification could be sent — the message is stored; say anything in that window and it arrives on the next turn. `;
-    /* UNREACHABLE is its own outcome, not a flavour of the generic line, and the difference is a
-     * promise. A record owned by another device has native_ref NULL by design -- the mint refuses
-     * to assert one -- so the wake gate below never fires and no rung is attempted. The old
-     * fallback then told the sender "It arrives when that conversation next checks", which nothing
-     * in any build could cause. Measured: two messages were sent to a remote record on that
-     * promise, one of them explaining that the mail would wait because nothing could reach it.
-     * Both cannot be true.
-     *
-     * It is NOT `held`. Held implies a holder that might release. There is none -- this is stored
-     * with no leg that can ever clear it until an agent claims the record. And it is NOT a refusal:
-     * the durable write is correct and BECOMES deliverable the instant one does, so refusing it
-     * would fix a sentence by breaking the feature. The distinction to preserve is between "this
-     * will never work" and "nothing can carry this yet" -- the second is a true statement about
-     * the present with a defined way out, and the copy names that way out. */
-    else if (dest.remote && !dest.native_ref) deliveryNote =
-      `Stored for "${dest.title}" on ${dest.remote.host}. NOT IN FLIGHT: no transport leg can reach that device yet, so nothing will cause it to be read. It drains when an agent on ${dest.remote.host} claims that record. `;
-    else deliveryNote = `It arrives when that conversation next checks. `;
+    const deliveryNote = deliveryNoteFor(woke, dest, windowName);
     const successorNote = succVia
       ? `Delivered via successor of "${succVia.from.title}" (${succVia.from.id}) — that record was superseded${succVia.hops > 1 ? ` through ${succVia.hops} links` : ''}; its history stays there, delivery follows the live one. `
       : '';
@@ -2285,6 +2293,7 @@ function formatSessionCandidates(sessions, st) {
 
 module.exports = {
   namedOrPinned, callTool, MIGRATED,
+  deliveryNoteFor,
   targetNames, matchesName, matchesNameExact, filterByName,
   age, clipText, settledDestIds, offerIsPending, offerStateOf, resolveLiveNativeId, setTerminalTitle,
   sessionRecap, sessionCarrierNote, sessionLinkNote, formatSessionCandidates,

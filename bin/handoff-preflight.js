@@ -66,15 +66,22 @@ async function main() {
   if (!available) return finish(false);
 
   // ---- dispatch the real thing ----
+  /* THE TASK ASKS FOR THE REPORT, because the check below tests for one. The first version said
+   * "do exactly one thing and then stop", and then scored the worker red for not calling
+   * report_progress — penalising it for obeying. A false negative in the tool whose whole job is to
+   * tell you which link is broken is worse than no check: it spends the reader's trust on noise.
+   * Two links, so two instructions. */
   const task = [
     'PREFLIGHT — this is a no-op acceptance test of the dispatch chain, not real work.',
     '',
-    'Do exactly one thing and then stop:',
-    `  Write the file ${JSON.stringify(markerPath)} containing exactly this line:`,
-    `  ${MARKER_TEXT}`,
+    'Do exactly two things, in order, then stop:',
+    `  1. Write the file ${JSON.stringify(markerPath)} containing exactly this line:`,
+    `     ${MARKER_TEXT}`,
+    '  2. Call report_progress with a one-line confirmation that you wrote it.',
     '',
     'Do not create, modify or delete any other file. Do not run tests. Do not commit anything.',
-    'If you cannot write that file, say plainly which step blocked you and stop.',
+    'If you cannot do either step, say plainly which one blocked you and stop — naming the broken',
+    'link IS the useful outcome here, and is worth more than working around it.',
   ].join('\n');
 
   const res = await core.handleApi('POST', '/api/workers', {}, {
@@ -130,10 +137,18 @@ async function main() {
 
   /* Reporting is a SEPARATE link from doing. A worker that did the work and could not report it is
    * a different failure from one that did nothing, and conflating them is how barrier 5 read as
-   * barrier 2 for an hour. */
-  const progressed = await workerReported(workerId);
+   * barrier 2 for an hour.
+   *
+   * POLLED, NOT SAMPLED ONCE, because the marker lands BEFORE the report: the worker writes the
+   * file, then calls report_progress. Checking the instant the marker appeared scored a red on a
+   * worker that went on to report seconds later — asserting a value at a moment it could not yet be
+   * true. That is the third defect this tool has had in its own checks, after a vacuous brief
+   * assertion and a task whose wording contradicted what it scored, and all three shared one shape:
+   * the checker was wrong about the world, not the world about the checker. A preflight that cries
+   * wolf spends the trust it exists to earn. */
+  const progressed = await waitFor(() => workerReported(workerId), 45000);
   link('worker reported progress back to the store', progressed,
-    progressed ? '' : 'no progress message on the record — report_progress may be ungranted or unreachable');
+    progressed ? '' : 'no progress message after 45s — report_progress may be ungranted or unreachable');
 
   return finish(!!content);
 }
@@ -156,6 +171,19 @@ async function workerReported(workerId) {
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/** Poll a predicate until true or the budget runs out. Returns the last value, so a false is a
+ *  measured false rather than an impatient one. */
+async function waitFor(fn, budgetMs, everyMs = 2000) {
+  const until = Date.now() + budgetMs;
+  let last = false;
+  do {
+    last = await fn();
+    if (last) return last;
+    await sleep(everyMs);
+  } while (Date.now() < until);
+  return last;
+}
 
 function finish(ok) {
   const broken = links.filter(l => !l.ok);

@@ -177,6 +177,11 @@ self-installs slash commands under `.claude/`. Both are gitignored. If either sh
   eleven-hour-old code with a healthy growing log; a measurement reading `none` because *we* never
   emitted the field; a "self-restarting" deploy whose self-restart lives only in the unmirrored
   copy. Run the three lines before saying anything is live.
+
+  The operative form is a question rather than a virtue — the habit that catches this is not care,
+  it is asking **"which process is serving this, and when did it start?"** before believing any
+  measurement or deployment claim. Both lanes working on this codebase made the same mistake on the
+  same day, in their own repos, and both were caught by that question rather than by being careful.
 - **A healthy artifact is not a live pipeline. Verify the producer, not the product.** A relay
   served eleven-hour-old code while its access log grew with well-formed lines of real traffic,
   missing the one field a decision depended on — absent, not malformed, which reads as "no data

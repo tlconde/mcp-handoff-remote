@@ -459,7 +459,19 @@ function renderHandoffMd(env, session, target) {
 
 /* ---------------- domain ---------------- */
 function createSession({ surface, title }) {
-  const s = { id: id('sess'), surface, title: title || 'Untitled', created_at: now(), messages: [], decisions: [], artifacts: [], open_items: [], archived: false };
+  /* SURFACE-TYPED IDS. sess_chat_… / sess_code_… / sess_cowork_… / sess_design_… rather than one
+   * opaque sess_… for everything. It is legibility where legibility pays: the id is what a human
+   * pastes and what a wrong target hides in, and several of this week's misroutes would have been
+   * obvious on sight.
+   *
+   * THE PREFIX IS ASSERTED, NEVER VERIFICATION, and nothing may branch on it as if it were a trust
+   * class. sess_code_… claims a code surface; only CLI registration VERIFIES one, and that fact
+   * lives on the record's status where it always has. Someone will eventually be tempted to read
+   * the prefix as provenance — this comment exists to make that a deliberate choice rather than an
+   * easy one.
+   *
+   * Existing ids stay valid: matching is exact-string, so nothing is rewritten or migrated. */
+  const s = { id: id('sess_' + (surface || 'x')), surface, title: title || 'Untitled', created_at: now(), messages: [], decisions: [], artifacts: [], open_items: [], archived: false };
   db.sessions[s.id] = s;
   return s;
 }

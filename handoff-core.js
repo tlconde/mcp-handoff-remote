@@ -244,11 +244,46 @@ function autoReceipt() {
 }
 
 /* ---------------- environment probes ---------------- */
+/* WHERE `claude` ACTUALLY IS — resolved, never inherited from PATH.
+ *
+ * This is the SAME DEFECT the wake tier found and fixed on 2026-08-09, in a second code path that
+ * nobody swept. There, a bare spawn('claude') under launchd's minimal PATH (/usr/bin:/bin:/usr/sbin:
+ * /sbin) threw ENOENT on every wake and silently disabled the entire relay rung; `claude` lives in
+ * ~/.local/bin, which is not on it. bin/handoff-wake.js gained claudeBinPath() and the tier came
+ * back to life.
+ *
+ * The worker launcher kept the bare name. Found 2026-08-10 when a dispatched worker came back
+ * "prepared but NOT auto-launched (claude CLI not found on this machine)" while the binary sat at
+ * ~/.local/bin/claude the whole time. Fixing a defect in one call site does not fix it in the
+ * others — the same lesson as fixing a class at one layer, and the remedy is the same: grep for the
+ * pattern, not the incident.
+ *
+ * Resolution order matches the wake tier deliberately, so the two agree about which binary is
+ * "claude" and a machine with several cannot have them disagree. */
+let _claudeBin;
+function claudeBin() {
+  if (process.env.HANDOFF_CLAUDE_BIN) return process.env.HANDOFF_CLAUDE_BIN;
+  if (_claudeBin !== undefined) return _claudeBin;
+  const candidates = [
+    path.join(os.homedir(), '.local', 'bin', 'claude'),
+    '/opt/homebrew/bin/claude',
+    '/usr/local/bin/claude',
+  ];
+  for (const p of candidates) { try { if (fs.existsSync(p)) return (_claudeBin = p); } catch (_) {} }
+  try {
+    const found = spawnSync('which', ['claude'], { encoding: 'utf8' }).stdout;
+    const t = (found || '').trim();
+    if (t) return (_claudeBin = t);
+  } catch (_) { /* not on this PATH either */ }
+  return (_claudeBin = null);
+}
 let _cli = null;
 function claudeCliAvailable() {
   if (_cli !== null) return _cli;
   if (process.env.HANDOFF_NO_CLI) return (_cli = false);
-  try { _cli = spawnSync('claude', ['--version'], { timeout: 5000 }).status === 0; }
+  const bin = claudeBin();
+  if (!bin) return (_cli = false);
+  try { _cli = spawnSync(bin, ['--version'], { timeout: 5000 }).status === 0; }
   catch (_) { _cli = false; }
   return _cli;
 }
@@ -257,7 +292,7 @@ function mcpRegistered() {
   if (_mcpReg !== null) return _mcpReg;
   if (!claudeCliAvailable()) return (_mcpReg = false);
   try {
-    const r = spawnSync('claude', ['mcp', 'list'], { timeout: 10000, encoding: 'utf8' });
+    const r = spawnSync(claudeBin() || 'claude', ['mcp', 'list'], { timeout: 10000, encoding: 'utf8' });
     _mcpReg = r.status === 0 && /\bhandoff\b/.test(r.stdout || '');
   } catch (_) { _mcpReg = false; }
   return _mcpReg;
@@ -268,7 +303,7 @@ const COMPACT_PROMPT = 'Compact this session into 2-3 sentences a successor agen
 async function llmSummarize(text) {
   if (claudeCliAvailable()) {
     try {
-      const r = spawnSync('claude', ['-p', COMPACT_PROMPT + text, '--output-format', 'text'], { timeout: 90000, encoding: 'utf8' });
+      const r = spawnSync(claudeBin() || 'claude', ['-p', COMPACT_PROMPT + text, '--output-format', 'text'], { timeout: 90000, encoding: 'utf8' });
       if (r.status === 0 && r.stdout && r.stdout.trim()) return r.stdout.trim();
     } catch (_) {}
   }
@@ -953,7 +988,9 @@ async function doLaunch(s, b) {
   }
   const ALLOWED = process.env.HANDOFF_ALLOWED_TOOLS ||
     'Read,Write,Edit,Glob,Grep,Bash,mcp__handoff__get_handoff,mcp__handoff__get_decisions,mcp__handoff__report_progress,mcp__handoff__return_to_origin';
-  const child = spawn('claude', ['-p', '--session-id', nativeId, PROMPT, '--output-format', 'text', '--allowedTools', ALLOWED],
+  // Resolved, not inherited — this is the actual worker LAUNCH, and a bare name here is what made
+  // a dispatch come back "prepared but NOT auto-launched" while the binary sat in ~/.local/bin.
+  const child = spawn(claudeBin() || 'claude', ['-p', '--session-id', nativeId, PROMPT, '--output-format', 'text', '--allowedTools', ALLOWED],
     { cwd: dir, env: { ...process.env, HANDOFF_SESSION_ID: s.id } });
   let out = '';
   child.stdout.on('data', d => { out += d; if (out.length > 20000) out = out.slice(-20000); });
@@ -1460,7 +1497,7 @@ async function handleApi(method, p, query, b) {
 
 module.exports = {
   handleApi, HOME, PREFS, OPS, FULL_THRESHOLD, SURFACES, NAMES,
-  claudeCliAvailable, mcpRegistered, ops, autoReceipt, getPrefs, setPref, resolveAutosend,
+  claudeCliAvailable, claudeBin, mcpRegistered, ops, autoReceipt, getPrefs, setPref, resolveAutosend,
   artifactCap, artifactBlock, buildBrief, fencedBlock,
   /* Exported ONLY so the suite can assert the id invariant FIRES. handleApi calls load() at the
    * top of every operation, so an in-memory id mutation is wiped before any save can see it —

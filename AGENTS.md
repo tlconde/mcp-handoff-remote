@@ -164,6 +164,15 @@ self-installs slash commands under `.claude/`. Both are gitignored. If either sh
   for the delivered receipt, ask a human whether the notification appeared. Where no receipt exists
   — Windows toasts, `osascript` — say so and name the human as the receipt rather than implying
   one.
+- **A healthy artifact is not a live pipeline. Verify the producer, not the product.** A relay
+  served eleven-hour-old code while its access log grew with well-formed lines of real traffic,
+  missing the one field a decision depended on — absent, not malformed, which reads as "no data
+  yet" rather than "this producer cannot emit it". Then the corrected log answered
+  `mcp-session=none` on every line, which looked like a finding about the client and was a fact
+  about **us**: the server assigns that id and ours never did, so there was nothing for a client to
+  echo. Twice in one hour, the artifact looked fine and the pipeline was not connected. Before
+  reading a measurement, confirm the thing producing it is running the code you think it is and is
+  capable of producing the value at all.
 - **Assert the value, not the shape.** A test that accepts "some value came back" passes while the
   mechanism it guards is broken. Twice in one day the difference between asserting a *specific
   honest value* and asserting a shape was the only thing standing between a fix and its own

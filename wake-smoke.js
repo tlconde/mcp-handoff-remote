@@ -345,6 +345,25 @@ test('relay binary: an absolute path is used, not the bare name off PATH', () =>
     assert.ok(require('path').isAbsolute(s.calls[0].bin), `relay must spawn an absolute path, got: ${s.calls[0].bin}`);
     assert.ok(fs.existsSync(s.calls[0].bin), 'and that path must actually exist on this machine');
   }
+  /* THE SILENT SKIP ABOVE IS DELIBERATELY LEFT, AND HERE IS THE REASONING, because it looks like
+   * the exact defect this suite spent a day hunting.
+   *
+   * An `else` asserting WHY nothing spawned was proposed, written, and MEASURED — and it is dead
+   * code on every platform. This suite writes `peer_verbs: true` into its own capability file at
+   * module scope (see the header), precisely so these tests do not depend on the host OS default.
+   * So the gate can never refuse INSIDE this suite, `s.calls.length` is always truthy, and the
+   * else is unreachable on macOS, Linux and native Windows alike. `lili` proved it by instrumenting
+   * rather than by trusting a green total: `BRANCH-PROBE: s.calls.length=1 -> IF`.
+   *
+   * The case that else was written for IS covered, platform-independently, by the dedicated test
+   * below — 'capability says NO peer verbs → rung 2 REFUSES, never spawns, and names the reason',
+   * which forces `peer_verbs: false` via HANDOFF_HOME and asserts `/no peer verbs/` travels.
+   *
+   * What genuinely remains uncovered is narrow: this test overrides HANDOFF_CLAUDE_BIN to null, so
+   * on a machine with NO `claude` installed, resolution returns null, nothing spawns, and the
+   * absoluteness check skips in silence. No seat in this fleet can exercise that — we all have the
+   * binary — and an assertion nobody can run is the thing we are trying to abolish, not a fix for
+   * it. Recorded as a known gap rather than shipped as an unexercised guard. */
 }));
 
 test('relay binary: HANDOFF_CLAUDE_BIN still overrides', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir, HANDOFF_CLAUDE_BIN: '/tmp/fake-claude' }, () => {

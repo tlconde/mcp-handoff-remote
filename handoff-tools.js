@@ -1808,7 +1808,30 @@ async function callTool(name, args, ctx, core) {
      * Foreign mail is COUNTED AND REPORTED rather than silently skipped, because "you have no
      * mail" and "you have mail you may not read" are different facts, and hiding the second is how
      * this stayed invisible. */
-    const HERE = require('os').hostname();
+    /* A REMOTE CALLER'S HOST IS NOT os.hostname(), AND THE TOOL RUNS ON THE STORE'S MACHINE.
+     *
+     * The ownership filter below asks "is this record mine", and for a LOCAL seat os.hostname() is
+     * the honest answer. For a caller arriving over the relay it is the opposite of the answer:
+     * the tool executes inside the daemon on the store host, so os.hostname() names the MAC while
+     * the caller is a laptop. Scoping a remote drain by that value would hand a peer this
+     * machine's mail — the same defect being fixed here, pointed the other way.
+     *
+     * The relay knows the caller is remote (ctx.remote) and knows nothing about which device it
+     * is: it passes `sender_class: 'asserted'` and an account, never a host. So a remote caller
+     * must SAY which host it is, exactly as agent_heartbeat already requires, and gets the same
+     * treatment — the claim is asserted, not verified, and it is refused whole rather than guessed
+     * at. Absence of a verifiable caller is not permission to drain someone's inbox. */
+    const isRemoteCaller = !!(ctx && ctx.remote);
+    const claimedHost = args && args.host ? String(args.host).trim() : null;
+    if (isRemoteCaller && !claimedHost) {
+      return `REFUSED: this call arrived over the relay, so which machine is asking cannot be established — ` +
+        `and the store host's own name is NOT the answer, it is this tool's machine rather than yours. ` +
+        `Nothing was read and nothing was marked read.\n\n` +
+        `Pass host:"<this machine's os.hostname()>" to drain the records that declare it. The claim is ` +
+        `ASSERTED, exactly as agent_heartbeat's is — which is why it is refused whole rather than guessed: ` +
+        `a wrong guess here reads someone else's mail AND issues them a read receipt for it.`;
+    }
+    const HERE = claimedHost || require('os').hostname();
     const declaredHostOf = s => (s.remote && s.remote.host) || (s.native_ref && s.native_ref.host) || null;
     let sessions = Object.values(st.sessions).filter(s => !s.archived && s.surface === surface);
     const foreign = sessions.filter(s => {

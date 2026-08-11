@@ -875,6 +875,29 @@ async function callTool(name, args, ctx, core) {
     return `RESOLVED → [${d.surface}] "${d.title}"${term}${undeliverable}\nsession_id: ${d.id}\n\n` +
       `Now call send_message with session_id:"${d.id}". Check the title above is the conversation you meant — this is the only point at which a wrong target is free to correct.`;
   }
+  if (name === 'retire_session') {
+    /* The verb is deliberately NOT addressable by title. Retirement is irreversible, so it takes
+     * an id the caller already holds — the same reasoning that keeps `succeeds` unsearchable. A
+     * by-name retirement is one ambiguous substring away from ending the wrong record forever. */
+    if (!args || !args.session_id) throw new Error('session_id required — retirement is irreversible and is never resolved from a name');
+    const authority = String((args && args.authority) || '').trim();
+    const body = {
+      authority,
+      reason: args.reason,
+      attestation: args.attestation,
+      successor_id: args.successor_id,
+      by_session_id: ctx && ctx.session_id ? ctx.session_id : null,
+      by_display: (args && args.by_display) || (ctx && ctx.title) || null,
+    };
+    const r = await call('POST', `/api/sessions/${args.session_id}/retire`, {}, body);
+    if (r && r.error) {
+      return `REFUSED (${r.error}): ${r.detail || ''}${r.links ? `\nActive links: ${r.links.join(', ')}` : ''}`;
+    }
+    const succ = r.successor_id ? `\nSuccessor recorded: ${r.successor_id} — sends addressed to the retired id will resolve forward to it.` : `\nNo successor recorded, so sends to this id will be REFUSED rather than redirected.`;
+    return `Retired ${r.id}.\nAuthority: ${r.retired.authority} (evidence: ${r.retired.evidence_class})${r.retired.by_display ? `, carried by ${r.retired.by_display}` : ''}.\nReason: ${r.retired.reason}${succ}` +
+      (r.unread_left_in_place ? `\n\n⚠ ${r.unread_left_in_place} unread message(s) REMAIN ON THE RETIRED RECORD and were not moved. Moving someone's mail is a write nobody asked for — re-send them deliberately if they still matter.` : '') +
+      `\n\nThe record keeps its id and its whole history. It is gone from resolution and pickers; include_retired shows it again.`;
+  }
   if (name === 'send_message') {
     if (!args || !args.message) throw new Error('message required');
     const st = await call('GET', '/api/state');
@@ -901,6 +924,20 @@ async function callTool(name, args, ctx, core) {
     if (!dest || dest.archived) {
       return `REFUSED: no live conversation with session_id "${args.session_id}"${dest ? ' (it is archived)' : ''}. ` +
         `Nothing was sent. Re-resolve with resolve_conversation — ids are stable, so a missing one means the conversation is gone, not renamed.`;
+    }
+    /* A RETIRED RECORD REFUSES, AND THE REFUSAL CARRIES ITS ENDING.
+     *
+     * Only reached when there is NO successor — a retirement WITH one is redirected by the walk
+     * above, which is the whole reason retirement reuses `superseded_by` instead of inventing a
+     * second field. So this is the genuine dead end, and the copy has to do the work a successor
+     * would otherwise do: say WHEN it ended, WHO ended it, and ON WHOSE AUTHORITY, so the sender
+     * can tell "this seat moved" from "this seat is over" without asking anyone. */
+    if (dest.retired) {
+      const r = dest.retired;
+      return `REFUSED: "${dest.title}" was RETIRED on ${String(r.at).slice(0, 19)} by ${r.by_display || 'an unnamed seat'} (authority: ${r.authority}) — reason: ${r.reason}. ` +
+        `Nothing was sent, and no successor was recorded, so there is nowhere to redirect this. ` +
+        `The record and its history remain readable; retirement is an ending, not an erasure. ` +
+        `If this thread continued somewhere, resolve that conversation by name and send there.`;
     }
     if (args.surface && dest.surface !== args.surface) {
       return `REFUSED: session_id "${args.session_id}" is on ${dest.surface}, not ${args.surface}. Nothing was sent — the id and the surface disagree, and the id wins only when you meant it.`;
@@ -2224,8 +2261,17 @@ function otherLiveClaimants(uuid, myPid) {
  * recommended one. Half a migration: sends resolved correctly while every list still pointed
  * at a record whose binding was dead. The superseded record stays readable — its history is
  * the reason it exists — it simply stops being selectable. */
-function isTargetable(s) {
-  return !!s && !s.archived && !s.superseded_by;
+/* RETIRED RECORDS LEAVE RESOLUTION, and this one function is why that is cheap: every by-name
+ * path funnels through here, so a retired record stops being addressable everywhere at once
+ * rather than in the places someone remembered to check.
+ *
+ * `include_retired` shows them again, because "gone" and "hidden" must stay distinguishable — a
+ * record that has ended still has a history someone will need to read, and a store that cannot
+ * show you an ending is as unhelpful as one that pretends there wasn't one. */
+function isTargetable(s, opts) {
+  if (!s || s.archived || s.superseded_by) return false;
+  if (s.retired && !(opts && opts.include_retired)) return false;
+  return true;
 }
 /* Walk the append-only successor chain over a state snapshot — the tools-layer twin of
  * handoff-core's resolveSuccessor. Capped and cycle-checked: a looping lineage must refuse,
@@ -2352,6 +2398,7 @@ function formatSessionCandidates(sessions, st) {
 
 module.exports = {
   namedOrPinned, callTool, MIGRATED,
+  isTargetable,   // exported for the retirement suite: the one chokepoint every by-name path uses
   deliveryNoteFor,
   targetNames, matchesName, matchesNameExact, filterByName,
   age, clipText, settledDestIds, offerIsPending, offerStateOf, resolveLiveNativeId, setTerminalTitle,

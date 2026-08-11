@@ -226,6 +226,22 @@ const TOOLS = [
     }
   },
   {
+    name: 'retire_session',
+    description: 'END a record permanently: it leaves resolution, pickers and candidate lists, and sends to it are refused. NOT deletion and NOT archiving — the id and the whole history survive forever, and there is deliberately NO un-retire, because an append-only log with a reversible state is not append-only. Use when a seat is superseded, a device renames itself, or a swept carrier needs an honest ending. Takes a session_id you already hold, never a title: retirement is irreversible and one ambiguous substring must not be able to end the wrong record. Pass successor_id when the thread continued elsewhere — sends to the retired id then resolve FORWARD to it instead of refusing. Refused if the record has ACTIVE LINKS (retiring it would strand a transaction someone is waiting on) or is already retired (the first ending is the true one). Unread mail is REPORTED, never moved.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'Exact record id to retire. Never resolved from a name.' },
+        authority: { type: 'string', enum: ['self', 'operator'], description: '"self" = this record\'s own seat ending itself. "operator" = the human\'s word, relayed by you as a courier — requires attestation. There is no third option: one seat may not end another\'s record.' },
+        reason: { type: 'string', description: 'Why it ended, in a sentence. Required — a record ending without a stated reason is an unexplained gap in an append-only log.' },
+        attestation: { type: 'string', description: 'REQUIRED for authority:"operator" — her words, verbatim. An unquoted claim of her authority is not evidence of it.' },
+        successor_id: { type: 'string', description: 'The record that continues this thread, if any. Written to superseded_by, so every existing successor-walk resolves forward to it.' },
+        by_display: { type: 'string', description: 'Who is carrying out the retirement, for the provenance record. Defaults to this session.' },
+      },
+      required: ['session_id', 'authority', 'reason'],
+    }
+  },
+  {
     name: 'withdraw_handoff',
     description: 'Retract a handoff you sent that has NOT been picked up yet (offer state: offered → withdrawn; it vanishes from the receiver\'s pending list, and any return link closes). Too late once the handshake happened — a completed transaction cannot be withdrawn; talk to that conversation with send_message instead. Addressed by title like everything else.',
     inputSchema: {

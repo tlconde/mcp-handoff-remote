@@ -2157,6 +2157,98 @@ async function handleApi(method, p, query, b) {
       save();
       return { code: 200, payload: { id: s.id, archived: s.archived } };
     }
+    /* RETIREMENT — an ENDING, recorded. Not deletion, and not archiving either.
+     *
+     * Archiving is reversible curation: a record vanishes from lists and comes back with
+     * {archived:false}. Retirement is an identity statement about a record that should never be
+     * addressed again — a device renamed itself, a seat was superseded, a sweep closed a carrier.
+     * Those need three things archiving does not have: PROVENANCE (who ended it, on what
+     * authority, on what evidence), IRREVERSIBILITY (an append-only log with a reversible state is
+     * not append-only), and a SUCCESSOR so the refusal can say where to go instead.
+     *
+     * THE SUCCESSOR IS `superseded_by`, THE FIELD THAT ALREADY EXISTS. Adoption already writes it
+     * and resolveSuccessor already walks it, so retirement reuses that seam rather than adding a
+     * second answer to one question. A record can therefore be retired INTO its replacement and
+     * every existing successor-walk keeps working with no changes.
+     *
+     * WHO MAY RETIRE — exactly two, and the caller must say which:
+     *   'self'     the record's own seat, ending itself
+     *   'operator' her word, relayed by a named seat. The seat is a COURIER and the event says so:
+     *              authority is hers, `by_display` records who carried it, and `attestation`
+     *              quotes her verbatim. Provenance that omits the courier cannot be audited later.
+     * Anything else is refused. A third seat retiring another's record is identity corruption with
+     * better manners.
+     *
+     * TWO REFUSALS THAT MATTER MORE THAN THE HAPPY PATH:
+     *   - a record with ACTIVE LINKS cannot be retired. Retirement must never strand a transaction
+     *     someone is waiting on; close it honestly first, which the failure path already supports.
+     *   - already-retired is refused rather than silently re-stamped, because the FIRST ending is
+     *     the true one and a second write would quietly replace its provenance.
+     *
+     * UNREAD MAIL IS REPORTED, NEVER MOVED. The payload names the count. Relocating someone's mail
+     * is a write nobody asked for, and it would make this event a lie about what happened to it. */
+    if ((m = p.match(/^\/api\/sessions\/([^/]+)\/retire$/)) && method === 'POST') {
+      const s = db.sessions[m[1]]; if (!s) return { code: 404, payload: { error: 'not found' } };
+      if (s.retired) {
+        return { code: 409, payload: { error: 'already_retired', detail: `retired ${s.retired.at} by ${s.retired.by_display || 'unknown'} (${s.retired.authority}). The first ending is the true one; re-stamping it would replace its provenance.`, retired: s.retired } };
+      }
+      const authority = String(b.authority || '');
+      if (!['self', 'operator'].includes(authority)) {
+        return { code: 400, payload: { error: 'authority must be "self" (the record\'s own seat) or "operator" (her word, relayed). No third party may retire a record.' } };
+      }
+      if (authority === 'operator' && !String(b.attestation || '').trim()) {
+        return { code: 400, payload: { error: 'operator authority requires an attestation — her words, verbatim. An unquoted claim of her authority is not evidence of it.' } };
+      }
+      if (!String(b.reason || '').trim()) return { code: 400, payload: { error: 'reason required — a record ending without a stated reason is an unexplained gap in an append-only log' } };
+      const active = Object.values(db.links).filter(l => l.status === 'active' && (l.origin === s.id || l.dest === s.id));
+      if (active.length) {
+        return { code: 409, payload: { error: 'active_links', detail: `${active.length} active transaction(s) involve this record — retiring it would strand them. Close them honestly first (resolve, or return_to_origin with outcome "failed"), then retire.`, links: active.map(l => l.id) } };
+      }
+      if (b.successor_id) {
+        const succ = db.sessions[b.successor_id];
+        if (!succ) return { code: 404, payload: { error: `successor ${b.successor_id} not found — a successor pointer to nothing is worse than none` } };
+        if (succ.id === s.id) return { code: 400, payload: { error: 'a record cannot succeed itself' } };
+        if (succ.retired) return { code: 409, payload: { error: `successor ${succ.id} is itself retired — that would point the living at a second ending` } };
+        s.superseded_by = succ.id;   // the field adoption already uses; successor-walks keep working
+      }
+      const unread = (s.messages || []).filter(x => !x.read_at && x.role !== 'system').length;
+      s.retired = {
+        at: now(),
+        by_session_id: b.by_session_id || null,
+        by_display: b.by_display || null,
+        authority,
+        evidence_class: authority === 'self' ? 'own-seat' : 'attested-by-operator',
+        attestation: authority === 'operator' ? String(b.attestation).slice(0, 2000) : null,
+        reason: String(b.reason).slice(0, 500),
+      };
+      ops('session_retired', { session: s.id, authority, by: b.by_display || null, successor: s.superseded_by || null, unread });
+      save();
+      return { code: 200, payload: {
+        id: s.id, retired: s.retired, successor_id: s.superseded_by || null, unread_left_in_place: unread,
+        note: unread ? `${unread} unread message(s) remain on this record and were NOT moved. Re-send them deliberately to the successor if they still matter.` : null,
+      } };
+    }
+    /* Agents retire too, and for the same reason: a stale agent record kept asserting ownership of
+     * a session record after the machine had renamed itself, so the store would have served a
+     * retired session still claimed by a live-looking agent. Retiring the sessions and leaving the
+     * agents is a half-migration that reads as consistent. */
+    if ((m = p.match(/^\/api\/agents\/([^/]+)\/retire$/)) && method === 'POST') {
+      const a = db.agents[decodeURIComponent(m[1])]; if (!a) return { code: 404, payload: { error: 'no such agent record' } };
+      if (a.retired) return { code: 409, payload: { error: 'already_retired', retired: a.retired } };
+      const authority = String(b.authority || '');
+      if (!['self', 'operator'].includes(authority)) return { code: 400, payload: { error: 'authority must be "self" or "operator"' } };
+      if (authority === 'operator' && !String(b.attestation || '').trim()) return { code: 400, payload: { error: 'operator authority requires an attestation' } };
+      if (!String(b.reason || '').trim()) return { code: 400, payload: { error: 'reason required' } };
+      a.retired = {
+        at: now(), by_display: b.by_display || null, authority,
+        evidence_class: authority === 'self' ? 'own-seat' : 'attested-by-operator',
+        attestation: authority === 'operator' ? String(b.attestation).slice(0, 2000) : null,
+        reason: String(b.reason).slice(0, 500),
+      };
+      ops('agent_retired', { host: a.host || a.id, authority, owned: Object.keys(a.sessions || {}).length });
+      save(db);
+      return { code: 200, payload: { host: a.host || a.id, retired: a.retired, owned_at_retirement: Object.keys(a.sessions || {}).length } };
+    }
     if ((m = p.match(/^\/api\/sessions\/([^/]+)\/pending$/)) && method === 'GET') {
       const s = db.sessions[m[1]]; if (!s) return { code: 404, payload: { error: 'not found' } };
       // summarize=1 opts INTO the model, same grammar as the read path's opt-in.

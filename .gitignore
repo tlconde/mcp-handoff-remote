@@ -35,6 +35,15 @@ docs-seed/
 # Build/test surface — how the plugin was proven, not the plugin. Kept on disk for local
 # work; never ships. (gitignore stops FUTURE adds; untrack tracked copies separately.)
 *-smoke.js
+# PLATFORM-SENSITIVE SMOKES SHIP (ADR-0002 amendment 2026-08-11). Admission test, verbatim: a test
+# enters the shipped set only if its ANSWER DIFFERS BY PLATFORM. These four do; every other suite
+# stays lab-side above, because a macOS pass genuinely vouches for those. A fresh clone previously
+# contained ZERO tests, so the Windows peer could not verify code it was asked to verify — and the
+# suites it most needed are exactly the ones this machine cannot answer for.
+!wake-smoke.js
+!notify-smoke.js
+!capability-probe-smoke.js
+!role-smoke.js
 protocol-test.js
 drift-eval.js
 forwarder-runbook.js

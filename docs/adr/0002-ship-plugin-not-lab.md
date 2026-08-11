@@ -77,3 +77,82 @@ scrub from prepared-and-waiting onto the critical path.
   needs proofs without trials — not inconvenience.
 - A shipped doc is found claiming something only a lab-side test asserts. That is the signal the
   boundary has gone soft in prose while holding in git.
+
+---
+
+## Amendment, 2026-08-11 — platform-sensitive smokes ship
+
+**Status:** accepted. Requested by the operator ("I want the HP laptop to run tests as well"),
+proposed as an understand-first slice, ruled by the review seat.
+
+### The admission test, and it is the whole amendment
+
+> **A test enters the shipped set only if its answer DIFFERS BY PLATFORM.**
+
+Not "important tests". Not "tests we would like strangers to see". Any future candidate argues
+against that sentence or it stays lab-side.
+
+**Four qualify today:** `wake-smoke.js`, `notify-smoke.js`, `capability-probe-smoke.js`,
+`role-smoke.js`. Everything else — mcp, daemon, retire, inbox-ownership, agentenv,
+heartbeat-shape, delivery-e2e, protocol-test, drift-eval — stays exactly where this ADR put it,
+because a macOS pass genuinely does vouch for those.
+
+### What forced it
+
+A fresh clone contained **zero** tests, so the fleet's Windows peer could not run a single suite
+against code it was being asked to verify. The cost is **inverted**: the suites that most need a
+Windows run are precisely the ones a macOS pass cannot vouch for.
+
+Measured on 2026-08-11: `claudeBinPath()` was POSIX-only — three unix paths, a `which` fallback
+that does not exist on Windows, and `~/.local/bin/claude` with no `.exe`. It returned **null on
+every Windows machine**, latent only because the capability gate refuses rung 2 first. It was found
+by the peer **reading the function by hand**, because behavioural verification through injectable
+seams was the only route available to it. There was no suite for it to run.
+
+Its fix carries an edge macOS can never exercise: `where claude` returns three hits there, and a
+`.cmd` shim cannot be spawned by Node ≥18.20 without `shell:true`, which would push the multi-line
+quoted relay prompt through `cmd.exe` and mangle it. A garbled wake would have read as a model
+problem. That edge now has a regression test driven through an injected seam, so it runs anywhere.
+
+### Riders
+
+1. **Single source or nothing.** The four are **runtime-lane**: this repo leads them, the mirror
+   carries them like runtime, and the notebook's copies are deleted rather than kept in parallel.
+   Two writable copies of `wake-smoke.js` is the drift disease this project spent an evening curing
+   in the other direction; an amendment must not mint a new case of it. *Mechanics chosen:*
+   deletion, not a pointer file — a pointer is itself an artifact that goes stale, and the mirror
+   already carries runtime by name.
+2. **Scrub scope.** The four fall under the pre-commit scrub check from the commit that tracks
+   them. This is automatic rather than aspirational: the check greps `git diff --cached
+   --name-only`, so tracking is enrolment. They were read as class-shaped once; the check keeps
+   that true under future edits.
+3. **The peer run is the acceptance test.** All four run on the Windows machine and the results are
+   reported, **including expected reds** — the notify Windows rung has never been suite-tested
+   anywhere, and its first run is a finding either way. A red there is the amendment proving its
+   worth on day one, not a failure of it.
+
+### Ownership table gains a row
+
+| artifact | owner |
+|---|---|
+| platform-sensitive smokes (the four) | **this repo** |
+
+### Considered and rejected
+
+**Ship the lab out of band** — copy the smokes to peers by hand. Fast, and unversioned on the
+receiving machine, which is exactly how that peer's plugin cache came to be pinned at `0.1.1` with
+no update path. It reproduces a defect removed the same evening.
+
+**Leave it.** Peers verify behaviourally; Windows correctness is never suite-proven. This is
+coherent and was put on the record as possibly the fleet's real position: if peers should not be
+verifying shipped runtime at all — Windows is the store path only, wake tier out of scope — then
+there is no gap and this amendment is unnecessary. It was rejected because the operator asked for
+the opposite, and because a Windows-only defect in shipped runtime was caught this week only by a
+human reading a function.
+
+### The honest cost
+
+Four more files in a repo intended to go public, carrying test copy that names measured failures.
+They were read for that and are class-shaped: no secrets, no real domains, no session ids. And the
+tree looks marginally more like a lab, which is the thing this ADR was reacting to. Accepted,
+because the alternative is a platform that cannot be tested at all.

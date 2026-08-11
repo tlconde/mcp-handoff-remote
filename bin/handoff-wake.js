@@ -250,11 +250,21 @@ function sessionsDir() {
 let CLAUDE_BIN_CACHE;
 let CLAUDE_BIN_WHY = null;
 const IS_WIN = process.platform === 'win32';
-function claudeBinPath() {
-  if (process.env.HANDOFF_CLAUDE_BIN) return process.env.HANDOFF_CLAUDE_BIN;
-  if (CLAUDE_BIN_CACHE !== undefined) return CLAUDE_BIN_CACHE;
+/* INJECTABLE, so the Windows branch is testable from a Mac.
+ *
+ * The `.exe`-over-shim preference is the part most worth a regression test and the part hardest to
+ * reach: it only runs on win32, and the fleet's only Windows machine had no suite to run (that is
+ * what the ADR-0002 amendment is fixing). It was found by a peer reading the function by hand —
+ * once. `opts` lets a test drive the win32 path anywhere: {isWin, whichOutput, exists}. Production
+ * passes nothing and behaves exactly as before. */
+function claudeBinPath(opts) {
+  const o = opts || {};
+  const isWin = o.isWin !== undefined ? o.isWin : IS_WIN;
+  const exists = o.exists || (p => { try { return fs.existsSync(p); } catch (_) { return false; } });
+  if (!opts && process.env.HANDOFF_CLAUDE_BIN) return process.env.HANDOFF_CLAUDE_BIN;
+  if (!opts && CLAUDE_BIN_CACHE !== undefined) return CLAUDE_BIN_CACHE;
   const home = os.homedir();
-  const candidates = IS_WIN ? [
+  const candidates = isWin ? [
     path.join(home, '.local', 'bin', 'claude.exe'),
     path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'Programs', 'claude', 'claude.exe'),
   ] : [
@@ -262,23 +272,27 @@ function claudeBinPath() {
     '/opt/homebrew/bin/claude',
     '/usr/local/bin/claude',
   ];
-  for (const p of candidates) { try { if (fs.existsSync(p)) return (CLAUDE_BIN_CACHE = p); } catch (_) {} }
+  for (const p of candidates) { if (exists(p)) return (CLAUDE_BIN_CACHE = opts ? p : (CLAUDE_BIN_CACHE = p)); }
   try {
-    const out = require('child_process')
-      .execFileSync(IS_WIN ? 'where' : 'which', ['claude'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+    const out = o.whichOutput !== undefined ? o.whichOutput : require('child_process')
+      .execFileSync(isWin ? 'where' : 'which', ['claude'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
     /* `where` prints EVERY match, one per line, and the first is not necessarily usable — prefer a
      * directly-spawnable .exe over anything else. `which` prints a single line, so this is a no-op
      * on POSIX. */
     const hits = out.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-    const exe = IS_WIN ? hits.find(h => /\.exe$/i.test(h)) : hits[0];
-    if (exe) return (CLAUDE_BIN_CACHE = exe);
-    if (IS_WIN && hits.length) {
+    const exe = isWin ? hits.find(h => /\.exe$/i.test(h)) : hits[0];
+    if (exe) { if (!opts) CLAUDE_BIN_CACHE = exe; return exe; }
+    if (isWin && hits.length) {
       CLAUDE_BIN_WHY = `only a shell shim was found (${hits[0]}); a .cmd/.bat cannot carry the multi-line relay prompt`;
-      return (CLAUDE_BIN_CACHE = null);
+      if (!opts) CLAUDE_BIN_CACHE = null;
+      return null;
     }
   } catch (_) { /* not on this PATH either */ }
-  return (CLAUDE_BIN_CACHE = null);
+  if (!opts) CLAUDE_BIN_CACHE = null;
+  return null;
 }
+/** Why the resolver refused, when it refused for a reason rather than an absence. */
+function claudeBinWhy() { return CLAUDE_BIN_WHY; }
 
 /* Is the target an OPEN Code session we can relay into?
  *
@@ -610,7 +624,7 @@ function wake(delivery, opts) {
   }
 }
 
-module.exports = { wake, nativeReach, relayPrompt, notifyCopy, WAKE_LINE, claudeBinPath, probePeerVerbs, recordPeerVerbs, peerVerbsAvailable };
+module.exports = { wake, nativeReach, relayPrompt, notifyCopy, WAKE_LINE, claudeBinPath, claudeBinWhy, probePeerVerbs, recordPeerVerbs, peerVerbsAvailable };
 
 // CLI: node handoff-wake.js '<json-delivery>'  (thin harness for the live proof / manual runs)
 if (require.main === module) {

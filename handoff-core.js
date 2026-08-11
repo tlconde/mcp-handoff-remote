@@ -1866,6 +1866,21 @@ async function handleApi(method, p, query, b) {
         s = createSession({ surface: 'code', title });
         s.native_ref = { kind: 'claude-code', session_id: b.native_id, cwd: b.cwd || null, resume: `claude --resume ${b.native_id}` };
       }
+      /* THE DEVICE THE SEAT REPORTED, recorded so ownership can be decided.
+       *
+       * A record with no declared host is LOCAL to the store host — correct for a terminal on this
+       * machine, and wrong for a remote seat, which then owns nothing and cannot drain its own
+       * inbox. It is written on refresh as well as mint, because a seat that registered before this
+       * existed must be able to fix itself by registering again rather than by minting a duplicate.
+       *
+       * Self-reported only: this value arrives with the seat's own cli_uuid. The operator's ruling
+       * is that a device string is the seat's to state and nobody else's, so it is stored verbatim —
+       * no normalising, no case-folding, no repair. HPlaptop and HP_LAPTOP are two devices. */
+      if (b.host) {
+        s.native_ref = s.native_ref || { kind: 'claude-code', session_id: b.native_id };
+        s.native_ref.host = String(b.host);
+        s.native_ref.host_provenance = 'self-reported';
+      }
       /* A CORRUPTING WRITE IS WORSE THAN A WRONG READ (§I2b family, 2026-08-09).
        * Reads already refuse ambiguity: the wake tier will not pick between two live
        * processes claiming one uuid. WRITES did not, and last-writer-won — which is exactly

@@ -2121,7 +2121,25 @@ async function callTool(name, args, ctx, core) {
       return 'REFUSED: no CLI uuid in this environment (CLAUDE_CODE_SESSION_ID unset) — identity records are minted only from a real Claude Code session, never guessed (I2). ' +
         'This is a LOCAL mount, so the variable really is absent here; if you expected it to be set, the mount was spawned from an environment that lacks it.';
     }
+    /* THE SELF-REPORTED HOST MUST REACH THE RECORD, and until now it did not.
+     *
+     * register_session accepted `host`, the schema promised the record would "declare the device
+     * that owns it", and the value was parked on ctx.peer_host — a field written in exactly one
+     * place and read in none. It never entered identitySession's body, so the record declared no
+     * host at all.
+     *
+     * The symptom was displaced and blamed the caller: registration reported SUCCESS, and the
+     * failure surfaced later in a different verb as "No records declare host X" — which reads as
+     * "you passed the wrong host" rather than "your registration discarded it". The peer that found
+     * it nearly went hunting for the right hostname string, which after four records retired today
+     * for exactly that would have ended in GUESSING a host: the one act the operator's ruling
+     * forbids. A defect that pushes the caller toward the forbidden move is worse than one that
+     * merely fails.
+     *
+     * Only a SELF-REPORTED host is threaded — it arrives with the seat's own cli_uuid, which is the
+     * one thing no third party can invent. */
     const r = await identitySession(ctx, core, {
+      host: (ctx && ctx.peer_host) || undefined,
       title: args ? args.title : undefined, role: args ? args.role : undefined,
       // Adoption is EXPLICIT or it does not happen: the caller passes an id it already holds
       // from its own thread. Nothing here searches for candidates — a helpful suggestion

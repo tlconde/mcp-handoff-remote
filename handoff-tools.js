@@ -512,7 +512,25 @@ async function callTool(name, args, ctx, core) {
    * registers again, which is precisely how a (device, title) key ends up occupied by records of
    * unknown provenance — the trap the peer identified minutes earlier from the other end. Reported
    * by the seat it happened to, immediately after its own successful bind. */
-  const remoteClaimedUuid = (ctx && ctx.remote && args && args.cli_uuid) ? String(args.cli_uuid) : null;
+  /* SCOPED TO THE IDENTITY VERBS, and the scoping is the point.
+   *
+   * This was applied to EVERY verb, which is least-privilege backwards. A remote caller's cli_uuid
+   * is ASSERTED — I2 refuses to mint an identity from it precisely because nothing verifies it — so
+   * letting it set ctx.cli_uuid globally handed an unverified value to every decision downstream
+   * that reads ctx.cli_uuid as "a trusted local terminal".
+   *
+   * The concrete leak, found by a third seat reading the source: send_message's Code→Code redirect
+   * is gated on ctx.cli_uuid and, when it fires, NAMES THE TARGET'S LIVE NATIVE TERMINAL. So a
+   * caller holding a valid tenant credential could hand in any string and read internal topology
+   * back — using the very value the identity path treats as untrustworthy. I2's discipline applied
+   * to minting and not to disclosure, and I introduced that gap today by hoisting this too far.
+   *
+   * These three verbs need it because they are ABOUT the caller's own identity and can do nothing
+   * else with it. Every other verb keeps the old behaviour: a remote caller has no cli_uuid, which
+   * is true. */
+  const IDENTITY_VERBS = new Set(['register_session', 'whoami', 'status']);
+  const remoteClaimedUuid = (ctx && ctx.remote && IDENTITY_VERBS.has(name) && args && args.cli_uuid)
+    ? String(args.cli_uuid) : null;
   if (remoteClaimedUuid) {
     ctx = Object.assign({}, ctx, {
       cli_uuid: remoteClaimedUuid,

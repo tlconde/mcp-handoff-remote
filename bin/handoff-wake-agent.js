@@ -267,7 +267,25 @@ async function cycle(state) {
         } catch (e) { woke = { woke: false, tier: 'threw', error: (e && e.message) || String(e) }; }
         /* Report the RUNG, never a delivery. A notification means a human was told; it does not
          * mean anything was read, and this agent has no way to observe that it was. */
-        log(`"${r.title}" — rung: ${(woke && woke.tier) || 'none'}${woke && woke.notify ? `, notification ${woke.notify.fired ? 'fired' : 'did NOT fire'}` : ''}`);
+        /* THE OUTCOME IS ALWAYS STATED, INCLUDING WHEN IT IS UNKNOWN.
+         *
+         * This read `woke.notify`. wake() returns the notification result under `notified`. So the
+         * suffix never printed — not once — and the line said only "rung: notify" while a toast
+         * was genuinely appearing on a real machine. The same seam-shape disagreement as the
+         * heartbeat reply, silent in the same way, found the same way: by a human watching the
+         * screen and the log disagreeing.
+         *
+         * It is the SAFE direction of the failure — a rung earning success it did not claim,
+         * rather than claiming success it did not earn — and it is still wrong, for the reason
+         * this line exists: on Windows there is no delivered-list, so this log is the ONLY artifact
+         * that could distinguish "fired" from "silently did nothing", and it was empty exactly
+         * there. An absent suffix must never be mistaken for an absent notification. */
+        const n = woke && (woke.notified || woke.notify);
+        const outcome = n
+          ? `, notification ${n.fired ? 'FIRED' : 'did NOT fire'} (${n.channel || 'unknown channel'})` +
+            (n.fired && n.confirmed === false ? ' — appearance UNCONFIRMED, this platform offers no delivered-list; only a human can confirm it' : '')
+          : ', notification outcome NOT REPORTED by the wake layer — treat as unknown, not as failure';
+        log(`"${r.title}" — rung: ${(woke && woke.tier) || 'none'}${outcome}`);
       }
       /* "I OWN NOTHING" AND "I AM MISNAMED" MUST NOT PRINT THE SAME LINE.
        *

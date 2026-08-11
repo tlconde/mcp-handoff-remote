@@ -1833,6 +1833,21 @@ async function callTool(name, args, ctx, core) {
     }
     const HERE = claimedHost || require('os').hostname();
     const declaredHostOf = s => (s.remote && s.remote.host) || (s.native_ref && s.native_ref.host) || null;
+
+    /* READING MAIL CANCELS ITS DELIVERY, AND THAT MUST BE VISIBLE.
+     *
+     * For as long as delivery was broken, hand-polling the inbox was the only way to get mail. Now
+     * that it works, the same habit destroys the thing it was compensating for: every human
+     * check_inbox between a send and the next agent cycle silently pre-empts a notification. The
+     * sender still gets a receipt, the agent finds nothing to deliver, and NOBODY IS WRONG — which
+     * is exactly why it is invisible. It happened within minutes of delivery first working: a
+     * message sent expressly to be delivered was consumed by a routine check before any agent ran.
+     *
+     * Recorded during the drain, because afterwards there is nothing left to notice. Reported by
+     * the peer whose delivery it ate. */
+    const agents = (st && st.agents) || {};
+    const AGENT_FRESH_MS = 60 * 60 * 1000;
+    const preempted = [];
     let sessions = Object.values(st.sessions).filter(s => !s.archived && s.surface === surface);
     const foreign = sessions.filter(s => {
       const h = declaredHostOf(s);
@@ -1865,6 +1880,13 @@ async function callTool(name, args, ctx, core) {
       // round-trip never reads as just another queued message.
       const fresh = freshMessages(s);
       if (fresh.length) {
+        /* Was an agent about to deliver this? Recorded BEFORE the drain, because after it there is
+         * nothing left to notice — which is exactly why this collision was invisible. */
+        const h = declaredHostOf(s);
+        const ag = h ? agents[h] : null;
+        if (ag && !ag.retired && ag.last_seen && (Date.now() - Date.parse(ag.last_seen)) < AGENT_FRESH_MS) {
+          preempted.push({ host: h, title: s.title });
+        }
         returnTotal += fresh.filter(m2 => m2.kind === 'resume_summary').length;
         out.push(`"${s.title}":\n` + fresh.map(m2 =>
           m2.kind === 'resume_summary'
@@ -1888,11 +1910,17 @@ async function callTool(name, args, ctx, core) {
     }
     /* Named, never silent. A count with the hosts attached lets a human see instantly that mail
      * exists and is not theirs — which is the fact that was invisible while this drained it. */
-    const foreignNote = foreign.length
+    const foreignNote = (foreign.length
       ? `\n\n${foreign.length} conversation(s) on this surface hold unread mail for ANOTHER host ` +
         `(${[...new Set(foreign.map(declaredHostOf))].join(', ')}) — not shown and NOT marked read. ` +
         `Only an agent on that machine may drain them.`
-      : '';
+      : '') + (preempted.length
+      ? `\n\n⚠ THIS CONSUMED MAIL A LIVE AGENT HAD NOT YET DELIVERED — ${preempted.length} record(s) on ` +
+        `${[...new Set(preempted.map(p => p.host))].join(', ')}, whose agent last reported within the ` +
+        `hour. Reading mail CANCELS its delivery: that agent will now find nothing to notify about, ` +
+        `the sender already has a read receipt, and nobody is wrong. Use peek_inbox to look WITHOUT ` +
+        `consuming when you only want to know whether something is waiting.`
+      : '');
     /* AN EMPTY ANSWER MUST NAME THE QUESTION IT ANSWERED.
      *
      * "No unread messages or returns for code conversations." was returned both by a call scoped

@@ -1422,7 +1422,21 @@ async function callTool(name, args, ctx, core) {
   }
   if (name === 'list_conversations') {
     const st = await call('GET', '/api/state');
-    let sessions = Object.values(st.sessions).filter(s => !s.archived);
+    /* RETIRED RECORDS LEAVE THE LIST TOO, not only resolution.
+     *
+     * Retirement removed them from `isTargetable`, which every by-name resolution funnels through,
+     * and this listing filtered on `archived` alone — so an ENDED record still appeared here, and
+     * the verb whose job is "what is addressable" advertised things that are not.
+     *
+     * Measured cost, immediately: a peer whose context had been cleared listed conversations to
+     * work out which record was its own, saw THREE seats with one name where only one is live, and
+     * correctly refused to claim any of them rather than guess. Retirement exists to make that
+     * question answerable; a listing that ignores it puts the ambiguity back.
+     *
+     * `include_retired` shows them again, same as elsewhere — an ended record still has a history
+     * someone will need to read, and "gone" must stay distinguishable from "hidden". */
+    let sessions = Object.values(st.sessions)
+      .filter(s => !s.archived && (!s.retired || (args && args.include_retired)));
     if (args && args.surface) sessions = sessions.filter(s => s.surface === args.surface);
     /* PASSIVE RECORDS ARE ADDRESSABLE BUT NOT OFFERED — R1 as amended. Minting on first contact
      * gives a read-only conversation an inbox (the case that decided it: a chat did useful

@@ -336,7 +336,21 @@ const fs = require('fs');
  * relay carrying stale code is saying. Any non-zero value satisfies the plist's SuccessfulExit:false
  * contract; a named one says WHY to whoever reads the exit status. */
 const RELAY_STALE_EXIT_CODE = 75;
-const RELAY_WATCHED = [__filename, require.resolve('./handoff-contract')];
+/* AND handoff-tool-schemas.js, WHICH THIS FILE REQUIRES AT LINE ~146 AND ADVERTISES TO EVERY
+ * CLIENT. The watch list covered this process's own file and the contract — the two things the
+ * fix above was written about — and stopped there, so the SCHEMA it serves could change on disk
+ * and never reach a client. Exactly the shape described above, one dependency out.
+ *
+ * Found from the outside, by a peer, which is the only place it was visible: it reconnected its
+ * connector on instruction, re-fetched the tool definition, and reported that a parameter added
+ * hours earlier still was not advertised. From here everything looked deployed — the file had the
+ * property, the daemon had restarted, the tests passed. The relay had loaded the schema at boot
+ * and no longer had any reason to look again.
+ *
+ * The lesson the daemon already learned is that a watch list must cover the whole code surface a
+ * process SERVES, not the file it happens to live in. This is that lesson applied to the one
+ * dependency that is visible to strangers. */
+const RELAY_WATCHED = [__filename, require.resolve('./handoff-contract'), require.resolve('./handoff-tool-schemas')];
 const relayMtime = f => {
   try { return fs.statSync(f).mtimeMs; }
   catch (e) {

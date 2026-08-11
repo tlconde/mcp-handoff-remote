@@ -1881,7 +1881,26 @@ async function callTool(name, args, ctx, core) {
         `(${[...new Set(foreign.map(declaredHostOf))].join(', ')}) — not shown and NOT marked read. ` +
         `Only an agent on that machine may drain them.`
       : '';
-    if (!out.length) return `No unread messages or returns for ${surface} conversations.${foreignNote}`;
+    /* AN EMPTY ANSWER MUST NAME THE QUESTION IT ANSWERED.
+     *
+     * "No unread messages or returns for code conversations." was returned both by a call scoped
+     * to a host that owns nothing AND by the older build that dropped `host` entirely and checked
+     * the whole surface. Byte-identical. So a peer verifying the scoping got a sentence that was
+     * true in two different worlds and distinguished neither, and could only establish which one
+     * it was in by running a SECOND call and comparing — which is exactly the round trip and the
+     * two-worlds analysis this sentence caused.
+     *
+     * getState already refuses this shape one layer down: `sessions: null` rather than `{}`,
+     * because "cannot enumerate" and "none exist" are different facts. Same rule here. Naming the
+     * host makes the empty answer stand on its own as evidence, and would have made the old
+     * build's silent drop visible on the FIRST call rather than the third. Proposed by the peer
+     * that paid for the ambiguity. */
+    if (!out.length) {
+      const scope = claimedHost
+        ? `no records declare host "${claimedHost}" on surface ${surface}`
+        : `no unread messages or returns for ${surface} conversations on this host ("${HERE}")`;
+      return `${scope.charAt(0).toUpperCase()}${scope.slice(1)}.${foreignNote}`;
+    }
     return `Unread messages:\n${out.join('\n')}` + foreignNote +
       (returnTotal ? `\n\n${returnTotal} of these ${returnTotal === 1 ? 'is a' : 'are'} completed RETURN(s) — the work came back and the transaction is closed. Report it as delivered, not as still owed.` : '');
   }

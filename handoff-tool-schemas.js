@@ -13,6 +13,8 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
+        cli_uuid: { type: 'string', description: 'REQUIRED when calling over the relay from another machine, and unnecessary locally. This tool runs on the STORE HOST and cannot see your CLAUDE_CODE_SESSION_ID, so without it you will be told you are unidentified even when your seat IS registered — and a seat that believes its registration failed re-registers, which is how duplicate records get made. Pass the same value you registered with.' },
+        cli_pid: { type: 'number', description: 'Optional, alongside cli_uuid: your process id, so a contested uuid resolves by fact rather than preference.' },
         surface: { type: 'string', enum: ['chat', 'cowork', 'design', 'code'], description: 'Optional hint for phrasing the next action.' }
       },
       additionalProperties: false
@@ -325,7 +327,9 @@ const TOOLS = [
   {
     name: 'whoami',
     description: 'Which session am I, and what do I call it? Returns one line: the human name of THIS terminal, its role, surface and workspace. Use when the user asks "which session is this", "what is this one called", or is deciding where to send something. Naming is one word via register_session (slash: /name build).',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false }
+    inputSchema: { type: 'object', properties: {
+        cli_uuid: { type: 'string', description: 'REQUIRED when calling over the relay from another machine, and unnecessary locally. This tool runs on the STORE HOST and cannot see your CLAUDE_CODE_SESSION_ID, so without it you will be told you are unidentified even when your seat IS registered — and a seat that believes its registration failed re-registers, which is how duplicate records get made. Pass the same value you registered with.' },
+        cli_pid: { type: 'number', description: 'Optional, alongside cli_uuid: your process id, so a contested uuid resolves by fact rather than preference.' },}, additionalProperties: false }
   },
   {
     name: 'register_session',

@@ -501,6 +501,26 @@ async function callTool(name, args, ctx, core) {
   // notification a stale binding caused. That is what makes the two-step close: send #1
   // notifies, the drain heals, send #2 wakes with zero taps.
   await touchBinding(ctx, core);
+  /* THE READ PATH MUST SEE WHAT THE WRITE PATH JUST WROTE.
+   *
+   * register_session learned to take a caller-supplied cli_uuid, so a remote seat can bind itself.
+   * whoami and status did not, so they went on answering "unidentified" about a terminal that was
+   * now, in fact, identified — a sentence true of the STORE HOST and false about the machine
+   * asking, which is the third time today that exact shape has shipped.
+   *
+   * It is the worse half. A seat told it is unidentified concludes the registration FAILED and
+   * registers again, which is precisely how a (device, title) key ends up occupied by records of
+   * unknown provenance — the trap the peer identified minutes earlier from the other end. Reported
+   * by the seat it happened to, immediately after its own successful bind. */
+  const remoteClaimedUuid = (ctx && ctx.remote && args && args.cli_uuid) ? String(args.cli_uuid) : null;
+  if (remoteClaimedUuid) {
+    ctx = Object.assign({}, ctx, {
+      cli_uuid: remoteClaimedUuid,
+      cli_pid: (args && args.cli_pid) || null,
+      cwd: (args && args.cwd) || null,
+      identity_evidence: 'cli-uuid-asserted-by-peer-mount',
+    });
+  }
   if (name === 'status') return buildStatusReport(args || {}, ctx, core);
   /* whoami — status's first line, alone. The same answer, without making you read a health
    * report to get it. One source: it IS the status line, sliced, so the two can never drift. */

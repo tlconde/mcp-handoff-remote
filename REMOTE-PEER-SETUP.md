@@ -212,15 +212,35 @@ for the acceptance test above, not for convenience.
 
 ## Step 4 — First run, in the foreground, watched
 
-Read the token out of Credential Manager into the process environment for this session only:
+**NEVER put the token on a command line.** Not `$env:X='eyJ…'; node …`, not as an argument, not
+inline in a script you run. A command line is readable by any process that can enumerate processes,
+and it lands in your shell transcript and in whatever logs that shell. This is written here because
+it happened: a peer session passed a live Access JWT inline on every send for an evening, and the
+operator caught it rather than the tooling.
+
+**Put the credential in `.agent-env`, which is what actually reads it.** Both consumers now load
+that file — the wake agent at startup, and the MCP mount since `ea37406` — so one file configures
+everything and no value ever transits a shell:
 
 ```powershell
-cmdkey /list:handoff-relay      # confirms it exists; does not print the secret
+# .agent-env lives beside the clone, is gitignored, and never enters the repo
+Add-Content .agent-env "HANDOFF_REMOTE_TOKEN=<paste the token here, in the editor, once>"
 
-# URL and host id come from .agent-env; only the token is pasted, and only into this window
-$env:HANDOFF_REMOTE_TOKEN = Read-Host -Prompt "paste token"
+# lock it down: strip inheritance, grant only yourself
+icacls .agent-env /inheritance:r /grant:r "$($env:USERNAME):(R,W)"
+
 node bin/handoff-wake-agent.js --once
 ```
+
+> **HONEST GAP — Credential Manager is WRITE-ONLY in everything we ship.** Step 3 has you store the
+> token with `cmdkey`, and **nothing in this project ever reads it back**: `cmdkey` cannot print a
+> secret by design, and no shipped code calls `CredRead`. Verified by grep across the runtime — there
+> is no reader on any platform, Keychain and libsecret included. So the `cmdkey` step is currently
+> **belt-and-braces storage, not a source**, and instructing you to store a secret there and then
+> asking you to paste it again is a trap this document set. `.agent-env` above is the supported path
+> until a reader ships. If you would rather keep the secret in Credential Manager only, then the
+> credential must be pasted into the editor each session — and that is the cost of the missing
+> reader, not a design choice.
 
 `--once` runs a single cycle and exits. **Run this before anything long-lived**, so the first cycle
 is watched rather than reconstructed from a log afterwards.

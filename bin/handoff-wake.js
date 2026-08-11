@@ -88,6 +88,39 @@ const WAKE_LINE = (thread, from) => from
   ? `mail from ${from} on ${thread || 'a thread'} is waiting — checking the inbox will deliver it`
   : `mail waiting on ${thread || 'a thread'} — checking the inbox will deliver it`;
 
+/* PEER-VERB CAPABILITY — refuse rung 2 where the verb does not exist, instead of reporting a
+ * dispatch that can never be honoured.
+ *
+ * MEASURED 2026-08-10, both sides, same CLI version 2.1.226: macOS has ListAgents inside a spawned
+ * one-shot; Windows does not. And `--allowedTools` granting a NONEXISTENT tool is a SILENT NO-OP —
+ * so on Windows the spawn succeeds, the peer lookup never happens, the send falls into the subagent
+ * address space, and rung 2 returns `dispatched` EVERY TIME having delivered nothing. That is this
+ * repo's founding failure shipped as a certainty rather than a risk.
+ *
+ * WHY A CACHED FILE AND NOT A LIVE PROBE. wake() is called SYNCHRONOUSLY at the send site, and a
+ * real capability probe costs a model spawn — several seconds of a caller's turn, per send. So the
+ * capability is READ, never probed inline: a JSON file in the store dir is authoritative, and the
+ * platform default applies only when nothing has been recorded. That keeps the check capability-
+ * driven rather than an OS switch — the boundary is Anthropic's and may move, and when it moves the
+ * fix is one file, not a release.
+ *
+ *   $HANDOFF_HOME/wake-capabilities.json   {"peer_verbs": true|false, "probed_at": "...", "note": "..."}
+ *
+ * To record what a machine actually has, run the probe the peer used and write the answer:
+ *   claude -p "Is a tool named ListAgents available to you? Answer yes or no." --allowedTools ListAgents
+ *
+ * The DEFAULT when unrecorded is deliberately per-platform rather than optimistic: an optimistic
+ * default reproduces the forever-lie on every un-probed Windows machine, which is the exact bug. */
+function peerVerbsAvailable() {
+  const home = process.env.HANDOFF_HOME || path.join(os.homedir(), '.claude-handoff');
+  try {
+    const raw = fs.readFileSync(path.join(home, 'wake-capabilities.json'), 'utf8');
+    const j = JSON.parse(raw);
+    if (typeof j.peer_verbs === 'boolean') return { ok: j.peer_verbs, source: 'wake-capabilities.json' };
+  } catch (_) { /* unrecorded — fall through to the platform default */ }
+  return { ok: process.platform !== 'win32', source: `platform default (${process.platform})` };
+}
+
 /* SEAM GATING — a test double must not be armable in production by one environment variable.
  *
  * THE DISTINCTION THAT MATTERS is not "is it a test hook" but "does it report success it did not
@@ -351,6 +384,18 @@ function wake(delivery, opts) {
     // authoritative confirm; this pre-check only routes relay-vs-notify.
     const rc = reach(d.native_ref);
     if (rc.open && rc.name) {
+      /* CAPABILITY GATE, BEFORE THE SPAWN. Checked here rather than after, because a spawn that
+       * cannot possibly deliver still costs a process and still returns 'dispatched' — the report
+       * is the harm, not the spawn. Degrade to notify with the reason named, so the ladder does
+       * what it does for any unreachable target and the store records WHY rather than a bare tier. */
+      const cap = peerVerbsAvailable();
+      if (!cap.ok) {
+        const nC = doNotify(Object.assign({ conversation: d.conversation || thread, meta: { session_id: d.session_id || null, from: d.from || null, surface: d.surface || 'code', window: (d.native_ref && d.native_ref.name) || null, device: d.device || null } }, notifyCopy(d)));
+        const rC = { woke: false, tier: nC && nC.fired ? 'notify' : 'store',
+          reason: `relay unavailable on this platform: no peer verbs (${cap.source})`,
+          notified: nC || null };
+        logChoice(rC); return rC;
+      }
       const model = process.env.HANDOFF_WAKE_MODEL || 'haiku';
       const bin = claudeBinPath();
       if (!bin) {

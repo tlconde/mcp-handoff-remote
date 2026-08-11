@@ -88,6 +88,27 @@ function profileFor(plat, homeDir) {
     peerVerbsPossible: !isWin,
     peerVerbsAbsenceIsConclusive: isWin,
 
+    /* WHERE SESSION SOCKETS LIVE, and it is NOT the same place on every platform. macOS uses
+     * /tmp/cc-socks; Linux uses $XDG_RUNTIME_DIR/cc-socks (measured on WSL 2 Ubuntu:
+     * /run/user/1000/cc-socks holds live sockets while /tmp/cc-socks never exists).
+     *
+     * This default was hardcoded to the macOS path inside the capability probe — one platform's
+     * path generalised into the default, in the code written to stop exactly that. It mattered
+     * most where it was most wrong: the directory branch exists for a process that inherits NO
+     * environment, which on Linux is a systemd unit, which is precisely where XDG_RUNTIME_DIR is
+     * the only correct answer. The probe would have reported INCONCLUSIVE on a machine where the
+     * feature is fully live, and gated rung 2 off. Found on WSL 2 by the peer.
+     *
+     * Read from the environment at call time rather than baked into the profile, because a daemon
+     * and an interactive session on the same machine can legitimately differ. */
+    socketDirs: () => {
+      const dirs = [];
+      if (process.env.CLAUDE_CODE_SOCKET_DIR) dirs.push(process.env.CLAUDE_CODE_SOCKET_DIR);
+      if (!isWin && process.env.XDG_RUNTIME_DIR) dirs.push(path.join(process.env.XDG_RUNTIME_DIR, 'cc-socks'));
+      if (!isWin) dirs.push('/tmp/cc-socks');
+      return dirs;
+    },
+
     /* Opening a URL or a file, for the surfaces that offer a click. */
     opener: isMac ? 'open' : isWin ? 'start' : 'xdg-open',
   };

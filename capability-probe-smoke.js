@@ -89,6 +89,40 @@ const withEnv = (env, fn) => {
       'win32 is never INCONCLUSIVE — absence there is a denial, unlike everywhere else');
   }
 
+
+  // ---- THE SOCKET DIRECTORY IS A PLATFORM FACT, NOT A CONSTANT ----
+  {
+    /* Linux keeps session sockets in $XDG_RUNTIME_DIR/cc-socks; macOS uses /tmp/cc-socks. This was
+     * hardcoded to the macOS path INSIDE the probe — one platform's path generalised into the
+     * default, in the code written to stop exactly that. It mattered most where it was most wrong:
+     * the directory branch exists for a process that inherits NO environment, which on Linux is a
+     * systemd unit, which is precisely where XDG_RUNTIME_DIR is the only correct answer. Measured
+     * on WSL 2 by the peer: /tmp/cc-socks never exists there while /run/user/1000/cc-socks holds
+     * live sockets, so the probe would have said INCONCLUSIVE on a machine where the feature works
+     * and gated rung 2 off. */
+    const { profileFor } = require('./bin/platform-profile');
+    const xdg = fs.mkdtempSync(path.join(os.tmpdir(), 'xdg-'));
+    fs.mkdirSync(path.join(xdg, 'cc-socks'));
+    fs.writeFileSync(path.join(xdg, 'cc-socks', '645.sock'), '');
+
+    const saved = process.env.XDG_RUNTIME_DIR;
+    process.env.XDG_RUNTIME_DIR = xdg;
+    const dirs = profileFor('linux').socketDirs();
+    ok(dirs[0] === path.join(xdg, 'cc-socks'),
+      'linux: $XDG_RUNTIME_DIR/cc-socks is checked FIRST — where a systemd unit would actually find them');
+    ok(dirs.includes('/tmp/cc-socks'),
+      'linux: and /tmp/cc-socks remains a fallback rather than being replaced');
+
+    const r = wake.probePeerVerbs({ platform: 'linux', socketVar: '' });
+    ok(r.peer_verbs === true && r.evidence.includes('cc-socks'),
+      'linux: the probe FINDS sockets under XDG_RUNTIME_DIR — the case that reported INCONCLUSIVE on a live machine');
+
+    if (saved === undefined) delete process.env.XDG_RUNTIME_DIR; else process.env.XDG_RUNTIME_DIR = saved;
+    ok(!profileFor('win32').socketDirs().length,
+      'win32: no socket directories at all — the platform has no such thing, and says so');
+    fs.rmSync(xdg, { recursive: true, force: true });
+  }
+
   console.log(`\ncapability-probe: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

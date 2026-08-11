@@ -157,13 +157,17 @@ function probePeerVerbs(opts) {
   if (prof.peerVerbsAbsenceIsConclusive) {
     return { peer_verbs: false, evidence: `${prof.displayName} — cross-session messaging is not offered on this platform` };
   }
-  try {
-    const dir = o.socketDir || process.env.CLAUDE_CODE_SOCKET_DIR || '/tmp/cc-socks';
-    const entries = fs.readdirSync(dir).filter(f => f.endsWith('.sock'));
-    if (entries.length) {
-      return { peer_verbs: true, evidence: `${entries.length} session socket(s) present in ${dir}` };
-    }
-  } catch (_) { /* directory absent or unreadable — inconclusive, not a denial */ }
+  /* EVERY candidate directory, because the location is a platform fact and this branch exists for
+   * a process that inherited no environment. Checking only one was the defect. */
+  const dirs = o.socketDir ? [o.socketDir] : prof.socketDirs();
+  for (const dir of dirs) {
+    try {
+      const entries = fs.readdirSync(dir).filter(f => f.endsWith('.sock'));
+      if (entries.length) {
+        return { peer_verbs: true, evidence: `${entries.length} session socket(s) present in ${dir}` };
+      }
+    } catch (_) { /* absent or unreadable — try the next, absence is not a denial */ }
+  }
   return { peer_verbs: null, evidence: 'no socket variable and no socket directory — INCONCLUSIVE from this process' };
 }
 

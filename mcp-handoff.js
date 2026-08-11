@@ -339,6 +339,72 @@ function forwardToDaemon(name, args, ctx) {
  * and a real environment variable always wins over the file. One file configures both consumers. */
 try { require('./bin/handoff-store-client'); } catch (_) { /* absent in a runtime-only tree — local mode */ }
 const PEER_URL = process.env.HANDOFF_REMOTE_URL || null;
+
+/* ABSENCE OF CONFIGURATION IS NEVER A ROLE.
+ *
+ * The peer-aware refusal below was gated on HANDOFF_REMOTE_URL being SET, so it only ever
+ * protected a machine that had already been told what it was. A peer whose .agent-env was not
+ * found — and the loader looks in cwd first, then the PACKAGE root, which for a plugin resolves
+ * inside the plugin cache rather than the repo — populated no variables, failed this test, and
+ * fell through to the local path, where it MINTED A STORE. Silence meant "home machine", so the
+ * one case that most needed a refusal got a phantom instead: a session that answers every
+ * question correctly about a universe no other machine can see. That is the artefact already
+ * autopsied at 8 records, 6 of them minted by the probes investigating it.
+ *
+ * Two seats reasoned about this path and agreed it failed closed. Neither had read to the line
+ * that gates it. So the rule is no longer "a peer must declare itself" but the symmetric one:
+ * EVERY role is declared, and silence is UNKNOWN. Unknown never mints.
+ *
+ *   peer  — HANDOFF_REMOTE_URL is set (unchanged)
+ *   host  — HANDOFF_ROLE=host, OR a store already exists here (see below)
+ *   else  — REFUSE, and create nothing
+ *
+ * THE GRANDFATHER CLAUSE IS EVIDENCE, NOT INFERENCE. An existing store/v1 is a durable artefact
+ * a human deliberately created; reading it as "this machine is the host" is not the same move as
+ * reading SILENCE that way. It also keeps every existing install working with zero declarations,
+ * which the ruling required — a store host that stops serving because a rule improved would be
+ * its own defect class. A fresh machine has no store, so it cannot grandfather itself into
+ * minting one, which is exactly the class being removed.
+ *
+ * HANDOFF_ROLE=host is the INTERIM mechanism. The ratified role-choice design makes host
+ * designation an EVENT in the store, and this defect is that design's absence felt early; when
+ * the enrollment ceremony ships, the event supersedes the env var and this comment should say so
+ * rather than leaving two answers to one question. */
+function declaredRole() {
+  if (PEER_URL) return 'peer';
+  const explicit = String(process.env.HANDOFF_ROLE || '').trim().toLowerCase();
+  if (explicit === 'host') return 'host';
+  if (explicit === 'peer') return 'peer-undeliverable';   // declared peer with no URL to reach
+  try {
+    const os = require('os'), fs = require('fs'), path = require('path');
+    const home = process.env.HANDOFF_HOME || path.join(os.homedir(), '.claude-handoff');
+    if (fs.existsSync(path.join(home, 'store', 'v1'))) return 'host';
+  } catch (_) { /* unreadable is not a declaration */ }
+  return 'undeclared';
+}
+const ROLE = declaredRole();
+function undeclaredRefusal() {
+  return `REFUSED — this machine has not declared what it is, so nothing was read and NOTHING WAS CREATED.\n\n` +
+    `There is no store here and no remote configured, and the one thing this must never do is ` +
+    `assume. Minting a local store on a guess produces a session that answers every question ` +
+    `correctly about a universe no other machine can see — which is far harder to notice than ` +
+    `this message, and has already cost one investigation.\n\n` +
+    `Declare the role:\n` +
+    `  • THIS MACHINE IS A PEER (the usual case for a second device):\n` +
+    `      set HANDOFF_REMOTE_URL (and a credential) in .agent-env beside the clone\n` +
+    `  • THIS MACHINE HOSTS THE STORE (exactly one machine may):\n` +
+    `      set HANDOFF_ROLE=host\n\n` +
+    `An existing store counts as a declaration on its own, so a machine that was already the ` +
+    `host keeps working untouched. If you are seeing this on a machine that HAS a store, then ` +
+    `HANDOFF_HOME is not pointing at it.`;
+}
+function undeliverablePeerRefusal() {
+  return `REFUSED — HANDOFF_ROLE=peer is declared but HANDOFF_REMOTE_URL is not set, so there is ` +
+    `nowhere to reach the home store. Nothing was read and NO local store was created.\n\n` +
+    `A declared peer with no address is a configuration that is half-arrived, and the failure it ` +
+    `would otherwise produce — falling back to a local store — is the exact one this refusal exists ` +
+    `to prevent. Set HANDOFF_REMOTE_URL in .agent-env beside the clone.`;
+}
 function peerRefusal(reason) {
   return `REFUSED — this machine is configured as a REMOTE PEER (HANDOFF_REMOTE_URL is set) and the ` +
     `home store could not be reached: ${reason}\n\n` +
@@ -372,7 +438,11 @@ async function callToolViaRelay(name, args) {
 
 async function callTool(name, args) {
   /* Asked FIRST, before the forwarder and before any in-process path, because both of those end at
-   * a local store. On a peer there is no correct local answer to fall back to. */
+   * a local store. On a peer there is no correct local answer to fall back to — and on a machine
+   * that has declared nothing, there is no correct answer at all. Both refusals come before any
+   * code that could create a directory, so an undeclared machine leaves no trace of having run. */
+  if (ROLE === 'undeclared') return undeclaredRefusal();
+  if (ROLE === 'peer-undeliverable') return undeliverablePeerRefusal();
   if (PEER_URL) return callToolViaRelay(name, args);
   // THE FLIP: forward every tool to the managed daemon (one socket round-trip), then apply
   // the same write-back. The daemon owns TOOL staleness (exit-on-stale), so the bridge-side

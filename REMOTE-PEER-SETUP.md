@@ -232,6 +232,46 @@ icacls .agent-env /inheritance:r /grant:r "$($env:USERNAME):(R,W)"
 node bin/handoff-wake-agent.js --once
 ```
 
+### The unattended credential — an Access service token
+
+The token above is **browser-issued and lasts exactly 86400 seconds**. A wake agent holding one
+works for a day and then reads, from the outside, as "the store is unreachable". Nothing in this
+repo can extend it: only a human at a browser can mint another. A **service token** is the
+credential Access issues for a machine, and it does not expire with a session.
+
+The **relay needs no change** — Access injects `Cf-Access-Jwt-Assertion` after *any* passing policy,
+and the relay already verifies that. Only this machine's headers differ:
+
+```powershell
+Add-Content .agent-env "HANDOFF_ACCESS_CLIENT_ID=<client id>.access"
+Add-Content .agent-env "HANDOFF_ACCESS_CLIENT_SECRET=<client secret>"
+```
+
+`CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` are honoured too — those are the names on the
+dashboard, and re-typing a secret to rename it is how secrets end up in shell history.
+
+**When both halves are present the service token wins**, for the wake agent and the MCP mount alike;
+`HANDOFF_REMOTE_TOKEN` is kept and used when they are not. **Half a pair is refused**, loudly, at
+startup: an ID with no secret does not quietly fall back to the browser token, because a machine
+that looks unattended, runs on a cookie, and stops a day later is the failure this whole document
+exists to prevent.
+
+Confirm which credential a process actually holds — the client names it rather than saying
+"credential present":
+
+```powershell
+node bin/handoff-wake-agent.js --once     # the store line names the service token or the user token
+```
+
+> **HONEST GAP — the dashboard half is not automated and is not proven here.** The client side is
+> built and tested; issuing the token and adding a **Service Auth** policy on the application are
+> manual steps in the Cloudflare dashboard, and a Service Auth policy is its own policy — adding the
+> token as an *Include* on an existing Allow policy does **not** admit it. As of this writing the
+> client path has been proven against a local test relay on both consumers, **not** against the live
+> application, and no device has been re-onboarded on it. A `403` when a service token is presented
+> is far more likely to be a missing policy than a bad token; the client's refusal message says so,
+> because the instinct is to re-mint the token and re-minting fixes nothing.
+
 > **HONEST GAP — Credential Manager is WRITE-ONLY in everything we ship.** Step 3 has you store the
 > token with `cmdkey`, and **nothing in this project ever reads it back**: `cmdkey` cannot print a
 > secret by design, and no shipped code calls `CredRead`. Verified by grep across the runtime — there
@@ -300,7 +340,9 @@ On the store's own host the same command prints instead:
 |---|---|---|
 | `cycle failed (continuing): cannot reach the relay: getaddrinfo ENOTFOUND…` | DNS, network, or the tunnel is down | Check the relay URL in a browser first. It keeps cycling rather than exiting |
 | `relay refused the credential (HTTP 401/403)` | Token missing, expired, or minted for another app | Redo step 3; Access tokens expire |
-| `cannot start: HANDOFF_REMOTE_URL is set but HANDOFF_REMOTE_TOKEN is not…` | The env var did not survive | Re-run the export line in the same window. It stops rather than polling blind |
+| `cannot start: HANDOFF_REMOTE_URL is set but no credential is…` | Neither a service token pair nor `HANDOFF_REMOTE_TOKEN` survived | Re-check `.agent-env` in the same window. It stops rather than polling blind |
+| `a service token is half-configured — …is missing` | One half of the pair is set | Set both halves or neither. It refuses on purpose; falling back to the user token would hide this until the cookie expired |
+| `relay refused the credential … presented: service-token` | Usually a missing **Service Auth** policy on the application, not a bad token | Add the Service Auth policy (an Include on an Allow does not admit a service token). Do not re-mint first — a service token does not expire |
 | `Refused: this heartbeat names N record(s) that do not belong to…` | `HANDOFF_HOST_ID` does not match how records name this machine | Fix the host id — do not change the records |
 | `peek says: (nothing waiting)` | Nothing is addressed to this machine yet | Fine. The heartbeat still goes; ask the home side to send one, then re-run |
 

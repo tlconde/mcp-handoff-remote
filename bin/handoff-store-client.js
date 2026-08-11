@@ -34,9 +34,15 @@
  *
  * Env:
  *   HANDOFF_REMOTE_URL    the relay's /mcp endpoint. Absent → local mode, and this file is inert.
- *   HANDOFF_REMOTE_TOKEN  the credential. Sent as Authorization: Bearer AND as the Access
- *                         assertion header, because the relay accepts either and a caller should
- *                         not have to know which door it came through.
+ *   HANDOFF_ACCESS_CLIENT_ID / HANDOFF_ACCESS_CLIENT_SECRET
+ *                         a Cloudflare Access SERVICE TOKEN — the unattended credential. Preferred
+ *                         over the user token whenever BOTH halves are present. Cloudflare's own
+ *                         CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET are honoured too, because
+ *                         that is what an operator has already pasted from the dashboard.
+ *   HANDOFF_REMOTE_TOKEN  the browser-issued user credential. Sent as Authorization: Bearer AND as
+ *                         the Access assertion header, because the relay accepts either and a
+ *                         caller should not have to know which door it came through. Retained, not
+ *                         deprecated: it is what every configured machine holds today.
  *   HANDOFF_REMOTE_TIMEOUT_MS  per-request ceiling (default 15000).
  */
 const https = require('https');
@@ -76,8 +82,67 @@ const LOCAL_ENV_FILE = loadLocalEnv();
 
 const TIMEOUT_MS = Number(process.env.HANDOFF_REMOTE_TIMEOUT_MS) || 15000;
 
-/** One JSON-RPC tools/call to the relay. Returns the parsed tool result text, or throws. */
-function rpc(urlStr, token, name, args, timeoutMs) {
+/* WHICH CREDENTIAL, AND WHY THERE ARE TWO.
+ *
+ * The credential every configured machine holds today is a Cloudflare Access USER JWT, browser
+ * issued and exactly 86400s long. No code makes it unattended — a wake agent holding one is a
+ * process that works for a day and then reads as "the store is unreachable". A SERVICE TOKEN is the
+ * only credential Access issues that a machine can hold without a human at a browser.
+ *
+ * The relay needs no change for it: Access injects Cf-Access-Jwt-Assertion after ANY passing
+ * policy, and the relay already verifies that. Only the client's headers differ, which is why this
+ * is a client-side slice and the dashboard half (a Service Auth policy, one token per device) is
+ * the operator's.
+ *
+ * PREFERRED WHEN PRESENT, and present means BOTH halves. A half-configured pair is REFUSED rather
+ * than quietly resolved to the user token: the failure that silence produces is a machine that
+ * looks correctly configured for a service token, runs on the cookie, and dies 24 hours later —
+ * which is indistinguishable at the point of failure from the service token itself not working.
+ * Absence of configuration is never permission; half a configuration is not either.
+ *
+ * Nothing here logs, stores, or returns a secret value: the kind is nameable, the value is not. */
+function resolveCredential(opts) {
+  const pick = (...names) => {
+    for (const n of names) {
+      const v = (opts && opts[n]) || process.env[n];
+      if (v && String(v).trim()) return String(v).trim();
+    }
+    return null;
+  };
+  const id = pick('HANDOFF_ACCESS_CLIENT_ID', 'CF_ACCESS_CLIENT_ID');
+  const secret = pick('HANDOFF_ACCESS_CLIENT_SECRET', 'CF_ACCESS_CLIENT_SECRET');
+  const token = (opts && opts.token) || pick('HANDOFF_REMOTE_TOKEN');
+
+  if (id && secret) {
+    return {
+      kind: 'service-token',
+      describe: 'Access service token (unattended; does not expire with a browser session)',
+      headers: { 'cf-access-client-id': id, 'cf-access-client-secret': secret },
+    };
+  }
+  if (id || secret) {
+    return {
+      kind: 'incomplete',
+      problem: `a service token is half-configured — ${id ? 'HANDOFF_ACCESS_CLIENT_ID is set and the SECRET is missing' : 'HANDOFF_ACCESS_CLIENT_SECRET is set and the CLIENT ID is missing'}. ` +
+        'Both halves or neither. This is refused rather than resolved to the user token, because falling back silently would give you a machine that looks unattended, runs on a browser credential, and stops working in under a day.',
+      headers: null,
+    };
+  }
+  if (token) {
+    return {
+      kind: 'user-token',
+      describe: 'browser-issued user token (expires with the Access session, ~24h)',
+      headers: { authorization: `Bearer ${token}`, 'cf-access-jwt-assertion': token },
+    };
+  }
+  return null;
+}
+
+/** One JSON-RPC tools/call to the relay. Returns the parsed tool result text, or throws.
+ *  `cred` is a credential from resolveCredential, or a bare token string (treated as the user
+ *  token) so an older caller keeps working unchanged. */
+function rpc(urlStr, cred, name, args, timeoutMs) {
+  const credential = typeof cred === 'string' ? resolveCredential({ token: cred }) : cred;
   return new Promise((resolve, reject) => {
     let u;
     try { u = new URL(urlStr); } catch (e) { return reject(new Error(`HANDOFF_REMOTE_URL is not a URL: ${e.message}`)); }
@@ -89,16 +154,28 @@ function rpc(urlStr, token, name, args, timeoutMs) {
       headers: {
         'content-type': 'application/json',
         'content-length': Buffer.byteLength(body),
-        // Both doors. The relay verifies either by the same rules; sending both spares the caller
-        // knowing which one the deployment uses, and neither is trusted for being present.
-        ...(token ? { authorization: `Bearer ${token}`, 'cf-access-jwt-assertion': token } : {}),
+        // Whichever door this machine actually holds a key to. For the user token that is both the
+        // bearer and the assertion header — the relay verifies either by the same rules, and
+        // neither is trusted for being present. For a service token it is the id/secret pair, and
+        // the bearer header is deliberately NOT also sent: Access exchanges the pair itself.
+        ...((credential && credential.headers) || {}),
       },
     }, res => {
       let buf = '';
       res.on('data', d => { buf += d; });
       res.on('end', () => {
         if (res.statusCode === 401 || res.statusCode === 403) {
-          return reject(new Error(`relay refused the credential (HTTP ${res.statusCode}) — the token is missing, expired, or minted for another application. Nothing was read.`));
+          /* NAME THE CREDENTIAL THAT WAS REFUSED. The two kinds fail for different reasons and the
+           * fixes do not overlap: a user token expires, a service token does not but needs a
+           * Service Auth policy on the application (an Include on an Allow policy does not admit
+           * it). A refusal that does not say which was presented sends the operator to the wrong
+           * half of the dashboard. */
+          const kind = credential ? credential.kind : 'no credential';
+          return reject(new Error(`relay refused the credential (HTTP ${res.statusCode}) — presented: ${kind}. ` +
+            (kind === 'service-token'
+              ? 'A service token is refused when the application has no Service Auth policy, or the token was minted for another application. It does not expire, so do not re-mint it before checking the policy.'
+              : 'The token is missing, expired, or minted for another application.') +
+            ' Nothing was read.'));
         }
         if (res.statusCode >= 400) return reject(new Error(`relay returned HTTP ${res.statusCode}: ${buf.slice(0, 200)}`));
         let parsed;
@@ -128,7 +205,7 @@ function rpc(urlStr, token, name, args, timeoutMs) {
  */
 function makeStoreClient(opts) {
   const url = (opts && opts.url) || process.env.HANDOFF_REMOTE_URL || null;
-  const token = (opts && opts.token) || process.env.HANDOFF_REMOTE_TOKEN || null;
+  const credential = resolveCredential(opts);
 
   if (!url) {
     const core = opts && opts.core ? opts.core : require('../handoff-core');
@@ -144,14 +221,21 @@ function makeStoreClient(opts) {
    * — before a cycle runs — means the operator sees one clear sentence instead of a stream of
    * per-cycle auth failures that look like the store is unreachable. Absence of configuration is
    * never permission, and it is never silently retried either. */
-  if (!token) {
-    throw new Error('HANDOFF_REMOTE_URL is set but HANDOFF_REMOTE_TOKEN is not — a remote agent cannot read the store without a credential, and will not poll blind. Set the token (see the Windows operator package) and start again.');
+  if (credential && credential.kind === 'incomplete') {
+    throw new Error(`HANDOFF_REMOTE_URL is set and ${credential.problem}`);
+  }
+  if (!credential) {
+    throw new Error('HANDOFF_REMOTE_URL is set but no credential is — a remote agent cannot read the store without one, and will not poll blind. Set either an Access service token (HANDOFF_ACCESS_CLIENT_ID + HANDOFF_ACCESS_CLIENT_SECRET, the unattended path) or HANDOFF_REMOTE_TOKEN, and start again.');
   }
 
   const call = (opts && opts.rpc) || rpc;
   return {
     mode: 'remote',
-    describe: () => `remote store via ${new URL(url).host} (credential present)`,
+    credential: credential.kind,
+    /* SAY WHICH CREDENTIAL, not merely that one exists. "credential present" was true of a machine
+     * whose token expires tonight and of one that runs unattended forever, and an operator reading
+     * a log line cannot tell those apart at the moment it matters. */
+    describe: () => `remote store via ${new URL(url).host} — ${credential.describe}`,
 
     /* WHAT THE RELAY ACTUALLY EXPOSES, measured 2026-08-10 against handoff-tool-schemas: 23 tools,
      * and NONE of them reads store state or writes an agent heartbeat. So a remote agent can do
@@ -171,7 +255,7 @@ function makeStoreClient(opts) {
      * genuinely has and marks the rest unavailable, so the caller must decide rather than be
      * misled. Absence is reported, never filled. */
     async peek(surface) {
-      return call(url, token, 'peek_inbox', { surface: surface || 'code' }, TIMEOUT_MS);
+      return call(url, credential, 'peek_inbox', { surface: surface || 'code' }, TIMEOUT_MS);
     },
     async getState() {
       const peek = await this.peek('code');
@@ -188,7 +272,7 @@ function makeStoreClient(opts) {
      * nobody exercises and everybody trusts; if the door narrows again this should break loudly,
      * not quietly degrade to the state it was written to complain about. */
     async heartbeat(beat) {
-      const text = await call(url, token, 'agent_heartbeat', {
+      const text = await call(url, credential, 'agent_heartbeat', {
         host: beat.host,
         sessions: beat.sessions || {},
         agent_version: beat.agent_version || null,
@@ -200,4 +284,4 @@ function makeStoreClient(opts) {
   };
 }
 
-module.exports = { makeStoreClient, rpc, LOCAL_ENV_FILE };
+module.exports = { makeStoreClient, rpc, resolveCredential, LOCAL_ENV_FILE };

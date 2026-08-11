@@ -346,16 +346,25 @@ function peerRefusal(reason) {
     `store here would give you a session that answers every question correctly about a universe no ` +
     `other machine can see — which is harder to notice than this message.\n\n` +
     `Fix the credential or the connection and try again:\n` +
-    `  • HANDOFF_REMOTE_TOKEN must hold a valid relay credential (see REMOTE-PEER-SETUP.md)\n` +
+    `  • this machine must hold a valid relay credential — either an Access service token\n` +
+    `    (HANDOFF_ACCESS_CLIENT_ID + HANDOFF_ACCESS_CLIENT_SECRET, which does not expire) or\n` +
+    `    HANDOFF_REMOTE_TOKEN (browser-issued, ~24h). See REMOTE-PEER-SETUP.md\n` +
     `  • the relay must be reachable at ${PEER_URL}\n` +
     `  • verify with: claude mcp list  (the remote connector should read Connected)`;
 }
 async function callToolViaRelay(name, args) {
-  const { rpc } = require('./bin/handoff-store-client');
-  const token = process.env.HANDOFF_REMOTE_TOKEN || null;
-  if (!token) return peerRefusal('HANDOFF_REMOTE_TOKEN is not set, so there is no credential to present.');
+  /* ONE CREDENTIAL RESOLVER, BOTH CONSUMERS. This path used to read HANDOFF_REMOTE_TOKEN itself,
+   * which meant a peer could be given an unattended service token and the MCP mount would still
+   * refuse for want of a browser cookie — the wake agent working while the mount does not, on the
+   * same machine, from the same .agent-env. That is the "right and undeliverable" shape again, so
+   * the mount asks the store client which credential this machine holds rather than deciding
+   * separately. */
+  const { rpc, resolveCredential } = require('./bin/handoff-store-client');
+  const credential = resolveCredential();
+  if (!credential) return peerRefusal('no relay credential is set (neither an Access service token nor HANDOFF_REMOTE_TOKEN), so there is nothing to present.');
+  if (credential.kind === 'incomplete') return peerRefusal(credential.problem);
   try {
-    return await rpc(PEER_URL, token, name, args || {}, 15000);
+    return await rpc(PEER_URL, credential, name, args || {}, 15000);
   } catch (e) {
     return peerRefusal((e && e.message) || String(e));
   }

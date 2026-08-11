@@ -1264,6 +1264,25 @@ function nativeUuidIsLive(uuid) {
     return false;
   } catch (_) { return true; }
 }
+/* Which live processes claim this uuid RIGHT NOW. The wake tier already refuses to guess
+ * when several do (a READ); this is the same question asked before a WRITE. Returns pids. */
+function liveClaimantPids(uuid) {
+  const out = [];
+  if (!uuid) return out;
+  try {
+    const os = require('os');
+    const dir = process.env.HANDOFF_NATIVE_SESSIONS_DIR || path.join(os.homedir(), '.claude', 'sessions');
+    for (const f of fs.readdirSync(dir).filter(x => x.endsWith('.json'))) {
+      try {
+        const r = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+        if (!r || r.sessionId !== uuid || !r.pid) continue;
+        try { process.kill(r.pid, 0); out.push(r.pid); }
+        catch (e) { if (e.code === 'EPERM') out.push(r.pid); }
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return out;
+}
 /* Offer-state helpers. THE DISCRIMINATOR IS THE CLAIM, NOT THE LINK'S SETTLEMENT.
  * An offer closes because a hand was shaken. How the resulting engagement later settled
  * — returned, or honestly failed — says nothing about whether the hand was shaken at all.
@@ -1829,6 +1848,29 @@ async function handleApi(method, p, query, b) {
         const title = b.title || b.native_name || ('terminal · ' + (b.cwd ? path.basename(b.cwd) : String(b.native_id).slice(0, 8)));
         s = createSession({ surface: 'code', title });
         s.native_ref = { kind: 'claude-code', session_id: b.native_id, cwd: b.cwd || null, resume: `claude --resume ${b.native_id}` };
+      }
+      /* A CORRUPTING WRITE IS WORSE THAN A WRONG READ (§I2b family, 2026-08-09).
+       * Reads already refuse ambiguity: the wake tier will not pick between two live
+       * processes claiming one uuid. WRITES did not, and last-writer-won — which is exactly
+       * how one terminal renamed another's record. Measured live: two pids in different lanes
+       * both claimed one uuid after `claude --continue`, and the second terminal's
+       * register_session overwrote the first's title. A wrong read gives a wrong answer; a
+       * wrong write corrupts the record BOTH terminals then read.
+       * So: several live claimants → REFUSE to mutate identity (title/role), name the pids,
+       * and still refresh the binding facts, which are true for whichever process asked.
+       *
+       * Only an UPDATE can corrupt. Minting is safe even when contested: the first process
+       * to register creates the record, and it is the SECOND one's attempt to rename it that
+       * destroys information. Refusing the mint too would leave a contested terminal unable
+       * to have any identity at all — punishing it for a collision it did not cause. */
+      const claimants = minted ? [] : liveClaimantPids(b.native_id);
+      if (claimants.length > 1 && (b.title !== undefined || b.role !== undefined)) {
+        ops('identity_write_refused', { session: s.id, native: b.native_id, pids: claimants, attempted_title: b.title || null });
+        return { code: 409, payload: {
+          error: 'contested_identity',
+          detail: `${claimants.length} live processes claim this session id (pids ${claimants.join(', ')}) — refusing to rename a record that another terminal may own. Start one of them as its own session (plain \`claude\`, not --continue/--resume) and name it there.`,
+          pids: claimants, id: s.id
+        } };
       }
       if (b.cwd) s.native_ref.cwd = b.cwd;
       // pid is a refreshable ATTRIBUTE of the binding, never the identity — it is what lets a

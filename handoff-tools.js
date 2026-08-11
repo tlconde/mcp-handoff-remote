@@ -348,7 +348,12 @@ async function buildStatusReport(args, ctx, core) {
     ? `${boundRecord.id} — "${boundRecord.title}"${nameSplit} (CLI ${nativeId.slice(0, 8)}…)`
     : (identityId || (nativeId
       ? `CLI ${nativeId.slice(0, 8)}… not yet registered (auto on first send; register_session names a title/role)`
-      : 'unavailable — CLAUDE_CODE_SESSION_ID unset, sends will carry no sender and receipts cannot route back'))}`;
+      /* Same correction as register_session's refusal: over the relay the tool runs on the store
+       * host, so a caller's environment was never visible to it and blaming an unset variable
+       * sends them to debug the wrong machine. */
+      : (ctx && ctx.remote
+        ? 'unavailable — this call arrived over the relay, so no CLI uuid crosses to the store host. Sends carry no verified sender. This is the remote surface working as designed, not a variable failing to propagate on your machine.'
+        : 'unavailable — CLAUDE_CODE_SESSION_ID unset on this machine, sends will carry no sender and receipts cannot route back')))}`;
   // "Mine" = records THIS session may legitimately drain: its pin, its registered identity,
   // and any record keyed to this terminal's CLI uuid. check_inbox drains a whole surface, so
   // Next-action must never point at a conversation that is not mine — that would eat another
@@ -2028,7 +2033,35 @@ async function callTool(name, args, ctx, core) {
   if (name === 'register_session') {
     const nativeId = (ctx && ctx.cli_uuid) || null;
     if (!nativeId) {
-      return 'REFUSED: no CLI uuid in this environment (CLAUDE_CODE_SESSION_ID unset) — identity records are minted only from a real Claude Code session, never guessed (I2).';
+      /* THE REFUSAL MUST NAME THE RIGHT MACHINE.
+       *
+       * This said "CLAUDE_CODE_SESSION_ID unset" to every caller, which is true for a LOCAL mount
+       * that genuinely lacks it and actively false for a REMOTE one. A peer read that sentence,
+       * printed its own environment, found the variable perfectly well set, and reasonably
+       * concluded the value was failing to propagate into the MCP server process — then offered to
+       * trace the propagation bug. There is no propagation to trace: over the relay, THE TOOL RUNS
+       * ON THE STORE HOST, a different computer entirely, and an environment variable on the
+       * caller's machine was never going to be visible to it.
+       *
+       * The same shape as check_inbox's host problem, and the same shape as an empty answer that
+       * did not name its scope: a message true in one world, stated as if true in both, sending
+       * someone to fix a machine that was not broken. It cost a peer an investigation.
+       *
+       * I2 is correct either way — an identity record is never minted from an unverified claim.
+       * What changes is only that the refusal says WHY, and the remote case is not a defect to be
+       * chased but the identity half of the enrollment ceremony, which is designed and unbuilt. */
+      if (ctx && ctx.remote) {
+        return 'REFUSED: this call arrived over the relay, and a CLI uuid cannot cross that boundary — ' +
+          'the tool runs on the STORE HOST, not on your machine, so your CLAUDE_CODE_SESSION_ID (however ' +
+          'correctly set) was never visible to it and is not failing to propagate. There is no bug on your ' +
+          'side to find.\n\n' +
+          'A record minted from a value this process cannot verify would be an asserted identity wearing a ' +
+          'verified one\'s clothes, which is exactly what I2 refuses. A remote seat therefore holds an ' +
+          'ASSERTED record (register_remote_session) and is TOLD which one it is; binding a remote mount to ' +
+          'a verified identity is the enrollment ceremony\'s job, and that ceremony is designed and not yet built.';
+      }
+      return 'REFUSED: no CLI uuid in this environment (CLAUDE_CODE_SESSION_ID unset) — identity records are minted only from a real Claude Code session, never guessed (I2). ' +
+        'This is a LOCAL mount, so the variable really is absent here; if you expected it to be set, the mount was spawned from an environment that lacks it.';
     }
     const r = await identitySession(ctx, core, {
       title: args ? args.title : undefined, role: args ? args.role : undefined,

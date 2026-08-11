@@ -55,15 +55,48 @@
  * nobody reads. --once implies --verbose, because a single watched cycle is asking to see it all.
  *
  * Env:
- *   HANDOFF_HOST_ID       this machine's id in the store (default: os.hostname())
+ *   (this machine's id is os.hostname() and is NOT configurable — see the note by HOST)
  *   HANDOFF_AGENT_INTERVAL  seconds between cycles (default 20; clamped to 5..300)
  *   HANDOFF_HOME          store location, as everywhere else
  */
 const os = require('os');
 const path = require('path');
 
+/* THIS REQUIRE MUST COME BEFORE EVERY process.env READ IN THIS FILE, and it is here rather than
+ * beside its sibling below for exactly that reason.
+ *
+ * Requiring the store client has a LOAD-TIME SIDE EFFECT: it reads .agent-env and populates
+ * process.env from it. That require used to sit ten lines BELOW the constants, so every value the
+ * file documents as settable in .agent-env was read before the file had been loaded, and lost
+ * silently to its fallback. HANDOFF_HOST_ID was the expensive one: REMOTE-PEER-SETUP.md instructs
+ * an operator to pin the host id there, and on the peer that instruction had NEVER once taken
+ * effect — the agent called itself os.hostname() while the file said something else, so it peeked
+ * mail addressed to the machine, decided it owned none of it, and reported a clean cycle. A
+ * healthy-looking run that delivers nothing, because a name was read before it was set.
+ *
+ * HANDOFF_AGENT_INTERVAL was the second casualty of the same line ordering, found by looking for
+ * others rather than by it failing.
+ *
+ * A load order that is load-bearing is a trap for the next edit, so it is named here rather than
+ * left to be rediscovered: nothing that reads process.env may move above this line. */
+const { makeStoreClient } = require('./handoff-store-client');
+const transport = require('./handoff-transport');
+
 const AGENT_VERSION = '0.1.0';
-const HOST = process.env.HANDOFF_HOST_ID || os.hostname();
+/* THE MACHINE NAMES ITSELF. HANDOFF_HOST_ID is GONE, not fixed.
+ *
+ * It was an override read from .agent-env, and the operator's ruling is that a peer's id is not
+ * ours to dictate: the device reports what it is called and the fleet accepts it. That makes
+ * os.hostname() the single source, and it makes the knob's only possible correct value equal to
+ * the value the process can already compute — a setting whose right answer is "whatever it would
+ * have been anyway" is not configuration, it is a spelling test with no validation.
+ *
+ * And it had four known spellings in flight at once for ONE machine: HP_LAPTOP (COMPUTERNAME),
+ * HP_laptop (os.hostname()), HP-laptop (typed by hand, hyphen, would have matched nothing), and
+ * windows-laptop (what a doc told the operator to write). Each one is a delivery failure that
+ * looks like a healthy cycle, because a host that owns no records and a host that is misnamed
+ * report identically. Removing the knob removes all four at once. */
+const HOST = os.hostname();
 const ONCE = process.argv.includes('--once');
 const DRY = process.argv.includes('--dry-run');
 const VERBOSE = process.argv.includes('--verbose') || ONCE;
@@ -72,9 +105,8 @@ const INTERVAL_S = Math.min(300, Math.max(5, Number(process.env.HANDOFF_AGENT_IN
 /* THE STORE IS AN INTERFACE, NOT A FILESYSTEM. It was `require('../handoff-core')` — correct on
  * the store's own host and impossible anywhere else, which meant this agent could not run on the
  * one machine the design needed it: a second device has no store to read. The client picks local
- * or remote from the environment and this file stops knowing which it has. */
-const { makeStoreClient } = require('./handoff-store-client');
-const transport = require('./handoff-transport');
+ * or remote from the environment and this file stops knowing which it has.
+ * (Both requires are hoisted above the constants — see the note there; do not move them back.) */
 let store; // built in main(), so a misconfiguration is one sentence rather than a stack trace
 
 const log = (...a) => console.log(`[wake-agent ${HOST}]`, ...a);

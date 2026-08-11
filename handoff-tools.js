@@ -1631,7 +1631,11 @@ async function callTool(name, args, ctx, core) {
      * (a remote record flipping to a host-asserted verdict) could not have passed. Found by trying
      * to run it rather than by reading it. The record id exists for every record, local or not. */
     if (!nr) return remoteHost ? remoteVerdict(remoteHost, sess.id, st) : 'none';
-    const here = !nr.host || nr.host === (process.env.HANDOFF_HOST_ID || require('os').hostname());
+    /* os.hostname() ONLY — the override is gone here too, and it had to go from BOTH places at
+     * once. A machine whose agent computed its name one way while its mount computed it another
+     * would disagree with itself about which records it owns, which is the misnaming failure with
+     * an extra layer. The device reports what it is called; nothing overrides it. */
+    const here = !nr.host || nr.host === require('os').hostname();
     if (here) {
       if (!nr.pid) return 'stale-binding';
       try { process.kill(nr.pid, 0); return 'process'; }

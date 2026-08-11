@@ -151,9 +151,18 @@ public. Put them in a **gitignored** `.agent-env` beside the code instead:
 ```powershell
 @"
 HANDOFF_REMOTE_URL=https://<relay-host>/mcp
-HANDOFF_HOST_ID=windows-laptop
 "@ | Set-Content .agent-env
 ```
+
+> **DO NOT set a host id here — there is no longer a setting for it.** This document used to tell
+> you to write `HANDOFF_HOST_ID=windows-laptop`, and on the machine that followed the instruction
+> it never once took effect: the value was read before the file that supplies it had been loaded,
+> so the agent silently used `os.hostname()` while the file said something else. It then peeked
+> mail addressed to that machine, decided it owned none of it, and reported a healthy cycle. The
+> knob is now REMOVED rather than repaired — **a peer's id is whatever the machine calls itself**,
+> and the fleet accepts that rather than dictating it. One machine had four spellings in flight at
+> once (`HP_LAPTOP`, `HP_laptop`, `HP-laptop`, `windows-laptop`); each would have produced a
+> delivery failure that looks exactly like an idle one.
 
 The agent reads it at startup, and a real environment variable always overrides it — so a one-off
 test needs no edit. Keep the **token** out of this file: Credential Manager (step 3) is the right
@@ -343,7 +352,7 @@ On the store's own host the same command prints instead:
 | `cannot start: HANDOFF_REMOTE_URL is set but no credential is…` | Neither a service token pair nor `HANDOFF_REMOTE_TOKEN` survived | Re-check `.agent-env` in the same window. It stops rather than polling blind |
 | `a service token is half-configured — …is missing` | One half of the pair is set | Set both halves or neither. It refuses on purpose; falling back to the user token would hide this until the cookie expired |
 | `relay refused the credential … presented: service-token` | Usually a missing **Service Auth** policy on the application, not a bad token | Add the Service Auth policy (an Include on an Allow does not admit a service token). Do not re-mint first — a service token does not expire |
-| `Refused: this heartbeat names N record(s) that do not belong to…` | `HANDOFF_HOST_ID` does not match how records name this machine | Fix the host id — do not change the records |
+| `Refused: this heartbeat names N record(s) that do not belong to…` | The records name this machine differently from `os.hostname()` | Fix the RECORDS to match what the machine calls itself — the host id is not settable, by design |
 | `peek says: (nothing waiting)` | Nothing is addressed to this machine yet | Fine. The heartbeat still goes; ask the home side to send one, then re-run |
 
 **A refusal here is the system working.** The heartbeat is refused *whole* rather than partly
@@ -459,8 +468,8 @@ paid for twice in one evening.
 
 **The environment a scheduled task does NOT inherit.** It gets a minimal environment, so anything
 the agent needs must be set explicitly — the same defect that once made the Mac's relay spawn a
-binary it could not see. `HANDOFF_REMOTE_URL` and `HANDOFF_HOST_ID` live in `.agent-env`; the token
-is read from Credential Manager at start. If the task runs and the agent exits immediately, that
+binary it could not see. `HANDOFF_REMOTE_URL` and the service-token pair live in `.agent-env`; the
+host id needs no environment at all, because the machine reports its own. If the task runs and the agent exits immediately, that
 environment is the first thing to check, and `--verbose` in the task's command line is how you see
 why.
 

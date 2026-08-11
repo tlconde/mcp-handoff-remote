@@ -560,8 +560,22 @@ async function callTool(name, args, ctx, core) {
     if (Object.keys(merged).length && !wrote) {
       return `Heartbeat FAILED for "${host}": ${Object.keys(merged).length} verdict(s) were sent and the store recorded none. Nothing flipped; do not treat this as a delivered heartbeat.`;
     }
+    /* THE ECHO — the ids this caller just asserted over, returned to it.
+     *
+     * The remote surface deliberately offers no state read: a peer names a verdict and never learns
+     * which records exist. That rule stands, and this does not breach it — these are the records the
+     * CALLER ITSELF just wrote to, echoed back. It learns nothing about the store it did not assert
+     * a moment earlier.
+     *
+     * It is needed because "deliver only for records your own host owns" is unimplementable without
+     * it: a remote agent cannot enumerate, so without the echo it must either deliver blind to
+     * whatever peek shows it — including other machines' records — or not deliver at all. The
+     * ownership rule and the delivery slice cannot both hold otherwise. Written on one line so the
+     * agent can parse it without a schema, and omitted entirely when nothing was written. */
+    const echo = Object.keys(merged).filter(id => merged[id] !== undefined);
     return `Heartbeat recorded for "${host}": ${wrote || 0} record(s) carry a host-asserted verdict, agent ${a.agent_version || 'unversioned'}. ` +
-      'Reachability for those records now reads what THIS host observed, not "unknown".';
+      'Reachability for those records now reads what THIS host observed, not "unknown".' +
+      (echo.length ? `\nOWNED: ${echo.join(' ')}` : '');
   }
   if (name === 'get_handoff') {
     const { id } = await namedOrPinned(args, ctx, core);

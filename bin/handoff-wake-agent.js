@@ -118,6 +118,25 @@ function signatureOfVerdicts(verdicts) {
   return vals.length ? vals.join(' ') : '(no verdicts)';
 }
 
+/* PEEK IS TEXT, so parse it as text — narrowly, and tolerant of everything except the two fields
+ * that matter. peek_inbox renders one block per waiting conversation: a title line carrying the
+ * unread count, then an indented `session_id:`. We take only those. A parser that also depended on
+ * the surrounding copy would break on the next edit to a sentence, and that copy is allowed to
+ * change — it is written for humans. Rows that do not yield BOTH fields are skipped rather than
+ * guessed at, because a half-parsed row here would mean delivering to the wrong record. */
+function parsePeekRows(text) {
+  const rows = [];
+  const lines = String(text || '').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^- "(.+?)".*?·\s*(\d+)\s+unread/);
+    if (!m) continue;
+    const idLine = (lines[i + 1] || '').match(/session_id:\s*(\S+)/);
+    if (!idLine) continue;
+    rows.push({ title: m[1], unread: Number(m[2]), session_id: idLine[1] });
+  }
+  return rows;
+}
+
 /* A key that is no longer being spoken about must be FORGOTTEN, or a record that goes quiet and
  * later returns to the same state would stay silent on its return — the second appearance is a
  * state change and has to print. */
@@ -162,7 +181,7 @@ async function cycle(state) {
     sayIfChanged(state, 'mode', `remote store — cannot enumerate (${(st.unavailable || []).join('; ')}); peeking and asserting one verdict for this host's records.`);
     sayIfChanged(state, 'peek', `peek says: ${String(st.peek || '').split('\n')[0] || '(nothing waiting)'}`);
     if (!DRY) {
-      await store.heartbeat({
+      const hb = await store.heartbeat({
         host: HOST, last_seen: new Date().toISOString(), agent_version: AGENT_VERSION,
         sessions: {}, default_verdict: 'process',
       });
@@ -170,6 +189,41 @@ async function cycle(state) {
        * prints once and then goes quiet. The heartbeat itself keeps firing every cycle; the store's
        * last_seen is the record of that, and it is a better one than a line in a terminal. */
       sayIfChanged(state, 'heartbeat', `heartbeat — sent for "${HOST}" with default verdict 'process' for records declaring this host`);
+      /* DELIVERY, at last — the slice this agent has been deferring in a comment.
+       *
+       * SCOPE IS THE SAFETY, not a later claim step: we deliver ONLY for records this host just
+       * asserted a verdict over. The heartbeat's reply echoes those ids (OWNED:), and they are the
+       * caller's own assertion coming back — so ownership is established by the write we just made,
+       * not inferred from a peek that shows this surface's records regardless of whose machine they
+       * live on. Delivering to what peek shows would reach other hosts' terminals, which is the
+       * exact error the own-host rule exists to prevent.
+       *
+       * The rung ladder is bin/handoff-wake's job, not ours: we hand it the delivery and it picks.
+       * On this platform that resolves to notify — rungs 1 and 2 are unavailable on Windows
+       * (measured 2026-08-10: no --channels in the build, no ListAgents even inside a spawned
+       * one-shot), so the honest local rung is a notification. Nothing here claims a turn started. */
+      const owned = new Set(String(hb || '').split('\n')
+        .filter(l => l.startsWith('OWNED:'))
+        .flatMap(l => l.slice(6).trim().split(/\s+/)).filter(Boolean));
+      const waitingRows = parsePeekRows(String(st.peek || ''));
+      const mine = waitingRows.filter(r => owned.has(r.session_id));
+      forgetKeysExcept(state, 'rec:', new Set(mine.map(r => `rec:${r.session_id}`)));
+      for (const r of mine) {
+        const changed = sayIfChanged(state, `rec:${r.session_id}`,
+          `"${r.title}" — ${r.unread} unread → delivering locally`);
+        if (!changed) continue;   // already delivered for this state; do not re-notify every cycle
+        let woke = null;
+        try {
+          woke = require('./handoff-wake').wake({
+            tier: 'attention', thread: r.title, conversation: r.title, session_id: r.session_id,
+            native_ref: null, channels: false, from: 'the store', device: HOST,
+          });
+        } catch (e) { woke = { woke: false, tier: 'threw', error: (e && e.message) || String(e) }; }
+        /* Report the RUNG, never a delivery. A notification means a human was told; it does not
+         * mean anything was read, and this agent has no way to observe that it was. */
+        log(`"${r.title}" — rung: ${(woke && woke.tier) || 'none'}${woke && woke.notify ? `, notification ${woke.notify.fired ? 'fired' : 'did NOT fire'}` : ''}`);
+      }
+      if (!mine.length) sayIfChanged(state, 'waiting', 'nothing waiting for this host');
     } else {
       sayIfChanged(state, 'heartbeat', 'heartbeat — skipped (dry-run)');
     }

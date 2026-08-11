@@ -1788,9 +1788,26 @@ async function handleApi(method, p, query, b) {
          * is legitimate — a record is data — but it must never be mistaken later for one the
          * device's own agent wrote. */
         minted_by: b.minted_by || 'unknown',
+        /* WHO SAID THIS DEVICE IS CALLED THAT — operator ruling, 2026-08-11, verbatim:
+         * "the host device decide doesn't guess a sessions name, the session sends the decide os
+         * hostname (as a remote) — if it's HP_LAPTOP, so be it, if HPlaptop, so be it — this also
+         * helps differentiate".
+         *
+         * So a device string is authoritative ONLY when the seat reported it about itself, and the
+         * only thing a seat can supply that no third party can invent is its own cli_uuid. A caller
+         * naming a machine it is not on is making a CLAIM, which is legitimate as data and must
+         * never later be mistaken for the machine's own answer.
+         *
+         * This is not theoretical: one laptop reports THREE strings by environment — HPlaptop in
+         * WSL, HP_LAPTOP as COMPUTERNAME, HP_laptop from native Windows Node. Every one is correct
+         * for the seat that reports it, and the split is the DISCRIMINATOR rather than a bug: two
+         * seats, two transports, two socket namespaces. Four records were retired today because a
+         * third party's belief about a machine was recorded as its name. */
+        device_provenance: b.cli_uuid ? 'self-reported' : 'claimed-on-behalf',
+        device_reported_by: b.cli_uuid ? String(b.cli_uuid) : (b.minted_by || 'unknown'),
         last_registered: now(),
       };
-      ops('remote_session_registered', { session: s.id, host, title: b.title, minted, minted_by: s.remote.minted_by });
+      ops('remote_session_registered', { session: s.id, host, title: b.title, minted, minted_by: s.remote.minted_by, device_provenance: s.remote.device_provenance });
       save(db);
       return { code: minted ? 201 : 200, payload: { session: s, minted } };
     }
@@ -1911,6 +1928,7 @@ async function handleApi(method, p, query, b) {
        * its own thread, which is the one continuity that survives a process boundary. This
        * is never inferred and the tooling never suggests candidates: suggesting one would be
        * the guess §I2b forbids, wearing a helpful face. Append-only on both sides. */
+      let adopted = null;
       if (b.succeeds && b.succeeds !== s.id) {
         const pred = db.sessions[b.succeeds];
         if (!pred) return { code: 404, payload: { error: `no record ${b.succeeds} to succeed — nothing was changed` } };
@@ -1921,6 +1939,11 @@ async function handleApi(method, p, query, b) {
         if (pred.superseded_by && pred.superseded_by !== s.id) {
           return { code: 409, payload: { error: `${pred.id} is already superseded by ${pred.superseded_by} — annul that first` } };
         }
+        /* AND THE ADOPTION SAYS SO. A succeeds: that answered only "Refreshed" is silent success —
+         * the caller could prove the name resolved and could NOT prove the history was linked, which
+         * is the same shape as the silent refresh it was fixing. Reported by the seat that performed
+         * one and then could not verify it. */
+        adopted = { predecessor: pred.id, predecessor_title: pred.title };
         pred.superseded_by = s.id;
         s.succeeds = Array.isArray(s.succeeds) ? s.succeeds : [];
         if (!s.succeeds.some(a => a.session_id === pred.id)) {
@@ -1942,7 +1965,7 @@ async function handleApi(method, p, query, b) {
       if (nickRefusal) {
         return { code: nickRefusal.code, payload: { error: nickRefusal.error, held_by: nickRefusal.held_by, id: s.id, minted, session: s } };
       }
-      return { code: minted ? 201 : 200, payload: { id: s.id, minted, healed, session: s,
+      return { code: minted ? 201 : 200, payload: { id: s.id, minted, healed, session: s, adopted,
         nickname_note: nickAdvisory ? nickAdvisory.advisory : undefined,
         nickname_duplicates: nickAdvisory ? nickAdvisory.duplicates : undefined } };
     }

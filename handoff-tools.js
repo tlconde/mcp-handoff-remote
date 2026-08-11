@@ -2129,6 +2129,15 @@ async function callTool(name, args, ctx, core) {
       succeeds: args ? args.succeeds : undefined,
       adoption_evidence: args ? args.adoption_evidence : undefined
     });
+    /* THE ADOPTION SPEAKS. A `succeeds:` that answered only "Refreshed" left the caller able to
+     * prove the name resolved and unable to prove the history was linked — silent success, the same
+     * shape as the silent refresh it was meant to fix. Reported by the seat that performed one. */
+    if (r && r.adopted) {
+      return (typeof r.text === 'string' ? r.text : '') +
+        `\n\nADOPTED: this record now SUPERSEDES ${r.adopted.predecessor} ("${r.adopted.predecessor_title}"). ` +
+        `That id no longer resolves by name; sends addressed to it walk forward to this one, and its history stays where it is. ` +
+        `Nothing was deleted and nothing was moved.`;
+    }
     if (r && r.error) return `REFUSED: ${r.error}`;
     const s = r.session;
     // The tab you are looking at follows the name you just gave. Best-effort and silent on

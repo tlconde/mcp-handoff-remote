@@ -2199,6 +2199,27 @@ async function handleApi(method, p, query, b) {
       if (authority === 'operator' && !String(b.attestation || '').trim()) {
         return { code: 400, payload: { error: 'operator authority requires an attestation — her words, verbatim. An unquoted claim of her authority is not evidence of it.' } };
       }
+      /* 'self' MEANS THE RECORD ITSELF, AND IS NOW CHECKED RATHER THAN TRUSTED.
+       *
+       * The first cut recorded `by_session_id` and never compared it, so any seat could retire any
+       * record by typing "self" — while the commit message claimed one seat may not end another's.
+       * Found when a peer seat offered, reasonably, to retire an ORPHAN record it had once created
+       * under `self`: reasonable, and not what the word means. A rule stated in prose and unchecked
+       * in code is the exact pattern this repo spent the day removing.
+       *
+       * What this CAN prove is bounded and worth stating: for a CLI-verified seat the caller's id
+       * is verified upstream, so the comparison is real. For a remote seat the id is ASSERTED (I12)
+       * — so this stops the careless case and converts the deliberate one into a recorded lie,
+       * which is the most an asserted-provenance system can offer. Ending someone ELSE's record is
+       * still possible; it just cannot be done while claiming to be them, and must instead go
+       * through 'operator' where her words are quoted and auditable. */
+      if (authority === 'self' && String(b.by_session_id || '') !== s.id) {
+        return { code: 403, payload: {
+          error: 'not_your_record',
+          detail: `"self" means this record ending ITSELF, and the caller is ${b.by_session_id ? `"${b.by_session_id}"` : 'unidentified'}, not ${s.id}. ` +
+            `To end a record that is not yours, use authority "operator" with her words quoted — which records WHO ended someone else's record and on whose say-so, rather than letting it look self-inflicted.`,
+        } };
+      }
       if (!String(b.reason || '').trim()) return { code: 400, payload: { error: 'reason required — a record ending without a stated reason is an unexplained gap in an append-only log' } };
       const active = Object.values(db.links).filter(l => l.status === 'active' && (l.origin === s.id || l.dest === s.id));
       if (active.length) {

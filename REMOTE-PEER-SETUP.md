@@ -497,3 +497,45 @@ why.
 
 Ctrl-C. Nothing persists; no service was installed. To remove the credential:
 `cmdkey /delete:handoff-relay`.
+
+---
+
+# What can wake me? — the seat-side self-check
+
+**Only a seat may say what can wake it.** Nothing here is a probe you run against somebody else's
+machine: every item is something a seat checks about **itself** and then **reports**. A third
+party's belief about a machine is never a device fact — that guess is what cost four retired records
+and two retractions in one day. **Read this list as "what I report", never as "what I can find out
+about them".**
+
+This exists because the assertion rule is not implementable until a seat knows what to check.
+Documentation, not enforcement: senders do not branch on a target's operating system.
+
+| check | what it tells you | notes |
+|---|---|---|
+| `os.platform()` | `win32` → **no socket path exists at all, at any pid** | the only seat class with no push; the watcher is its whole wake |
+| `$XDG_RUNTIME_DIR/cc-socks/<pid>.sock` | presence = **this machine can carry peer messages** | dir mode `0700`, keyed by `process.getuid()`. Fallbacks: `os.tmpdir()/cc-socks`, `/tmp/cc-socks-<uid>` |
+| `CLAUDE_CODE_MESSAGING_SOCKET` | the product's own signal — **presence IS the feature** | cheapest check here, and it needs no model spawn. Unset on native Windows |
+| `ListAgents` | who is reachable **right now** on this machine | **live, not cached** — measured returning "No reachable agents" and then listing a peer seconds later |
+| is a watcher armed, and **which form** | `monitor` (streams, keeps watching) vs `--exit-on-mail` (one wake, then exits) | a background command's output reaches its session **only on exit**: an unbounded watcher found mail, printed, and woke nothing |
+| my record's `native_ref.host` | populated and **self-reported** | the guard that keeps a foreign pid from being probed locally **fails open** when this is absent |
+| `whoami cli_uuid:"…"` | does the store resolve me at all | over the relay this is required — the tool runs on the store host and cannot see your session id |
+
+## The prerequisite that is not code
+
+A watcher that fires, reports *"mail is waiting"*, and stops to ask permission has converted a
+zero-tap wake into a human tap at the last step. In the seat's own words:
+
+> **A wake that ends in a request for permission is not a wake.**
+
+What closed that hole on the seat where the fourth path was proved was a standing instruction given
+**before** the test — *if the mail is addressed to you, the rule is that you read it.* **A fleet
+that ships the watcher without that rule ships a tier that wakes and then asks.** Treat it as part
+of enrolment, not as a property of the watcher.
+
+## Log a timestamp, or the tier cannot be judged
+
+The monitor event carries no timestamp of its own. A watch line without one makes wake latency
+unmeasurable — and latency is exactly the question this tier will be judged on. Every watch line
+carries **ISO-8601 UTC**, so two seats in two zones subtract cleanly. A seat that cannot measure it
+should say so rather than estimate.

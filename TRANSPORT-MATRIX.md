@@ -261,6 +261,72 @@ its design notes.
 
 ---
 
+## TWO AXES, NOT A LIST OF ROUTES — corrected 2026-08-11
+
+This file's own first sentence already separates them — *"how a message travels, **how the receiver
+learns of it**"* — and the fleet spent an evening collapsing them anyway. Written down so the next
+reader does not.
+
+```
+CARRIER   how it TRAVELS          store | native peer        ← the SENDER chooses
+WAKE      how the receiver        channel | relay | notify | watcher-exit | none
+          LEARNS of it                                        ← the RECEIVER's machine determines;
+                                                                the sender only ATTEMPTS
+```
+
+**The store write is unconditional and happens FIRST, on every route, to every target class.**
+`bin/handoff-transport.js:81` — *"Always the durable truth, written by the CALLER before any leg
+runs"* — and `bin/handoff-wake.js:631`, *"A wake failure must never break the send."* Nothing below
+is permitted to make that write conditional.
+
+**Native peer messaging is a WAKE choice, never a CARRIER choice.** A route that "prefers native" by
+*skipping the store* is data loss wearing an optimisation's clothes, for three measured reasons:
+
+1. **The watcher watches the STORE and nothing else.** Peer/`bridge:` traffic produced **zero**
+   store unread and never once fired a watcher; only a `send_message` that wrote the store did.
+   Skipping the write makes mail invisible to every watching seat.
+2. **A socket is not a carrier of record.** A reply to a peer's `uds:…/cc-socks/1378.sock` failed
+   `connect ENOENT … socket path is stale` **seconds** after that peer sent from it, and a named
+   peer vanished from `ListAgents` within a minute.
+3. **Read state and provenance live in the store.** Native sends carry no `✓✓` and no attribution
+   back.
+
+### Three corrections this matrix used to get wrong
+
+1. **Windows cannot SEND by peer either.** The one observed Windows→peer send worked only because
+   that seat spawned a **WSL one-shot to carry it** — borrowing a neighbouring environment, and
+   available only on a Windows machine that *has* WSL. Do not record it as a Windows capability.
+   Relay attribution belongs to the relay; letter provenance belongs to whoever wrote the mail.
+2. **The watcher is not a carrier.** See (1) above — a sender who thinks it is "using the watcher"
+   by sending peer-style delivers nothing any watcher can find. **This is the one that silently
+   sends mail nowhere.**
+3. **The OS is the WRONG AXIS.** Two seats on one machine can use a socket; two seats on different
+   machines cannot, whatever they run — this Mac reached a WSL seat across machines by `bridge`,
+   not by socket. The real divide is **(same machine or not) × (what the receiver can do)**. The
+   OS-shaped rule survives in exactly one clause, and it is the finding: **native Windows is the
+   only seat with no push at all, so the watcher is its whole wake.**
+
+### Wake by what the RECEIVER can do
+
+| receiving seat | can be woken by | evidence |
+|---|---|---|
+| same machine, socket present (Linux / macOS / WSL 2) | **peer (uds)** | 10 sockets in `/tmp/cc-socks/`, `ListAgents` returned 7 reachable sessions |
+| another machine, reachable by Remote Control | **bridge** | Mac ↔ WSL 2 laptop, bidirectional, no store/relay/tunnel in that path |
+| native Windows | **watcher**, or notify | watcher proved live: a turn started with no human touching the terminal |
+| any seat with a watcher armed | **watcher** | same, and it is platform-independent by construction |
+
+**A sender can never CHOOSE watcher-exit and must never REPORT it.** The watcher is armed by the
+receiving seat, on its own machine, on its own initiative; a ladder returning `tier:'watcher'` would
+claim a delivery it did not perform. What a sender may say is unchanged: it wrote the store durably,
+it attempted the legs available to it, and it makes **no** claim that a turn started.
+
+**Still UNVERIFIED, and this file's rule is to say so rather than describe something plausible:**
+native Windows → Mac direct; the native-Windows seat → this Mac pair; and the `era` gate that
+refuses unsolicited notifications on a modern protocol revision regardless of capability. Mark them;
+do not fill them.
+
+---
+
 ## The honest summary
 
 - **One surface can be woken: code.** Everything else is pull, and that is a property of the

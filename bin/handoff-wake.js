@@ -347,6 +347,35 @@ function nativeReach(native_ref) {
   const out = { open: false, name: null, socket: null, cwd: null, reason: 'no native_ref', candidates: 0, stale_binding: false, pid: null };
   try {
     if (!native_ref || !native_ref.session_id) return out;
+    /* ANOTHER DEVICE OWNS IT — and this machine cannot answer for it.
+     *
+     * Everything below validates the binding against THIS host: liveRows() is a readdir of the
+     * local session registry plus process.kill() into the local process table. For a record that
+     * declares another device, neither can ever contain it, so `bound` was always falsy and every
+     * remote seat was reported `stale_binding` — permanently, from the moment it enrolled.
+     *
+     * That produced a sentence that was false in all three of its clauses: nothing was stale, no
+     * resume had occurred, and the remedy it offered ("opening it heals the binding") is a LOOP
+     * for a seat this host will never see. A correct-sounding error that leaves the caller no
+     * route, and does not say so, is absorbed as a convention rather than reported as a defect —
+     * two seats read it for an evening and took it for a fact about themselves.
+     *
+     * `peek_inbox` (handoff-tools.js:1732) already guards precisely this, with the same test. This
+     * is that guard, applied in the sibling consumer that skipped it. The honest verdict for a
+     * foreign record is neither open nor stale: it is NOT DETERMINABLE FROM HERE, and only the
+     * owning seat may say otherwise.
+     *
+     * NOTE the asymmetry with an ABSENT host, which is deliberate and must stay: no host means
+     * LOCAL to this store host, which is correct for a terminal on this machine and is why the
+     * check is `host && host !== me` rather than a positive match. */
+    const me = require('os').hostname();
+    if (native_ref.host && native_ref.host !== me) {
+      out.name = native_ref.name || null;
+      out.cwd = native_ref.cwd || null;
+      out.foreign_host = native_ref.host;
+      out.reason = `owned by ${native_ref.host} — not determinable from here; only that seat can say whether it is open`;
+      return out; // stale_binding stays FALSE: absence of local evidence is not evidence of death
+    }
     const rows = liveRows();
     /* 1. VALIDATE THE HINT against a live row. This is the only path that can wake.
      * A uuid is NOT unique across processes: measured 2026-08-09, `/exit` followed by
@@ -625,7 +654,10 @@ function wake(delivery, opts) {
     // the two-step (this send notifies and heals; the next one wakes) is legible.
     const c = notifyCopy(d);
     const nr = doNotify(Object.assign({ conversation: d.conversation || thread, meta: { session_id: d.session_id || null, from: d.from || null, surface: d.surface || 'code', window: (d.native_ref && d.native_ref.name) || null, device: d.device || null } }, notifyCopy(d)));
-    const r = { woke: false, tier: nr && nr.fired ? 'notify' : 'store', reason: rc.reason, stale_binding: !!rc.stale_binding, candidates: rc.candidates || 0, notified: nr || null };
+    // foreign_host rides out for the same reason stale_binding does: the caller must be able to
+    // say WHICH happened. Without it the note cannot distinguish "we looked and found nothing"
+    // from "we were never able to look".
+    const r = { woke: false, tier: nr && nr.fired ? 'notify' : 'store', reason: rc.reason, stale_binding: !!rc.stale_binding, foreign_host: rc.foreign_host || null, candidates: rc.candidates || 0, notified: nr || null };
     logChoice(r); return r;
   } catch (_) {
     // A wake failure must never break the send — the store remains the durable truth.

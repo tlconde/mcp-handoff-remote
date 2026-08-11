@@ -77,6 +77,23 @@ function targetNames(s) {
 function deliveryNoteFor(woke, dest, windowName) {
   if (woke && woke.tier === 'relay') return `Asked "${windowName}" to start a turn (relay dispatched — not yet confirmed; if it does not pick up, the message is waiting in its inbox). `;
   if (woke && woke.tier === 'channel') return `Delivered straight into "${windowName}" — no tap needed. `;
+  /* NOT DETERMINABLE FROM HERE — and saying so is the whole point.
+   *
+   * Before the wake tier learned this guard, a foreign seat fell into the stale-binding sentence
+   * below and was told its identity pointer was stale "which is what a resume looks like from
+   * outside", with the remedy "opening it heals the binding". For a seat on another machine all
+   * three clauses are false and the remedy is a loop. Falling through to the plain `notify`
+   * sentence would be a smaller lie in the same family: "is closed" asserts a state this host
+   * cannot observe.
+   *
+   * So this branch claims NOTHING about liveness. It names the device that owns the record, says
+   * plainly that we cannot see it, and promises only what is actually true — the store write
+   * happened and the mail drains when that seat reads it. Ordered ABOVE the stale branch and
+   * keyed on a field the old shapes never carried, so both existing sentences keep their exact
+   * triggers and their byte-identical copy. */
+  if (woke && woke.tier === 'notify' && woke.foreign_host) {
+    return `"${windowName}" is owned by ${woke.foreign_host}, so this host cannot see whether it is open — no claim either way. A notification went out; the message is stored and drains when that seat reads it. `;
+  }
   if (woke && woke.tier === 'notify' && woke.stale_binding) {
     return `"${windowName}" could not be verified as open — its identity pointer is stale, which is what a resume looks like from outside${woke.candidates ? ` (${woke.candidates} live session(s) in that workspace; I will not guess which)` : ''}. Notified instead; opening it heals the binding and the next send wakes it with no tap. `;
   }

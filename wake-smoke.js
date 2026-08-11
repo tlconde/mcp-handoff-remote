@@ -332,7 +332,17 @@ test('relay binary: an absolute path is used, not the bare name off PATH', () =>
   const s = recorder();
   wake({ tier: 'attention', thread: 'x', conversation: 'x', from: 'chat', native_ref: { session_id: OPEN_UUID } }, { spawn: s.spawn });
   if (s.calls.length) {
-    assert.ok(s.calls[0].bin.startsWith('/'), `relay must spawn an absolute path, got: ${s.calls[0].bin}`);
+    /* `startsWith('/')` was a POSIX-only test for absoluteness, and it FAILED on Windows against
+     * `C:\…\claude.exe`, which is absolute — the assertion, not the code, was wrong. Same class as
+     * the hardcoded socket directory: one platform's convention treated as universal.
+     *
+     * It went unnoticed because it was green on Windows by NEVER RUNNING: before claudeBinPath
+     * became win32-aware, resolution returned null there, no spawn occurred, and the
+     * `if (s.calls.length)` guard below meant this asserted nothing and reported ok. Making the
+     * rung resolvable is what made the assertion execute. A test that passes because its subject
+     * is broken is the silence-is-not-success shape, wearing a green tick. Found by `lili` on
+     * native Windows, 2026-08-12. */
+    assert.ok(require('path').isAbsolute(s.calls[0].bin), `relay must spawn an absolute path, got: ${s.calls[0].bin}`);
     assert.ok(fs.existsSync(s.calls[0].bin), 'and that path must actually exist on this machine');
   }
 }));
@@ -602,6 +612,43 @@ test('capability says peer verbs ARE present → rung 2 runs normally (the gate 
 
   const candidate = w.claudeBinPath({ isWin: true, exists: p2 => /claude\.exe$/i.test(p2), whichOutput: '' });
   test('win32: a known-path .exe is found without consulting `where` at all', () => assert.ok(/claude\.exe$/i.test(String(candidate))));
+}
+
+/* ---- A REMOTE SEAT IS NOT "STALE" — the guard peek_inbox already applies -------------------
+ *
+ * nativeReach validated a binding by reading THIS machine's session registry and process table
+ * (liveRows). For a record whose native_ref declares ANOTHER device, neither can ever contain it,
+ * so `stale_binding` was unconditionally true and every send to a remote seat reported that its
+ * "identity pointer is stale, which is what a resume looks like from outside" — false, naming a
+ * cause that never occurred, and advising a remedy ("opening it heals the binding") that for a
+ * remote seat is a LOOP.
+ *
+ * handoff-tools.js:1732 already guards exactly this: `!nr.host || nr.host === os.hostname()`.
+ * Same rule, sibling consumer, absent here. These tests assert it is applied, and — equally —
+ * that the two cases it must NOT change are untouched. */
+{
+  const w = require('./bin/handoff-wake');
+  const me = require('os').hostname();
+
+  const foreign = w.nativeReach({ session_id: 'not-a-local-session', host: 'some-other-device', cwd: '/mnt/c/x', pid: 442 });
+  test('foreign host: NOT reported stale — the binding is not dead, it is on another machine',
+    () => assert.ok(foreign.stale_binding === false));
+  test('foreign host: not claimed open either — the honest answer is "not determinable from here"',
+    () => assert.ok(foreign.open === false));
+  test('foreign host: the reason NAMES the owning device instead of accusing the seat',
+    () => assert.ok(/some-other-device/.test(String(foreign.reason))));
+  test('foreign host: no candidate count — we did not scan a registry that could not contain it',
+    () => assert.ok(!foreign.candidates));
+
+  // REGRESSION GUARDS: the two shapes that must behave exactly as before.
+  const hostless = w.nativeReach({ session_id: 'not-a-local-session', cwd: '/tmp/nowhere' });
+  test('REGRESSION host absent: unchanged — a record with no declared host is LOCAL, and a dead binding is still stale',
+    () => assert.ok(hostless.stale_binding === true));
+  const mine = w.nativeReach({ session_id: 'not-a-local-session', host: me, cwd: '/tmp/nowhere' });
+  test('REGRESSION own host: unchanged — a record declaring THIS device is still validated locally',
+    () => assert.ok(mine.stale_binding === true));
+  test('REGRESSION: a native_ref with no session_id still returns the no-native_ref shape',
+    () => assert.ok(w.nativeReach({ host: 'some-other-device' }).reason === 'no native_ref'));
 }
 
 console.log(`\nwake-smoke: ${pass} passed, ${fail} failed`);

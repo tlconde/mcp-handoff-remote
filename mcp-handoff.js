@@ -324,6 +324,20 @@ function forwardToDaemon(name, args, ctx) {
  *
  * Detection is the presence of HANDOFF_REMOTE_URL — the same switch the agent uses, so a machine
  * configured as a peer is a peer for every process on it rather than per-binary. */
+/* CONFIGURATION HAS TO REACH THIS PROCESS, and until now it could not.
+ *
+ * The peer-aware branch below reads HANDOFF_REMOTE_URL and HANDOFF_REMOTE_TOKEN from the
+ * environment. But an MCP server is SPAWNED BY CLAUDE CODE and inherits Claude Code's environment
+ * — so .agent-env, which the wake agent reads at its own startup, never reached here. Measured on
+ * the peer: the fixed mount would have refused on that machine permanently, correctly and
+ * uselessly, unless the operator exported the token into the shell before launching Claude Code,
+ * by hand, every session. A fix that is right and undeliverable is the same shape as a capability
+ * that ships without its instructions — the third instance of that pattern in two days.
+ *
+ * So the mount loads the same file the agent does, by the same loader, BEFORE deciding what it is.
+ * Requiring the store client has that as a load-time side effect: .agent-env populates process.env
+ * and a real environment variable always wins over the file. One file configures both consumers. */
+try { require('./bin/handoff-store-client'); } catch (_) { /* absent in a runtime-only tree — local mode */ }
 const PEER_URL = process.env.HANDOFF_REMOTE_URL || null;
 function peerRefusal(reason) {
   return `REFUSED — this machine is configured as a REMOTE PEER (HANDOFF_REMOTE_URL is set) and the ` +

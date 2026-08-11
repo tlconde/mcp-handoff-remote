@@ -97,6 +97,30 @@ function deliveryNoteFor(woke, dest, windowName) {
   return `It arrives when that conversation next checks. `;
 }
 
+/* THE JOIN — a host-asserted verdict, read where the question is asked.
+ *
+ * A heartbeat writes into agents[host].sessions[recordId]. A record's own row carries no
+ * `reachable` field, so anything that answers "can this be reached" by inspecting the RECORD sees
+ * nothing and says so. That is how `resolve_conversation` came to tell an operator a machine "has
+ * no agent claiming it" while that machine's agent was heartbeating and had asserted a verdict for
+ * exactly that record — the copy keyed on `!native_ref`, which is true of EVERY remote record by
+ * design, rather than on whether anyone had actually spoken for it.
+ *
+ * Module-level on purpose: the same computation existed already, nested inside the peek block and
+ * therefore unreachable from the resolver, which is why the resolver invented a weaker test instead
+ * of using it. One join, used by every asker — that is the whole of the ruling.
+ *
+ * Returns 'process' | 'none' | 'stale-binding' when a live agent has spoken, and 'unknown' when
+ * nobody has. 'unknown' means NOBODY HAS LOOKED — never "unreachable". */
+const HEARTBEAT_STALE_MS = 3 * 30 * 1000; // ~3 poll intervals at the 30s upper bound
+function agentVerdictFor(host, recordId, st) {
+  const beat = (st && st.agents && st.agents[host]) || null;
+  if (!beat || !beat.last_seen) return 'unknown';
+  const age = Date.now() - Date.parse(beat.last_seen);
+  if (!(age >= 0) || age > HEARTBEAT_STALE_MS) return 'unknown';   // a stale agent speaks for nobody
+  return (recordId && beat.sessions && beat.sessions[recordId]) || 'unknown';
+}
+
 /** Substring match on any addressable name. */
 function matchesName(s, q) {
   const t = String(q == null ? '' : q).trim().toLowerCase();
@@ -837,9 +861,17 @@ async function callTool(name, args, ctx, core) {
     /* Say it HERE too, because this verb hands the caller a session_id and tells them to send.
      * Necessary but not sufficient on its own: a caller who already holds the id skips the
      * resolver entirely, which is why the send-side truth is the load-bearing one. */
-    const undeliverable = (d.remote && !d.native_ref)
-      ? `\nADDRESSABLE BUT NOT YET DELIVERABLE: owned by ${d.remote.host}, which has no agent claiming it. A send is stored durably and nothing will cause it to be read until one does.`
-      : '';
+    /* THE JOIN, at the point the question is asked. This used to key on `!native_ref` — true of
+     * every remote record by design — so it announced "no agent claiming it" about hosts whose
+     * agent was live and had asserted a verdict for this very record. Now it asks the agents map,
+     * and the pessimistic sentence is reserved for the case where the map genuinely holds nothing. */
+    let undeliverable = '';
+    if (d.remote && !d.native_ref) {
+      const verdict = agentVerdictFor(d.remote.host, d.id, st);
+      undeliverable = verdict === 'unknown'
+        ? `\nADDRESSABLE BUT NOT YET DELIVERABLE: owned by ${d.remote.host}, and no agent there has claimed it — reachability reads "unknown", which means nobody has looked rather than that it is unreachable. A send is stored durably and nothing will cause it to be read until an agent claims the record.`
+        : `\nOWNED BY ${d.remote.host}, whose agent is live and reports this record as "${verdict}". A send is stored durably; whether it is PUSHED depends on the rungs available on that machine — the store is the carrier, and the agent there decides what can be delivered locally.`;
+    }
     return `RESOLVED → [${d.surface}] "${d.title}"${term}${undeliverable}\nsession_id: ${d.id}\n\n` +
       `Now call send_message with session_id:"${d.id}". Check the title above is the conversation you meant — this is the only point at which a wrong target is free to correct.`;
   }

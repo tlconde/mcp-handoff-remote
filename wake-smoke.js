@@ -16,6 +16,26 @@ const path = require('path');
 const assert = require('assert');
 const { wake, nativeReach, relayPrompt, notifyCopy, WAKE_LINE } = require('./bin/handoff-wake');
 
+/* THE SUITE DECLARES THE CAPABILITY IT NEEDS, rather than inheriting the host platform's default.
+ *
+ * Eleven tests here exercise rung 2 — argv shape, the model override, HANDOFF_CLAUDE_BIN, the
+ * spawn-failure degrade, the WAKE_LOG seam, the stdio sidecar. All of them assume the peer-verb
+ * gate is OPEN, which is true by default on macOS and FALSE by default on Windows. So on the one
+ * platform this file was tracked to cover, eleven tests failed for a reason that had nothing to do
+ * with the code under test: the gate refused before any of it ran.
+ *
+ * That is the same defect as the commit that shipped this file, one level up — "platform-sensitive
+ * smokes ship, because a clone could not test the platform it was for", and then sixteen of its
+ * tests encoded the macOS path. Reported from Windows by the peer, who ran them.
+ *
+ * A test must not depend on the platform it happens to run on for a precondition it can state. So
+ * the suite writes its own capability file and points HANDOFF_HOME at it. The two tests that are
+ * ABOUT the gate override this with their own value and still prove both directions. */
+const CAP_HOME = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'wake-cap-'));
+require('fs').writeFileSync(require('path').join(CAP_HOME, 'wake-capabilities.json'),
+  JSON.stringify({ peer_verbs: true, note: 'suite precondition: these tests exercise rung 2 and must not depend on the host OS default' }));
+process.env.HANDOFF_HOME = CAP_HOME;
+
 let pass = 0, fail = 0;
 function test(name, fn) {
   try { fn(); pass++; console.log(`  ok   ${name}`); }

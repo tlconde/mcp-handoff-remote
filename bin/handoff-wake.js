@@ -133,19 +133,26 @@ const WAKE_LINE = (thread, from) => from
  * know which way to err: wrong toward REFUSING costs a notification the human still sees; wrong
  * toward RELAYING costs invisible silence. So an inconclusive probe writes nothing and leaves the
  * pessimistic platform default standing, rather than guessing optimistically. */
-function probePeerVerbs() {
-  const sock = process.env.CLAUDE_CODE_MESSAGING_SOCKET;
+function probePeerVerbs(opts) {
+  /* `platform` is injectable for the same reason claudeBinPath's is: the win32 branch answers
+   * conclusively and short-circuits, so on Windows the socket-directory fallback and the
+   * INCONCLUSIVE third state are unreachable — and those are exactly the branches a test needs to
+   * cover. Five capability-probe tests failed on the peer for that reason alone, testing nothing
+   * about the code. Production passes nothing. */
+  const o = opts || {};
+  const platform = o.platform || process.platform;
+  const sock = o.socketVar !== undefined ? o.socketVar : process.env.CLAUDE_CODE_MESSAGING_SOCKET;
   if (sock && String(sock).trim()) {
     return { peer_verbs: true, evidence: 'CLAUDE_CODE_MESSAGING_SOCKET is set — this session binds an inbox socket' };
   }
   /* Windows is excluded by the product, not by a missing file, so absence there is CONCLUSIVE and
    * absence elsewhere is not: a launchd-spawned process legitimately lacks the variable while the
    * feature works fine for interactive sessions on the same machine. */
-  if (process.platform === 'win32') {
+  if (platform === 'win32') {
     return { peer_verbs: false, evidence: 'native Windows — cross-session messaging is not offered on this platform' };
   }
   try {
-    const dir = process.env.CLAUDE_CODE_SOCKET_DIR || '/tmp/cc-socks';
+    const dir = o.socketDir || process.env.CLAUDE_CODE_SOCKET_DIR || '/tmp/cc-socks';
     const entries = fs.readdirSync(dir).filter(f => f.endsWith('.sock'));
     if (entries.length) {
       return { peer_verbs: true, evidence: `${entries.length} session socket(s) present in ${dir}` };
@@ -155,10 +162,10 @@ function probePeerVerbs() {
 }
 
 /** Record the probe, but never overwrite a conclusive answer with an inconclusive one. */
-function recordPeerVerbs(homeDir) {
+function recordPeerVerbs(homeDir, probeOpts) {
   const home = homeDir || process.env.HANDOFF_HOME || path.join(os.homedir(), '.claude-handoff');
   const p = path.join(home, 'wake-capabilities.json');
-  const r = probePeerVerbs();
+  const r = probePeerVerbs(probeOpts);
   if (r.peer_verbs === null) return { written: false, ...r };
   try {
     fs.mkdirSync(home, { recursive: true });

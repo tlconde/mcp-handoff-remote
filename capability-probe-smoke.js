@@ -28,7 +28,7 @@ const withEnv = (env, fn) => {
 (async () => {
   // ---- THE SOCKET VARIABLE IS THE CAPABILITY ----
   {
-    const r = withEnv({ CLAUDE_CODE_MESSAGING_SOCKET: '/tmp/cc-socks/1.sock' }, () => wake.probePeerVerbs());
+    const r = wake.probePeerVerbs({ platform: 'darwin', socketVar: '/tmp/cc-socks/1.sock' });
     ok(r.peer_verbs === true, 'socket var set → peer verbs AVAILABLE, no model spawn, no token');
     ok(/MESSAGING_SOCKET/.test(r.evidence), 'and the evidence names WHAT was observed, not a conclusion');
   }
@@ -37,7 +37,9 @@ const withEnv = (env, fn) => {
   {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'socks-'));
     fs.writeFileSync(path.join(dir, '123.sock'), '');
-    const r = withEnv({ CLAUDE_CODE_MESSAGING_SOCKET: undefined, CLAUDE_CODE_SOCKET_DIR: dir }, () => wake.probePeerVerbs());
+    /* platform injected: on win32 the probe answers conclusively and short-circuits, so this
+     * branch would be unreachable on the very platform this suite was tracked to cover. */
+    const r = wake.probePeerVerbs({ platform: 'darwin', socketVar: '', socketDir: dir });
     ok(r.peer_verbs === true,
       'socket DIRECTORY populated → available even with no env — a launchd/scheduled process inherits nothing');
     fs.rmSync(dir, { recursive: true, force: true });
@@ -46,14 +48,14 @@ const withEnv = (env, fn) => {
   // ---- INCONCLUSIVE IS A THIRD STATE, NOT A DENIAL ----
   {
     const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'nosocks-'));
-    const r = withEnv({ CLAUDE_CODE_MESSAGING_SOCKET: undefined, CLAUDE_CODE_SOCKET_DIR: empty }, () => wake.probePeerVerbs());
+    const r = wake.probePeerVerbs({ platform: 'darwin', socketVar: '', socketDir: empty });
     ok(r.peer_verbs === null,
       'no var and no sockets → INCONCLUSIVE (null), which is neither true nor false');
     ok(/INCONCLUSIVE/.test(r.evidence), 'and says so, rather than reporting a denial it did not measure');
 
     // The whole point: an inconclusive probe must not overwrite anything.
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'caphome-'));
-    const w = withEnv({ CLAUDE_CODE_MESSAGING_SOCKET: undefined, CLAUDE_CODE_SOCKET_DIR: empty }, () => wake.recordPeerVerbs(home));
+    const w = wake.recordPeerVerbs(home, { platform: 'darwin', socketVar: '', socketDir: empty });
     ok(w.written === false, 'INCONCLUSIVE writes NOTHING — the pessimistic default is left standing');
     ok(!fs.existsSync(path.join(home, 'wake-capabilities.json')),
       'and no capability file is created, so a later conclusive probe is not pre-empted by a guess');
@@ -64,7 +66,7 @@ const withEnv = (env, fn) => {
   // ---- A CONCLUSIVE PROBE IS RECORDED, WITH ITS ASYMMETRY ----
   {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'caphome2-'));
-    const w = withEnv({ CLAUDE_CODE_MESSAGING_SOCKET: '/tmp/cc-socks/9.sock' }, () => wake.recordPeerVerbs(home));
+    const w = wake.recordPeerVerbs(home, { platform: 'darwin', socketVar: '/tmp/cc-socks/9.sock' });
     ok(w.written === true, 'a conclusive probe IS recorded');
     const j = JSON.parse(fs.readFileSync(path.join(home, 'wake-capabilities.json'), 'utf8'));
     ok(j.peer_verbs === true && !!j.probed_at && !!j.evidence, 'the file carries the answer, when it was probed, and the evidence');
@@ -80,8 +82,11 @@ const withEnv = (env, fn) => {
 
   // ---- WINDOWS IS A CONCLUSIVE NO, NOT AN INCONCLUSIVE ONE ----
   {
-    ok(wake.probePeerVerbs.toString().includes("'win32'"),
-      'win32 is answered conclusively (excluded by the product), not left to a missing-file guess');
+    const w32 = wake.probePeerVerbs({ platform: 'win32', socketVar: '', socketDir: '/nonexistent' });
+    ok(w32.peer_verbs === false && /native Windows/.test(w32.evidence),
+      'win32 is answered CONCLUSIVELY false (excluded by the product), not left to a missing-file guess');
+    ok(w32.peer_verbs !== null,
+      'win32 is never INCONCLUSIVE — absence there is a denial, unlike everywhere else');
   }
 
   console.log(`\ncapability-probe: ${pass} passed, ${fail} failed`);

@@ -63,19 +63,27 @@ console.log(`\nnotify-smoke — platform ${process.platform}${PROVE ? ', PROVE m
   });
   const rec = JSON.parse(fs.readFileSync(logPath, 'utf8').trim().split('\n').pop());
 
-  // The rung this platform routes to, stated per platform so a Windows run asserts something.
-  if (process.platform === 'darwin') {
-    ok(rec.would_fire === 'macos', 'macOS with no opt-in routes to the osascript rung');
-    withEnv({ HANDOFF_NOTIFY_LOG: logPath, HANDOFF_TEST: "1", HANDOFF_TERMINAL_NOTIFIER: "/opt/homebrew/bin/terminal-notifier" }, () => {
-      fresh().notify({ title: 'routing2', body: 'b' });
+  /* EVERY PLATFORM'S ROUTING, ASSERTED ON EVERY MACHINE — by declaring the profile rather than
+   * waiting to be run somewhere. This block used to branch on the host: a macOS run asserted the
+   * two macOS rungs and never the Windows one, a Windows run asserted the reverse, and no machine
+   * ever checked all three. That is the same inherit-don't-declare defect the suites exist to
+   * catch, sitting inside the suite. */
+  const { profileFor } = require('./bin/platform-profile');
+  const routeUnder = (plat, env) => {
+    withEnv(Object.assign({ HANDOFF_NOTIFY_LOG: logPath, HANDOFF_TEST: '1' }, env || {}), () => {
+      fresh().notify({ title: 'routing-' + plat, body: 'b' }, { profile: profileFor(plat) });
     });
-    const rec2 = JSON.parse(fs.readFileSync(logPath, 'utf8').trim().split('\n').pop());
-    ok(rec2.would_fire === 'terminal-notifier', 'an explicit HANDOFF_TERMINAL_NOTIFIER path opts into the clickable rung');
-  } else if (process.platform === 'win32') {
-    ok(rec.would_fire === 'windows-toast', 'Windows routes to the PowerShell toast rung — NOT "unavailable"');
-  } else {
-    ok(rec.would_fire === 'unavailable', 'an unsupported platform says so plainly rather than claiming a ping');
-  }
+    return JSON.parse(fs.readFileSync(logPath, 'utf8').trim().split('\n').pop());
+  };
+
+  ok(routeUnder('darwin', { HANDOFF_TERMINAL_NOTIFIER: '' }).would_fire === 'macos',
+    'macOS with no opt-in routes to the osascript rung');
+  ok(routeUnder('darwin', { HANDOFF_TERMINAL_NOTIFIER: '/opt/homebrew/bin/terminal-notifier' }).would_fire === 'terminal-notifier',
+    'an explicit HANDOFF_TERMINAL_NOTIFIER path opts into the clickable rung');
+  ok(routeUnder('win32').would_fire === 'windows-toast',
+    'Windows routes to the PowerShell toast rung — NOT "unavailable"');
+  ok(routeUnder('linux').would_fire === 'unavailable',
+    'an unsupported platform says so plainly rather than claiming a ping');
 
   // A notification must never break a send. Garbage in, no throw.
   withEnv({ HANDOFF_NOTIFY_LOG: logPath, HANDOFF_TEST: "1" }, () => {

@@ -73,6 +73,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+/* THE ONLY PLACE THE OS IS ALLOWED TO MATTER is bin/platform-profile.js. This module reads a
+ * PROFILE — a value — and never asks process.platform itself. That is what makes every branch here
+ * reachable from any machine: a test passes a different profile instead of needing a different
+ * computer, which was the only oracle available when Windows-only defects shipped. */
+const { profileFor, CURRENT } = require('./platform-profile');
 
 /* THE KNOCK NAMES THE SENDER WITHOUT IMPERSONATING (spec amendment, owner-approved
  * 2026-08-09).
@@ -140,7 +145,7 @@ function probePeerVerbs(opts) {
    * cover. Five capability-probe tests failed on the peer for that reason alone, testing nothing
    * about the code. Production passes nothing. */
   const o = opts || {};
-  const platform = o.platform || process.platform;
+  const prof = o.profile || (o.platform ? profileFor(o.platform) : CURRENT);
   const sock = o.socketVar !== undefined ? o.socketVar : process.env.CLAUDE_CODE_MESSAGING_SOCKET;
   if (sock && String(sock).trim()) {
     return { peer_verbs: true, evidence: 'CLAUDE_CODE_MESSAGING_SOCKET is set — this session binds an inbox socket' };
@@ -148,8 +153,9 @@ function probePeerVerbs(opts) {
   /* Windows is excluded by the product, not by a missing file, so absence there is CONCLUSIVE and
    * absence elsewhere is not: a launchd-spawned process legitimately lacks the variable while the
    * feature works fine for interactive sessions on the same machine. */
-  if (platform === 'win32') {
-    return { peer_verbs: false, evidence: 'native Windows — cross-session messaging is not offered on this platform' };
+  /* Absence is a DENIAL where the profile says so, and merely unmeasured everywhere else. */
+  if (prof.peerVerbsAbsenceIsConclusive) {
+    return { peer_verbs: false, evidence: `${prof.displayName} — cross-session messaging is not offered on this platform` };
   }
   try {
     const dir = o.socketDir || process.env.CLAUDE_CODE_SOCKET_DIR || '/tmp/cc-socks';
@@ -188,7 +194,7 @@ function peerVerbsAvailable() {
     const j = JSON.parse(raw);
     if (typeof j.peer_verbs === 'boolean') return { ok: j.peer_verbs, source: 'wake-capabilities.json' };
   } catch (_) { /* unrecorded — fall through to the platform default */ }
-  return { ok: process.platform !== 'win32', source: `platform default (${process.platform})` };
+  return { ok: CURRENT.peerVerbsPossible, source: `platform default (${CURRENT.platform})` };
 }
 
 /* SEAM GATING — a test double must not be armable in production by one environment variable.
@@ -256,7 +262,7 @@ function sessionsDir() {
  * corrupted prompt: a wake that degrades honestly beats one that delivers a garbled line. */
 let CLAUDE_BIN_CACHE;
 let CLAUDE_BIN_WHY = null;
-const IS_WIN = process.platform === 'win32';
+
 /* INJECTABLE, so the Windows branch is testable from a Mac.
  *
  * The `.exe`-over-shim preference is the part most worth a regression test and the part hardest to
@@ -266,30 +272,22 @@ const IS_WIN = process.platform === 'win32';
  * passes nothing and behaves exactly as before. */
 function claudeBinPath(opts) {
   const o = opts || {};
-  const isWin = o.isWin !== undefined ? o.isWin : IS_WIN;
+  const prof = o.profile || (o.isWin !== undefined ? profileFor(o.isWin ? 'win32' : 'darwin') : CURRENT);
   const exists = o.exists || (p => { try { return fs.existsSync(p); } catch (_) { return false; } });
   if (!opts && process.env.HANDOFF_CLAUDE_BIN) return process.env.HANDOFF_CLAUDE_BIN;
   if (!opts && CLAUDE_BIN_CACHE !== undefined) return CLAUDE_BIN_CACHE;
-  const home = os.homedir();
-  const candidates = isWin ? [
-    path.join(home, '.local', 'bin', 'claude.exe'),
-    path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'Programs', 'claude', 'claude.exe'),
-  ] : [
-    path.join(home, '.local', 'bin', 'claude'),
-    '/opt/homebrew/bin/claude',
-    '/usr/local/bin/claude',
-  ];
+  const candidates = prof.cliCandidates;
   for (const p of candidates) { if (exists(p)) return (CLAUDE_BIN_CACHE = opts ? p : (CLAUDE_BIN_CACHE = p)); }
   try {
     const out = o.whichOutput !== undefined ? o.whichOutput : require('child_process')
-      .execFileSync(isWin ? 'where' : 'which', ['claude'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+      .execFileSync(prof.cliLookupCommand, ['claude'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
     /* `where` prints EVERY match, one per line, and the first is not necessarily usable — prefer a
      * directly-spawnable .exe over anything else. `which` prints a single line, so this is a no-op
      * on POSIX. */
     const hits = out.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-    const exe = isWin ? hits.find(h => /\.exe$/i.test(h)) : hits[0];
+    const exe = prof.cliRequiresDirectlySpawnable ? hits.find(prof.cliSpawnableTest) : hits[0];
     if (exe) { if (!opts) CLAUDE_BIN_CACHE = exe; return exe; }
-    if (isWin && hits.length) {
+    if (prof.cliRequiresDirectlySpawnable && hits.length) {
       CLAUDE_BIN_WHY = `only a shell shim was found (${hits[0]}); a .cmd/.bat cannot carry the multi-line relay prompt`;
       if (!opts) CLAUDE_BIN_CACHE = null;
       return null;

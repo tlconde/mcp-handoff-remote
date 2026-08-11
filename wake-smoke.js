@@ -35,6 +35,14 @@ const CAP_HOME = require('fs').mkdtempSync(require('path').join(require('os').tm
 require('fs').writeFileSync(require('path').join(CAP_HOME, 'wake-capabilities.json'),
   JSON.stringify({ peer_verbs: true, note: 'suite precondition: these tests exercise rung 2 and must not depend on the host OS default' }));
 process.env.HANDOFF_HOME = CAP_HOME;
+/* AND THE BINARY, for the same reason. These tests inject a fake `spawn` and assert on its argv —
+ * they are about the SHAPE of the relay call, not about finding a real CLI. Left undeclared,
+ * claudeBinPath resolves against the host: it finds one on this Mac and finds nothing under a
+ * win32 identity (no .exe on disk, no `where` to run), so ten rung-2 tests silently degraded to
+ * notify and asserted nothing they meant to. Declaring it is the same rule as declaring the
+ * capability: state the precondition, do not inherit it. The test that is ABOUT resolution
+ * overrides this with its own value. */
+process.env.HANDOFF_CLAUDE_BIN = process.env.HANDOFF_CLAUDE_BIN || '/test/fake/claude';
 
 let pass = 0, fail = 0;
 function test(name, fn) {
@@ -212,7 +220,12 @@ test('unset tier does not wake (attention only)', () => {
 });
 
 // ---- open target → -p relay ----
-test('attention + open → exactly ONE relay call, correct argv, no notify', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir, HANDOFF_WAKE_MODEL: null, HANDOFF_CLAUDE_BIN: null }, () => {
+/* Declares the binary rather than discovering it. This used to unset HANDOFF_CLAUDE_BIN and then
+ * assert `bin.endsWith('/claude')` — a POSIX shape, so the test inherited the host twice over: it
+ * needed a real CLI on disk AND a unix path separator. Under any other platform identity it
+ * degraded to notify and asserted nothing about the argv it is named for. Resolution has its own
+ * five tests now; this one is about the SHAPE OF THE RELAY CALL, so it states the binary. */
+test('attention + open → exactly ONE relay call, correct argv, no notify', () => withEnv({ HANDOFF_SESSIONS_DIR: fx.dir, HANDOFF_WAKE_MODEL: null, HANDOFF_CLAUDE_BIN: '/declared/claude' }, () => {
   const s = recorder(); const n = notifyRecorder();
   const r = wake({ tier: 'attention', thread: 'Wake tier', conversation: 'Wake tier', from: 'chat', native_ref: { session_id: OPEN_UUID } }, { spawn: s.spawn, notify: n.notify });
   assert.strictEqual(r.woke, true);
@@ -222,7 +235,7 @@ test('attention + open → exactly ONE relay call, correct argv, no notify', () 
   const { bin, argv } = s.calls[0];
   // Resolved absolute path, not the bare name: under launchd's minimal PATH the bare name
   // is unspawnable, which silently disabled this whole rung in production.
-  assert.ok(bin.endsWith('/claude') || bin === 'claude', `invokes the claude CLI as a product, got: ${bin}`);
+  assert.strictEqual(bin, '/declared/claude', `invokes the CLI the caller declared, as a product — got: ${bin}`);
   assert.ok(bin.startsWith('/'), 'and resolves it to an absolute path rather than trusting PATH');
   assert.strictEqual(argv[0], '-p');
   assert.ok(argv.includes('--model'), 'passes --model');

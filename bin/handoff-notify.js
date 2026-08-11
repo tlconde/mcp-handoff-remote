@@ -43,6 +43,9 @@
  */
 'use strict';
 const { execFile } = require('child_process');
+/* Platform facts come from the profile, never from process.platform — see bin/platform-profile.js.
+ * This module decides WHETHER to notify; the profile only says what this machine HAS. */
+const { CURRENT: PLATFORM } = require('./platform-profile');
 
 /* SEAM GATING — deliberately duplicated from bin/handoff-wake.js rather than shared.
  * These two modules are standalone by design and the dependency runs one way (wake requires
@@ -170,7 +173,12 @@ function dispatch(cmd, argv, rung) {
   });
 }
 
-function notify(ev) {
+/* `opts.profile` injects the platform profile, so every rung is reachable from any machine.
+ * Without it these branches could only be exercised by BEING on the platform — which is why the
+ * macOS rungs and the Windows rung had never been run in the same place, and why a Windows-only
+ * defect could sit in shipped runtime until a human read the function. Production passes nothing. */
+function notify(ev, opts) {
+  const PLATFORM = (opts && opts.profile) || require('./platform-profile').CURRENT;
   try {
     if (process.env.HANDOFF_NO_NOTIFY) return { fired: false, channel: 'disabled' };
     const title = String((ev && ev.title) || 'handoff');
@@ -191,8 +199,8 @@ function notify(ev) {
         conversation: (ev && ev.conversation) || null, meta: (ev && ev.meta) || null,
         // Which rung WOULD have fired, and what the click would carry. Without this the
         // smoke can only assert that something was notified, not that the tap works.
-        would_fire: process.platform === 'darwin' ? (clickableRungEnabled() ? 'terminal-notifier' : 'macos')
-          : process.platform === 'win32' ? 'windows-toast' : 'unavailable',
+        would_fire: PLATFORM.isMac ? (clickableRungEnabled() ? 'terminal-notifier' : PLATFORM.notifyChannel)
+          : PLATFORM.notifyChannel,
         click: clickableRungEnabled() ? (notifyTarget(ev).activate || 'none') : 'none',
         click_target: notifyTarget(ev).name || null
       }) + '\n');
@@ -208,7 +216,7 @@ function notify(ev) {
       return { fired: true, channel: 'dispatch', confirmed: false };
     }
 
-    if (process.platform === 'darwin') {
+    if (PLATFORM.isMac) {
       const target = notifyTarget(ev);
       /* RUNG ORDER REVERTED, and the earlier order was a REGRESSION THAT SHIPPED.
        * terminal-notifier was made primary to fix the Script Editor click. It exits 0 and
@@ -272,7 +280,7 @@ function notify(ev) {
      * `node notify-smoke.js --prove` fires one to be confirmed by eye on any new machine (lab
      * tooling, not shipped — see repo history). That is why this comment names a DATE and a
      * WITNESS rather than saying it works. */
-    if (process.platform === 'win32') {
+    if (PLATFORM.isWin) {
       const xml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       const q = s => String(s).replace(/'/g, "''"); // PowerShell single-quote escape
       const doc =

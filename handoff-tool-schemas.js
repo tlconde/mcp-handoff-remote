@@ -333,6 +333,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
+        cli_uuid: { type: 'string', description: 'REQUIRED when calling over the relay from another machine, and meaningless locally. This tool runs on the STORE HOST, so it cannot see your CLAUDE_CODE_SESSION_ID however correctly it is set — pass it and the record is keyed to your seat instead of being refused. The claim is ASSERTED, recorded as evidence_class "cli-uuid-asserted-by-peer-mount": your process verified it, this store did not watch it happen, and I2 keeps those apart. Without it a remote caller is refused rather than given an anonymous record.' },
+        cli_pid: { type: 'number', description: 'Optional, alongside cli_uuid: your process id, so a contested uuid can be resolved by fact rather than by preference.' },
+        cwd: { type: 'string', description: 'Optional, alongside cli_uuid: your working directory, for the record\'s display and for the cwd-mismatch check.' },
+        host: { type: 'string', description: 'Optional, alongside cli_uuid: your machine\'s os.hostname(), so the record declares the device that owns it.' },
         title: { type: 'string', description: 'Human title for this session\'s record. Optional.' },
         role: { type: 'string', description: 'Role/lane label discriminating same-repo sessions: "build", "flow tests", "ux", free text. Optional; empty string clears it.' },
         nickname: { type: 'string', description: 'ONE WORD a human can type from memory to address this record — the recovery path for the first call after context is lost, when the model no longer knows which session it is. Unique per surface and REFUSED AT SET TIME if another live record on this surface holds it, because a collision found at use time is found by someone who has already lost their identity. A refusal names the holder and leaves your registration intact. Empty string clears it. Letters, digits, hyphen, underscore only: a name that needs quoting is not one you type under pressure.' },

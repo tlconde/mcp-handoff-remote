@@ -2044,7 +2044,21 @@ async function callTool(name, args, ctx, core) {
      * is strictly better than an anonymous record and strictly weaker than a local mint, and the
      * record says which. Provenance that overstates itself is the failure this whole system is
      * built to avoid. */
-    const peerId = (ctx && ctx.remote && args && args._peer_identity) || null;
+    /* TWO MOUNTS REACH THIS VERB, AND THE FIRST FIX ONLY COVERED ONE.
+     *
+     * `_peer_identity` is injected by mcp-handoff.js — the LOCAL stdio mount a peer runs while
+     * pointed at a remote store. But a claude.ai CONNECTOR seat never touches that file: it speaks
+     * to handoff-relay.js, which has its own handleMcp and calls the daemon directly. So the first
+     * cut fixed a mount that seat does not use, and it stayed anonymous with a byte-identical
+     * refusal — which is how the peer identified the gap: it hit the OLD path, not a new one that
+     * failed.
+     *
+     * So the uuid is also accepted as an ordinary ARGUMENT, documented in the schema, exactly as
+     * check_inbox takes `host` and for exactly the same reason: the tool runs on the STORE HOST, so
+     * any caller that is not local must SAY what only it can know. One rule, both mounts, and a
+     * client we do not ship can satisfy it too. */
+    const peerId = (ctx && ctx.remote && args && (args._peer_identity ||
+      (args.cli_uuid ? { cli_uuid: args.cli_uuid, cli_pid: args.cli_pid || null, cwd: args.cwd || null, host: args.host || null } : null))) || null;
     if (peerId && peerId.cli_uuid) {
       ctx = Object.assign({}, ctx, {
         cli_uuid: peerId.cli_uuid,

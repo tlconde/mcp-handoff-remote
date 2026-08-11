@@ -384,6 +384,29 @@ async function main() {
   try { store = makeStoreClient(); }
   catch (e) { log('cannot start:', (e && e.message) || e); process.exit(1); }
   log(`store: ${store.describe()}`);
+
+  /* THE CAPABILITY PROBE, AS THE FIRST-CYCLE JOB — ratified, and until now a manual instruction
+   * inside a comment that nobody ever ran. Every machine in this fleet has therefore been running
+   * on the PLATFORM DEFAULT rather than on what it actually has, which is how "peer messaging
+   * cannot work on any OS" survived: the exception was never contradicted by a measurement,
+   * because no measurement was ever taken.
+   *
+   * It belongs HERE rather than at the send site for the reason the gate's own comment gives —
+   * wake() is called synchronously and must not probe inline — and it belongs to the AGENT rather
+   * than to some separate tool because the agent is the thing that runs on every machine anyway.
+   *
+   * It costs nothing: presence of the messaging socket IS the capability, per the product docs, so
+   * there is no model spawn and no token. An INCONCLUSIVE result writes nothing and leaves the
+   * pessimistic default standing — erring toward refusing costs a notification the human still
+   * sees, while erring toward relaying costs invisible silence. */
+  const probe = require('./handoff-wake').recordPeerVerbs();
+  if (probe.written) {
+    log(`capability probed: peer verbs ${probe.peer_verbs ? 'AVAILABLE' : 'unavailable'} — ${probe.evidence}`);
+  } else if (probe.peer_verbs === null) {
+    log(`capability INCONCLUSIVE from this process — ${probe.evidence}. Nothing recorded; the pessimistic default stands.`);
+  } else {
+    log(`capability probe could not be recorded: ${probe.error || 'unknown'} — the default stands.`);
+  }
   /* A remote agent cannot enumerate, so it must say so rather than report a quiet cycle over an
    * empty list. sessions:null means "cannot enumerate"; {} would mean "none exist", and reading
    * one as the other is how an agent looks healthy while doing nothing. */

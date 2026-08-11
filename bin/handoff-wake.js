@@ -111,6 +111,69 @@ const WAKE_LINE = (thread, from) => from
  *
  * The DEFAULT when unrecorded is deliberately per-platform rather than optimistic: an optimistic
  * default reproduces the forever-lie on every un-probed Windows machine, which is the exact bug. */
+/* THE PROBE, AND IT COSTS NOTHING — which is why it can be automatic.
+ *
+ * The comment above tells an operator to run `claude -p "…is ListAgents available…"` by hand and
+ * write the answer. That instruction shipped and nobody ever ran it, which is why every machine in
+ * this fleet has been running on the PLATFORM DEFAULT rather than on what it actually has. A manual
+ * step in a comment is not a mechanism.
+ *
+ * Two better signals exist, both free and both deterministic:
+ *   CLAUDE_CODE_MESSAGING_SOCKET — exported to hooks and Bash commands for every session that binds
+ *                                 an inbox socket. Its PRESENCE is the feature, per the product docs.
+ *   the socket directory        — the same fact on disk, visible to a process that did not inherit
+ *                                 the session's environment (launchd, a scheduled task, a daemon).
+ *
+ * A model spawn was never needed. It also could not have answered honestly: a free-form "list your
+ * tools" reply can OMIT rather than deny, and `--allowedTools` naming a verb that does not exist is
+ * a SILENT no-op — so the documented probe could return a confident yes on a machine with no
+ * messaging at all. The peer measured exactly that trap.
+ *
+ * THE ASYMMETRY IS RECORDED IN THE FILE, per the ruling, because whoever reads it later needs to
+ * know which way to err: wrong toward REFUSING costs a notification the human still sees; wrong
+ * toward RELAYING costs invisible silence. So an inconclusive probe writes nothing and leaves the
+ * pessimistic platform default standing, rather than guessing optimistically. */
+function probePeerVerbs() {
+  const sock = process.env.CLAUDE_CODE_MESSAGING_SOCKET;
+  if (sock && String(sock).trim()) {
+    return { peer_verbs: true, evidence: 'CLAUDE_CODE_MESSAGING_SOCKET is set — this session binds an inbox socket' };
+  }
+  /* Windows is excluded by the product, not by a missing file, so absence there is CONCLUSIVE and
+   * absence elsewhere is not: a launchd-spawned process legitimately lacks the variable while the
+   * feature works fine for interactive sessions on the same machine. */
+  if (process.platform === 'win32') {
+    return { peer_verbs: false, evidence: 'native Windows — cross-session messaging is not offered on this platform' };
+  }
+  try {
+    const dir = process.env.CLAUDE_CODE_SOCKET_DIR || '/tmp/cc-socks';
+    const entries = fs.readdirSync(dir).filter(f => f.endsWith('.sock'));
+    if (entries.length) {
+      return { peer_verbs: true, evidence: `${entries.length} session socket(s) present in ${dir}` };
+    }
+  } catch (_) { /* directory absent or unreadable — inconclusive, not a denial */ }
+  return { peer_verbs: null, evidence: 'no socket variable and no socket directory — INCONCLUSIVE from this process' };
+}
+
+/** Record the probe, but never overwrite a conclusive answer with an inconclusive one. */
+function recordPeerVerbs(homeDir) {
+  const home = homeDir || process.env.HANDOFF_HOME || path.join(os.homedir(), '.claude-handoff');
+  const p = path.join(home, 'wake-capabilities.json');
+  const r = probePeerVerbs();
+  if (r.peer_verbs === null) return { written: false, ...r };
+  try {
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(p, JSON.stringify({
+      peer_verbs: r.peer_verbs,
+      probed_at: new Date().toISOString(),
+      evidence: r.evidence,
+      note: 'Wrong toward REFUSING costs a notification the human still sees. Wrong toward RELAYING ' +
+        'costs invisible silence. When in doubt this file is not written and the pessimistic ' +
+        'platform default stands.',
+    }, null, 2));
+    return { written: true, path: p, ...r };
+  } catch (e) { return { written: false, error: (e && e.message) || String(e), ...r }; }
+}
+
 function peerVerbsAvailable() {
   const home = process.env.HANDOFF_HOME || path.join(os.homedir(), '.claude-handoff');
   try {
@@ -547,7 +610,7 @@ function wake(delivery, opts) {
   }
 }
 
-module.exports = { wake, nativeReach, relayPrompt, notifyCopy, WAKE_LINE, claudeBinPath };
+module.exports = { wake, nativeReach, relayPrompt, notifyCopy, WAKE_LINE, claudeBinPath, probePeerVerbs, recordPeerVerbs, peerVerbsAvailable };
 
 // CLI: node handoff-wake.js '<json-delivery>'  (thin harness for the live proof / manual runs)
 if (require.main === module) {

@@ -227,7 +227,19 @@ function makeStoreClient(opts) {
       mode: 'local',
       describe: () => 'local store (filesystem, this host owns it)',
       async getState() { return (await core.handleApi('GET', '/api/state', {}, {})).payload; },
-      async heartbeat(beat) { return (await core.handleApi('POST', '/api/agents/heartbeat', {}, beat)).payload; },
+      /* ONE SHAPE FROM BOTH IMPLEMENTATIONS — {text, owned, asserted}. This returned the raw
+       * payload while the remote one returned {recorded: text}, so the caller had to know which
+       * store it had in order to read the answer. That is precisely what this seam exists to
+       * prevent, and the agent did not know: it ran String() over an OBJECT, got "[object Object]",
+       * found no OWNED: line in it, and concluded it owned nothing — every cycle, structurally,
+       * on a heartbeat whose own reply said one record had been claimed. The client knows which
+       * implementation it is; the caller must not have to. */
+      async heartbeat(beat) {
+        const payload = (await core.handleApi('POST', '/api/agents/heartbeat', {}, beat)).payload;
+        const agent = (payload && payload.agent) || {};
+        const owned = Object.keys(agent.sessions || {});
+        return { text: null, owned, asserted: owned.length, raw: payload };
+      },
     };
   }
 
@@ -293,7 +305,17 @@ function makeStoreClient(opts) {
         default_verdict: beat.default_verdict,
         owns: beat.owns,
       }, TIMEOUT_MS);
-      return { recorded: text };
+      /* Parsed HERE, where the wire format is known, and returned in the same shape the local
+       * implementation uses. `asserted` is the store's OWN count from its reply sentence, kept
+       * separate from the parsed ids on purpose: if the two disagree, the parse failed, and the
+       * caller can say so instead of believing the smaller number. A value that failed to parse
+       * and a value that is genuinely empty must not be indistinguishable. */
+      const owned = String(text || '').split('\n')
+        .filter(l => l.startsWith('OWNED:'))
+        .flatMap(l => l.slice(6).trim().split(/\s+/))
+        .filter(Boolean);
+      const m = /(\d+)\s+record\(s\) carry a host-asserted verdict/.exec(String(text || ''));
+      return { text, owned, asserted: m ? Number(m[1]) : owned.length, raw: text };
     },
   };
 }

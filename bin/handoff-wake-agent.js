@@ -230,9 +230,27 @@ async function cycle(state) {
        * On this platform that resolves to notify — rungs 1 and 2 are unavailable on Windows
        * (measured 2026-08-10: no --channels in the build, no ListAgents even inside a spawned
        * one-shot), so the honest local rung is a notification. Nothing here claims a turn started. */
-      const owned = new Set(String(hb || '').split('\n')
-        .filter(l => l.startsWith('OWNED:'))
-        .flatMap(l => l.slice(6).trim().split(/\s+/)).filter(Boolean));
+      /* The store client returns {owned, asserted} from BOTH implementations now, so this no
+       * longer parses a wire format it should never have seen. It used to run String() over the
+       * reply OBJECT — "[object Object]" — find no OWNED: line, and conclude it owned nothing,
+       * every cycle, while the heartbeat's own reply said a record had been claimed.
+       *
+       * AND THE CONTRADICTION IS CHECKED RATHER THAN AVERAGED. `asserted` is the store's own
+       * count; `owned` is what we could parse. If the store says it recorded verdicts for N
+       * records and we hold zero ids, the parse failed — that is not a world in which we own
+       * nothing, it is a world we cannot read. Saying "this host owns 0 records" there would
+       * narrate a parse failure as a fact about the fleet, and it sent an operator to repair
+       * records that were already correct. A value that failed to parse and a value that is
+       * genuinely empty must not produce the same sentence. */
+      const owned = new Set(hb && Array.isArray(hb.owned) ? hb.owned : []);
+      const asserted = hb && typeof hb.asserted === 'number' ? hb.asserted : owned.size;
+      if (asserted > 0 && owned.size === 0) {
+        log(`⚠ CANNOT READ THE HEARTBEAT'S ANSWER: the store reports ${asserted} record(s) carry a ` +
+          `host-asserted verdict, and this agent parsed 0 owned id(s) from the same reply. That is a ` +
+          `contradiction, not an empty fleet — the records are NOT the thing to fix. Delivery is ` +
+          `skipped this cycle rather than proceeding on the smaller number.`);
+        return state;
+      }
       const waitingRows = parsePeekRows(String(st.peek || ''));
       const mine = waitingRows.filter(r => owned.has(r.session_id));
       forgetKeysExcept(state, 'rec:', new Set(mine.map(r => `rec:${r.session_id}`)));

@@ -1838,9 +1838,21 @@ async function callTool(name, args, ctx, core) {
       const h = declaredHostOf(s);
       return h && h !== HERE && freshMessages(s).length;
     });
+    /* A HOSTLESS RECORD BELONGS TO THE STORE HOST, NOT TO WHOEVER ASKS.
+     *
+     * The first cut read "no declared host OR my name", for everyone. That is right for a LOCAL
+     * seat — a record minted here without a host is this machine's — and wrong for a remote one,
+     * because it handed every hostless record on the store host to any peer that named any host at
+     * all. The original defect, wearing the fix as a hat.
+     *
+     * It survived its own test suite: the case asserting a remote caller "does not reach the store
+     * host's records" passed because that record had already been drained earlier in the run and
+     * had no fresh mail left to leak. A test that passes for the wrong reason is indistinguishable
+     * from one that works, which is why the fixture that caught this — a host owning nothing being
+     * told it owned three records — is the more valuable one. */
     sessions = sessions.filter(s => {
       const h = declaredHostOf(s);
-      return !h || h === HERE;
+      return isRemoteCaller ? h === claimedHost : (!h || h === HERE);
     });
     if (args && args.title_contains) {
       const t = args.title_contains.toLowerCase();
@@ -1895,11 +1907,35 @@ async function callTool(name, args, ctx, core) {
      * host makes the empty answer stand on its own as evidence, and would have made the old
      * build's silent drop visible on the FIRST call rather than the third. Proposed by the peer
      * that paid for the ambiguity. */
+    /* THREE OUTCOMES, NOT TWO — and the two-outcome version was WORSE than the vague one it
+     * replaced, which is the part worth remembering.
+     *
+     * This branch is reached when no unread mail was found. The first fix narrated that as "no
+     * records declare host X", which is a claim about the REGISTRY made by a function that only
+     * ever consulted the INBOX. Both facts collapse into an empty `out`, and they are not the same
+     * fact: a host can own records and simply have nothing waiting.
+     *
+     * Measured the night it shipped: a peer called it, was told no records declared its host, and
+     * would have reported its deadlock unresolved — at the exact moment a record HAD been created
+     * for it and everything was working. A false negative about ownership, in confident new copy,
+     * discovered only because it chased the contradiction through resolve_conversation.
+     *
+     * The old generic sentence was vague and therefore merely useless. This one was specific and
+     * therefore capable of being wrong, which is worse: specificity without entitlement turns an
+     * unfalsifiable sentence into a falsifiable false one. Say only what was measured applies to
+     * the shape of a sentence, not only to its subject.
+     *
+     * Reported by the peer that proposed the original improvement, against its own suggestion. */
     if (!out.length) {
-      const scope = claimedHost
-        ? `no records declare host "${claimedHost}" on surface ${surface}`
-        : `no unread messages or returns for ${surface} conversations on this host ("${HERE}")`;
-      return `${scope.charAt(0).toUpperCase()}${scope.slice(1)}.${foreignNote}`;
+      const n = sessions.length;
+      if (claimedHost) {
+        return (n
+          ? `No unread mail for the ${n} record(s) declaring host "${claimedHost}" on surface ${surface} — they exist, they are simply quiet.`
+          : `No records declare host "${claimedHost}" on surface ${surface}.`) + foreignNote;
+      }
+      return (n
+        ? `No unread messages or returns for the ${n} ${surface} record(s) on this host ("${HERE}").`
+        : `No ${surface} records on this host ("${HERE}") at all.`) + foreignNote;
     }
     return `Unread messages:\n${out.join('\n')}` + foreignNote +
       (returnTotal ? `\n\n${returnTotal} of these ${returnTotal === 1 ? 'is a' : 'are'} completed RETURN(s) — the work came back and the transaction is closed. Report it as delivered, not as still owed.` : '');

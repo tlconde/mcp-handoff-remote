@@ -62,24 +62,20 @@
 const os = require('os');
 const path = require('path');
 
-/* THIS REQUIRE MUST COME BEFORE EVERY process.env READ IN THIS FILE, and it is here rather than
- * beside its sibling below for exactly that reason.
+/* CONFIGURATION IS LOADED EXPLICITLY, ON PURPOSE, AS THE FIRST EXECUTABLE LINE.
  *
- * Requiring the store client has a LOAD-TIME SIDE EFFECT: it reads .agent-env and populates
- * process.env from it. That require used to sit ten lines BELOW the constants, so every value the
- * file documents as settable in .agent-env was read before the file had been loaded, and lost
- * silently to its fallback. HANDOFF_HOST_ID was the expensive one: REMOTE-PEER-SETUP.md instructs
- * an operator to pin the host id there, and on the peer that instruction had NEVER once taken
- * effect — the agent called itself os.hostname() while the file said something else, so it peeked
- * mail addressed to the machine, decided it owned none of it, and reported a clean cycle. A
- * healthy-looking run that delivers nothing, because a name was read before it was set.
+ * This used to happen implicitly, as a load-time side effect of requiring the store client — and
+ * that require sat ten lines BELOW the constants, so every value this file documents as settable
+ * in .agent-env was read before the file supplying it had been loaded, and lost silently to its
+ * fallback. A documented setting that never once took effect, and a peer that went blind while
+ * printing healthy cycles.
  *
- * HANDOFF_AGENT_INTERVAL was the second casualty of the same line ordering, found by looking for
- * others rather than by it failing.
- *
- * A load order that is load-bearing is a trap for the next edit, so it is named here rather than
- * left to be rediscovered: nothing that reads process.env may move above this line. */
-const { makeStoreClient } = require('./handoff-store-client');
+ * Hoisting the require would have fixed it and left the trap: the next edit that moved a constant
+ * upward, or a require downward, would rearm it, and nothing at the reading site would say so. A
+ * load order that is load-bearing is enforced by whitespace and a comment, which is no enforcement
+ * at all. So the loader is exported and CALLED, and require order stops mattering. */
+const { loadLocalEnv, makeStoreClient } = require('./handoff-store-client');
+loadLocalEnv();
 const transport = require('./handoff-transport');
 
 const AGENT_VERSION = '0.1.0';
@@ -255,7 +251,35 @@ async function cycle(state) {
          * mean anything was read, and this agent has no way to observe that it was. */
         log(`"${r.title}" — rung: ${(woke && woke.tier) || 'none'}${woke && woke.notify ? `, notification ${woke.notify.fired ? 'fired' : 'did NOT fire'}` : ''}`);
       }
-      if (!mine.length) sayIfChanged(state, 'waiting', 'nothing waiting for this host');
+      /* "I OWN NOTHING" AND "I AM MISNAMED" MUST NOT PRINT THE SAME LINE.
+       *
+       * This printed "nothing waiting for this host" for both, and that single sentence hid a live
+       * defect inside a clean run: the peer called itself os.hostname() while its records declared
+       * another name, so it peeked mail addressed to the machine, matched none of it, and reported
+       * an idle cycle. Correct credential, live relay, zero delivery, nothing to see.
+       *
+       * The discriminator is already in hand and was simply never asked for: `owned` is the set of
+       * records the store just confirmed belong to this host. Owning ZERO records while mail is
+       * waiting is not idleness — it is the shape of a name that matches nothing, and the agent is
+       * the only thing positioned to notice, because only it knows both numbers at once.
+       *
+       * Deliberately NOT an error and NOT a refusal: owning nothing is legitimate on a machine
+       * whose records have not been created yet. It is reported as a suspicion with both numbers
+       * and the name being matched, so a human can see in one line what took an evening to find. */
+      if (!mine.length) {
+        if (!owned.size && waitingRows.length) {
+          sayIfChanged(state, 'waiting',
+            `⚠ this host owns 0 records, yet ${waitingRows.length} conversation(s) hold unread mail. ` +
+            `Nothing can be delivered here. This machine calls itself "${HOST}" — if the records for ` +
+            `it declare a different name, that is the cause, and the RECORDS are what to fix: the host ` +
+            `id is os.hostname() and is not settable. A host that owns nothing and a host that is ` +
+            `misnamed are otherwise identical from here.`);
+        } else if (!owned.size) {
+          sayIfChanged(state, 'waiting', `no records declare this host ("${HOST}") — nothing to own, and no mail waiting anywhere`);
+        } else {
+          sayIfChanged(state, 'waiting', `nothing waiting for this host (${owned.size} record(s) owned)`);
+        }
+      }
     } else {
       sayIfChanged(state, 'heartbeat', 'heartbeat — skipped (dry-run)');
     }

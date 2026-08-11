@@ -78,6 +78,20 @@ function loadLocalEnv() {
   }
   return null;
 }
+/* CALLED HERE **AND** EXPORTED, and the export is the one that matters.
+ *
+ * This ran only as a load-time side effect of requiring this module, which made the ORDER of an
+ * unrelated require load-bearing in every consumer. bin/handoff-wake-agent.js read
+ * process.env.HANDOFF_HOST_ID ten lines above its require of this file, so an operator's
+ * .agent-env was parsed after the only line that consumed it and lost silently to its fallback —
+ * a documented setting that never once took effect, and a peer that went blind while reporting
+ * healthy cycles.
+ *
+ * A side effect nobody can see at the point that depends on it is not a mechanism, it is a trap
+ * with a comment next to it. So consumers now CALL loadLocalEnv() explicitly on their first line
+ * and do not rely on require order at all. It is idempotent — a real environment variable always
+ * wins and already-set keys are never overwritten — so calling it twice, or calling it when the
+ * require already ran it, costs nothing and cannot change a value. */
 const LOCAL_ENV_FILE = loadLocalEnv();
 
 const TIMEOUT_MS = Number(process.env.HANDOFF_REMOTE_TIMEOUT_MS) || 15000;
@@ -284,4 +298,4 @@ function makeStoreClient(opts) {
   };
 }
 
-module.exports = { makeStoreClient, rpc, resolveCredential, LOCAL_ENV_FILE };
+module.exports = { makeStoreClient, rpc, resolveCredential, loadLocalEnv, LOCAL_ENV_FILE };

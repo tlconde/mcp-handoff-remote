@@ -291,6 +291,20 @@ above, and by nothing else.
 
 ## The standard this codebase is held to
 
+- **DOCTRINE IS ADVISORY; TESTS ARE BINDING.** This rule is about the rules below it, and it was
+  earned the hard way: "shipping the mechanism and not the path to it" was already written here,
+  already ratified, and already cited twice — and on 2026-08-11 a documented setting shipped that
+  had NEVER once taken effect, because a value was read ten lines above the loader that supplies
+  it. A rule enforced only by prose is a rule scheduled for violation, since the next person to
+  break it will be reading a different file. **So a new doctrine line ships with a mechanical check
+  wherever one is possible**, and where none is possible, say so explicitly rather than trusting
+  the prose to hold. `bin/settings-drift-check.js` is the first of these: it fails on any documented
+  `.agent-env` key that nothing reads, or that is read before the loader runs. Run it wherever
+  `bin/build-plugin-manifests.js --check` runs.
+- **A documented setting is a claim, and claims need effects.** If a doc tells an operator to write
+  a value somewhere, one test must set it THAT WAY — the file, not `process.env`. Setting the
+  environment directly proves the code reads a variable; it never proves the operator can set it.
+  Thirty-eight tests covered a path no operator uses while the operator's path had none.
 - **Never guess.** Ambiguity is surfaced and refused, never resolved silently.
 - **Process-scoped addresses are never persisted or cached** — pids, sockets, transcript ids
   are hints, validated live at the moment of use.

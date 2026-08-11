@@ -337,7 +337,10 @@ function forwardToDaemon(name, args, ctx) {
  * So the mount loads the same file the agent does, by the same loader, BEFORE deciding what it is.
  * Requiring the store client has that as a load-time side effect: .agent-env populates process.env
  * and a real environment variable always wins over the file. One file configures both consumers. */
-try { require('./bin/handoff-store-client'); } catch (_) { /* absent in a runtime-only tree — local mode */ }
+/* Explicitly, not as a require's side effect — same reason as the wake agent's first line: the
+ * value read on the NEXT line comes from this file, and a dependency that only works because of
+ * statement order is one edit away from silently not working. */
+try { require('./bin/handoff-store-client').loadLocalEnv(); } catch (_) { /* absent in a runtime-only tree — local mode */ }
 const PEER_URL = process.env.HANDOFF_REMOTE_URL || null;
 
 /* ABSENCE OF CONFIGURATION IS NEVER A ROLE.

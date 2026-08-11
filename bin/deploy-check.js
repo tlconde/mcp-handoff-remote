@@ -15,10 +15,24 @@
  *      OPERATOR her registration had failed when it had succeeded, and she opened an
  *      investigation into a working subsystem
  *
- * Number 7 is why this file exists rather than another doctrine line. A stale HANDLER returns a
- * wrong answer somebody can read. A stale SCHEMA is worse: the client validates against it and
- * SILENTLY DELETES the undeclared arguments, so the caller, the handler and the logs all behave
- * exactly as if nothing was ever passed. Nothing anywhere reports a discarded field.
+ * Number 7 is why this file exists rather than another doctrine line. It was an ordinary stale
+ * HANDLER on the runtime lane: the argument was declared, was sent, arrived, and met old code that
+ * did not look for it. The visible kind of drift — it returned a wrong answer and a peer read it.
+ *
+ * A CORRECTION IS RECORDED HERE BECAUSE THIS FILE ONCE CARRIED THE WRONG STORY. It claimed the
+ * cause was a stale SCHEMA, with the client silently deleting an undeclared argument under
+ * additionalProperties:false. That reasoning may well be sound — an undeclared field really would
+ * be dropped with nothing to read afterwards, which really would be worse — but IT IS NOT WHAT
+ * HAPPENED, and no instance of it has ever been observed here. The peer that supplied the
+ * measurement re-read its own tool output, found the schema had declared the field all along, and
+ * retracted. An unobserved failure mode written up as a worked example is exactly the overclaim
+ * this project exists to refuse, so it is a hypothesis until something measures it.
+ *
+ * WHAT SURVIVES UNCHANGED, because a clean before/after on the identical call proves it: same
+ * arguments, same client, same route, same schema, and only the deploy differed —
+ *   pre-deploy:  status {surface, cli_uuid, cli_pid} → "You are: unidentified"
+ *   post-deploy: same call                           → "You are: lulu"
+ * committed/on-disk/running drift was the real cause, and it is what this file checks.
  *
  * "committed, on disk, and running are three different states, and all our verification tools read
  * the first two" — the peer that kept finding these. This reads the third.

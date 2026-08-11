@@ -303,7 +303,54 @@ function forwardToDaemon(name, args, ctx) {
     deadline = setTimeout(() => { try { c.destroy(); } catch (_) {} failed(new Error('daemon timeout')); }, 8000);
   });
 }
+/* PEER MODE — one fleet, one store.
+ *
+ * THE DEFECT THIS EXISTS TO KILL, observed on a real second machine 2026-08-10: the plugin's MCP
+ * server came up on a laptop with no daemon, ran the tools in-process against handoff-core, and
+ * MINTED A FRESH LOCAL STORE. Every verb then worked perfectly against a two-record universe —
+ * `list_conversations` showed no nicky, no booty, no board, and "send hi to Nicky" correctly
+ * resolved nothing. The right answer in the wrong world. A phantom store is worse than an error
+ * precisely because it ANSWERS: nothing is broken enough to notice.
+ *
+ * The seam already existed. bin/handoff-store-client.js was written for the wake agent, which has
+ * always known local from remote; the MCP server simply never asked. So peer support here is one
+ * question at the top of the call path, not a second artifact — the store-host/peer split becomes
+ * configuration, exactly as the review seat ruled.
+ *
+ * FAIL CLOSED, ALWAYS. If a remote is configured and cannot be reached, this REFUSES and says why.
+ * It must never degrade to the local path, because that degradation is the bug: the operator would
+ * get a working-looking session pointed at a universe nobody else can see. An error is recoverable;
+ * a phantom is not, because nobody goes looking for a store that answers.
+ *
+ * Detection is the presence of HANDOFF_REMOTE_URL — the same switch the agent uses, so a machine
+ * configured as a peer is a peer for every process on it rather than per-binary. */
+const PEER_URL = process.env.HANDOFF_REMOTE_URL || null;
+function peerRefusal(reason) {
+  return `REFUSED — this machine is configured as a REMOTE PEER (HANDOFF_REMOTE_URL is set) and the ` +
+    `home store could not be reached: ${reason}\n\n` +
+    `Nothing was written and NO local store was created. That refusal is deliberate: minting a local ` +
+    `store here would give you a session that answers every question correctly about a universe no ` +
+    `other machine can see — which is harder to notice than this message.\n\n` +
+    `Fix the credential or the connection and try again:\n` +
+    `  • HANDOFF_REMOTE_TOKEN must hold a valid relay credential (see REMOTE-PEER-SETUP.md)\n` +
+    `  • the relay must be reachable at ${PEER_URL}\n` +
+    `  • verify with: claude mcp list  (the remote connector should read Connected)`;
+}
+async function callToolViaRelay(name, args) {
+  const { rpc } = require('./bin/handoff-store-client');
+  const token = process.env.HANDOFF_REMOTE_TOKEN || null;
+  if (!token) return peerRefusal('HANDOFF_REMOTE_TOKEN is not set, so there is no credential to present.');
+  try {
+    return await rpc(PEER_URL, token, name, args || {}, 15000);
+  } catch (e) {
+    return peerRefusal((e && e.message) || String(e));
+  }
+}
+
 async function callTool(name, args) {
+  /* Asked FIRST, before the forwarder and before any in-process path, because both of those end at
+   * a local store. On a peer there is no correct local answer to fall back to. */
+  if (PEER_URL) return callToolViaRelay(name, args);
   // THE FLIP: forward every tool to the managed daemon (one socket round-trip), then apply
   // the same write-back. The daemon owns TOOL staleness (exit-on-stale), so the bridge-side
   // stale GATE below is skipped — a forwarder holds no tool logic to be stale.
@@ -395,3 +442,9 @@ async function handle(line) {
     fail(-32601, 'method not found: ' + method);
   } catch (e) { fail(-32603, e.message); }
 }
+
+/* Exported for tests only — the MCP loop above calls these directly. Exposing them lets the peer
+ * mode's REFUSAL be asserted as a value rather than inferred from a missing side effect: "no store
+ * was minted" proves the local path was skipped, but only reading the message proves the caller was
+ * told why. */
+module.exports = { callTool, PEER_URL };

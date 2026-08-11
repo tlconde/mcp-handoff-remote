@@ -1790,7 +1790,35 @@ async function callTool(name, args, ctx, core) {
     // looked at chat, reported nothing, and left its own two queued probes unread.
     const surface = (args && args.surface) || (nativeId ? 'code' : 'chat');
     const st = await call('GET', '/api/state');
+    /* OWN-HOST ONLY. This filtered by SURFACE ALONE, so every seat on the code surface drained
+     * every code conversation in the store — including records belonging to other machines.
+     *
+     * Measured 2026-08-11, and it is the delivery bug the fleet spent two days chasing from the
+     * wrong end: eight messages addressed to a Windows peer were marked read by this Mac's routine
+     * inbox checks, minutes after each was sent. The peer reported an empty inbox every time and
+     * was correct. Worse than losing them, the sender got a ✓✓ READ RECEIPT — so the system did not
+     * merely fail to deliver, it reported a delivery that had never happened, which is the one
+     * failure class this codebase exists to kill.
+     *
+     * The ownership rule already existed and was already enforced for the wake tier: a record
+     * declaring another host belongs to that host's agent. check_inbox simply never asked. So it
+     * asks now, by the same rule — a record with NO declared host is local and drainable, a record
+     * declaring THIS machine is ours, and anything else is someone else's mail.
+     *
+     * Foreign mail is COUNTED AND REPORTED rather than silently skipped, because "you have no
+     * mail" and "you have mail you may not read" are different facts, and hiding the second is how
+     * this stayed invisible. */
+    const HERE = require('os').hostname();
+    const declaredHostOf = s => (s.remote && s.remote.host) || (s.native_ref && s.native_ref.host) || null;
     let sessions = Object.values(st.sessions).filter(s => !s.archived && s.surface === surface);
+    const foreign = sessions.filter(s => {
+      const h = declaredHostOf(s);
+      return h && h !== HERE && freshMessages(s).length;
+    });
+    sessions = sessions.filter(s => {
+      const h = declaredHostOf(s);
+      return !h || h === HERE;
+    });
     if (args && args.title_contains) {
       const t = args.title_contains.toLowerCase();
       sessions = sessions.filter(s => s.title.toLowerCase().includes(t));
@@ -1823,8 +1851,15 @@ async function callTool(name, args, ctx, core) {
         }
       }
     }
-    if (!out.length) return `No unread messages or returns for ${surface} conversations.`;
-    return `Unread messages:\n${out.join('\n')}` +
+    /* Named, never silent. A count with the hosts attached lets a human see instantly that mail
+     * exists and is not theirs — which is the fact that was invisible while this drained it. */
+    const foreignNote = foreign.length
+      ? `\n\n${foreign.length} conversation(s) on this surface hold unread mail for ANOTHER host ` +
+        `(${[...new Set(foreign.map(declaredHostOf))].join(', ')}) — not shown and NOT marked read. ` +
+        `Only an agent on that machine may drain them.`
+      : '';
+    if (!out.length) return `No unread messages or returns for ${surface} conversations.${foreignNote}`;
+    return `Unread messages:\n${out.join('\n')}` + foreignNote +
       (returnTotal ? `\n\n${returnTotal} of these ${returnTotal === 1 ? 'is a' : 'are'} completed RETURN(s) — the work came back and the transaction is closed. Report it as delivered, not as still owed.` : '');
   }
   if (name === 'withdraw_handoff' || name === 'decline_handoff') {

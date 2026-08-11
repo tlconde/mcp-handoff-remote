@@ -2031,6 +2031,30 @@ async function callTool(name, args, ctx, core) {
   // could register but never learn its own record id, and its status would say "not yet
   // registered" immediately after registering.
   if (name === 'register_session') {
+    /* A PEER MOUNT CARRIES ITS OWN IDENTITY, and this is where the telling STICKS.
+     *
+     * A remote caller has no cli_uuid in ctx, because the tool runs on the store host. But a peer
+     * running a LOCAL mount reads CLAUDE_CODE_SESSION_ID from its own process, where it genuinely
+     * exists, and sends it as `_peer_identity`. Without this the seat could be MESSAGED and never
+     * REGISTERED — the peer's own words for the gap, and the reason every WSL seat tested today was
+     * addressable, reachable, replying, and permanently anonymous.
+     *
+     * THE EVIDENCE CLASS IS THE HONEST PART. This is `cli-uuid-asserted-by-peer-mount`: the peer's
+     * mount verified it, this store did not watch it happen, and I2 exists to keep those apart. It
+     * is strictly better than an anonymous record and strictly weaker than a local mint, and the
+     * record says which. Provenance that overstates itself is the failure this whole system is
+     * built to avoid. */
+    const peerId = (ctx && ctx.remote && args && args._peer_identity) || null;
+    if (peerId && peerId.cli_uuid) {
+      ctx = Object.assign({}, ctx, {
+        cli_uuid: peerId.cli_uuid,
+        cli_pid: peerId.cli_pid || null,
+        cwd: peerId.cwd || null,
+        sender_class: 'asserted',
+        identity_evidence: 'cli-uuid-asserted-by-peer-mount',
+        peer_host: peerId.host || null,
+      });
+    }
     const nativeId = (ctx && ctx.cli_uuid) || null;
     if (!nativeId) {
       /* THE REFUSAL MUST NAME THE RIGHT MACHINE.

@@ -105,7 +105,13 @@ function profileFor(plat, homeDir) {
       const dirs = [];
       if (process.env.CLAUDE_CODE_SOCKET_DIR) dirs.push(process.env.CLAUDE_CODE_SOCKET_DIR);
       if (!isWin && process.env.XDG_RUNTIME_DIR) dirs.push(path.join(process.env.XDG_RUNTIME_DIR, 'cc-socks'));
-      if (!isWin) dirs.push('/tmp/cc-socks');
+      if (!isWin) {
+        dirs.push('/tmp/cc-socks');
+        /* The binary's own fallback is uid-suffixed — /tmp/cc-socks-<uid>/<pid>.sock — read out of
+         * the compiled 2.1.227 by the WSL seat rather than guessed. Checking only the unsuffixed
+         * form would miss a live machine, which is the same defect this list was created to fix. */
+        try { if (typeof process.getuid === 'function') dirs.push(`/tmp/cc-socks-${process.getuid()}`); } catch (_) {}
+      }
       return dirs;
     },
 

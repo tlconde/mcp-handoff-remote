@@ -428,6 +428,27 @@ async function callToolViaRelay(name, args) {
    * same machine, from the same .agent-env. That is the "right and undeliverable" shape again, so
    * the mount asks the store client which credential this machine holds rather than deciding
    * separately. */
+  /* THE PEER CARRIES ITS OWN IDENTITY ACROSS, because it is the only process that can read it.
+   *
+   * This forwarded every tool to the relay and sent nothing about itself. So a peer running a real
+   * local mount — which is what a WSL or Linux seat has — still could not register: the store host
+   * answered `whoami` with "unidentified (no CLI uuid in this environment)", which was TRUE of the
+   * machine executing the verb and false about the machine asking. Every WSL seat tested today was
+   * stuck there, unable to name itself or hold a verified record, and that is the identity half of
+   * the enrollment ceremony failing for one missing field.
+   *
+   * The mount reads CLAUDE_CODE_SESSION_ID from its OWN process, where it is genuinely present, and
+   * sends it as a claim. The store must treat that as ASSERTED-BY-PEER-MOUNT and never as
+   * CLI-verified: this side verified it, the store did not, and I2 exists to keep those apart. What
+   * it buys is real — a peer can finally be a named seat instead of an anonymous caller — without
+   * pretending the store watched it happen. */
+  const peerIdentity = {
+    cli_uuid: nativeId() || null,
+    cli_pid: CLI_PID || null,
+    cwd: process.cwd(),
+    host: require('./bin/platform-profile').CURRENT.hostId,
+  };
+  args = Object.assign({}, args || {}, peerIdentity.cli_uuid ? { _peer_identity: peerIdentity } : {});
   const { rpc, resolveCredential } = require('./bin/handoff-store-client');
   const credential = resolveCredential();
   if (!credential) return peerRefusal('no relay credential is set (neither an Access service token nor HANDOFF_REMOTE_TOKEN), so there is nothing to present.');

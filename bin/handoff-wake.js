@@ -166,20 +166,53 @@ function sessionsDir() {
  * stubs the environment cannot test the environment.
  * So: resolve from known locations at use time, exactly like terminal-notifier, and treat
  * "not found" as a loud degrade rather than a mystery. */
+/* WINDOWS RESOLUTION (added 2026-08-11). The list above was POSIX-only: three unix paths and a
+ * `which` fallback, none of which can resolve on win32, where the lookup verb is `where` and the
+ * launcher carries an extension. Measured on HP_laptop — `where claude` prints THREE hits:
+ *   C:\Users\simoe\.local\bin\claude.exe          <- native, directly spawnable
+ *   C:\Users\simoe\AppData\Roaming\npm\claude     <- sh script, not spawnable by CreateProcess
+ *   C:\Users\simoe\AppData\Roaming\npm\claude.cmd <- shim
+ * The old code checked `~/.local/bin/claude` WITHOUT `.exe`, so it missed the one good answer and
+ * then called a `which` that does not exist there — null on every Windows machine.
+ *
+ * This was LATENT, not live: peerVerbsAvailable() refuses rung 2 on win32 before the binary is
+ * ever needed. It becomes live the moment that gate opens — a probed wake-capabilities.json, or
+ * the boundary moving — and it would present as every wake degrading to a notification with no
+ * cause named. That is the launchd-PATH defect exactly, on a platform nobody would think to check.
+ *
+ * A `.cmd`/`.bat` shim is NOT usable here even though it exists. Node >=18.20 refuses to spawn one
+ * without shell:true, and shell:true would push the relay prompt — multi-line, quoted — through
+ * cmd.exe, which mangles it. So a shim is REFUSED WITH ITS REASON rather than spawned into a
+ * corrupted prompt: a wake that degrades honestly beats one that delivers a garbled line. */
 let CLAUDE_BIN_CACHE;
+let CLAUDE_BIN_WHY = null;
+const IS_WIN = process.platform === 'win32';
 function claudeBinPath() {
   if (process.env.HANDOFF_CLAUDE_BIN) return process.env.HANDOFF_CLAUDE_BIN;
   if (CLAUDE_BIN_CACHE !== undefined) return CLAUDE_BIN_CACHE;
-  const candidates = [
-    path.join(os.homedir(), '.local', 'bin', 'claude'),
+  const home = os.homedir();
+  const candidates = IS_WIN ? [
+    path.join(home, '.local', 'bin', 'claude.exe'),
+    path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'Programs', 'claude', 'claude.exe'),
+  ] : [
+    path.join(home, '.local', 'bin', 'claude'),
     '/opt/homebrew/bin/claude',
     '/usr/local/bin/claude',
   ];
   for (const p of candidates) { try { if (fs.existsSync(p)) return (CLAUDE_BIN_CACHE = p); } catch (_) {} }
   try {
-    const found = require('child_process')
-      .execFileSync('which', ['claude'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
-    if (found) return (CLAUDE_BIN_CACHE = found);
+    const out = require('child_process')
+      .execFileSync(IS_WIN ? 'where' : 'which', ['claude'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+    /* `where` prints EVERY match, one per line, and the first is not necessarily usable — prefer a
+     * directly-spawnable .exe over anything else. `which` prints a single line, so this is a no-op
+     * on POSIX. */
+    const hits = out.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const exe = IS_WIN ? hits.find(h => /\.exe$/i.test(h)) : hits[0];
+    if (exe) return (CLAUDE_BIN_CACHE = exe);
+    if (IS_WIN && hits.length) {
+      CLAUDE_BIN_WHY = `only a shell shim was found (${hits[0]}); a .cmd/.bat cannot carry the multi-line relay prompt`;
+      return (CLAUDE_BIN_CACHE = null);
+    }
   } catch (_) { /* not on this PATH either */ }
   return (CLAUDE_BIN_CACHE = null);
 }
@@ -404,7 +437,11 @@ function wake(delivery, opts) {
         // the launchd-PATH defect.
         const c0 = notifyCopy(d);
         const nr0 = doNotify(Object.assign({ conversation: d.conversation || thread, meta: { session_id: d.session_id || null, from: d.from || null, surface: d.surface || 'code', window: (d.native_ref && d.native_ref.name) || null, device: d.device || null } }, notifyCopy(d)));
-        const r0 = { woke: false, tier: nr0 && nr0.fired ? 'notify' : 'store', reason: 'claude binary not found — relay impossible (set HANDOFF_CLAUDE_BIN)', notified: nr0 || null };
+        const r0 = { woke: false, tier: nr0 && nr0.fired ? 'notify' : 'store',
+          reason: CLAUDE_BIN_WHY
+            ? `claude found but not spawnable — relay impossible: ${CLAUDE_BIN_WHY} (set HANDOFF_CLAUDE_BIN to a .exe)`
+            : 'claude binary not found — relay impossible (set HANDOFF_CLAUDE_BIN)',
+          notified: nr0 || null };
         logChoice(r0); return r0;
       }
       const argv = ['-p', relayPrompt(rc.name, wakeLine),
@@ -510,7 +547,7 @@ function wake(delivery, opts) {
   }
 }
 
-module.exports = { wake, nativeReach, relayPrompt, notifyCopy, WAKE_LINE };
+module.exports = { wake, nativeReach, relayPrompt, notifyCopy, WAKE_LINE, claudeBinPath };
 
 // CLI: node handoff-wake.js '<json-delivery>'  (thin harness for the live proof / manual runs)
 if (require.main === module) {

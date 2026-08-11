@@ -139,8 +139,13 @@ case. There is no peer lookup to mis-key: **the verb is absent, so nothing is ev
    *succeeds*, the peer lookup never happens, and the send fails into the subagent address space —
    so rung 2 on Windows returns `dispatched` **every time, forever, having delivered nothing.** That
    is the dispatched-is-not-delivered failure mode this repo documented on 2026-08-10, except here
-   it is not a risk but a certainty. **The tier should refuse rung 2 where the verb does not exist
-   rather than reporting a dispatch it cannot honour.**
+   it is not a risk but a certainty. **FIXED 2026-08-11** — `peerVerbsAvailable()` in
+   `bin/handoff-wake.js` gates rung 2 *before* the spawn and degrades to notify naming the reason,
+   because a spawn that cannot deliver still costs a process and still reports `dispatched`: the
+   report was the harm, not the spawn. The capability is READ from
+   `$HANDOFF_HOME/wake-capabilities.json`, never probed inline (a probe costs a model spawn per
+   send), and the default when unrecorded is per-platform rather than optimistic — an optimistic
+   default would reproduce the forever-lie on every un-probed Windows machine.
 
 **The 25s median in the table above therefore stands as relay-attributed** — the rung is real, on
 this platform, at this version.
@@ -163,19 +168,47 @@ and lets native's own SendMessage/ListAgents carry the frame. We never hand-roll
 peerProtocol-versioned wire."* A **spawned one-shot is a different process with an explicitly
 granted tool set**, and nothing measured so far says anything about what it can see on Windows.
 
-**So the open question is precise and cheap to answer:** does `claude -p --allowedTools ListAgents
-SendMessage` on Windows discover and reach a local session? Until someone runs that, the honest
-status of Windows peer delivery is **UNKNOWN**, not impossible. Two further reasons not to close it:
+**CLOSED 2026-08-11 — this section used to end by calling Windows peer delivery UNKNOWN and
+proposing the very probe the section above had already run.** Two paragraphs of this file
+contradicted each other for a day. The question is settled three ways and none of them is an
+inference:
 
-- `peerProtocol: 1` is declared on the Windows rows *with no address published* — consistent with a
-  wire addressed by something the session registry does not expose.
-- A **human typing** `@peer` may be an affordance the CLI resolves before a model is involved.
+- **Re-measured on the peer, 2026-08-11**, in a spawned one-shot at CLI 2.1.226:
+  `ListAgents: ABSENT`, `SendMessage: PRESENT`. Forced to a binary answer, so it is a denial and
+  not an omission.
+- **Documented by the product.** <https://code.claude.com/docs/en/cross-session-messaging>:
+  *"available on macOS and Linux, including Linux inside WSL 2. Claude Code doesn't offer
+  cross-session messaging on native Windows."* Requires v2.1.224+; the peer is past that floor, so
+  it was never a version question.
+- **`CLAUDE_CODE_MESSAGING_SOCKET` is unset on the peer and set on the Mac** (`/tmp/cc-socks/…`).
+  Claude Code exports it to hooks and Bash commands for every session that binds an inbox socket,
+  so its absence is direct evidence the session binds none. This is a cheaper check than either
+  probe above and should be the first one anybody runs.
 
-**And a naming hazard sits underneath all of it.** That machine reports **three** identities:
-`COMPUTERNAME=HP_LAPTOP`, `os.hostname()=HP_laptop` (differing only in case), and the canonical
-`windows-laptop`. Anything that matches hosts or names by string equality can split that machine in
-half without a word — and peer discovery is exactly such a match. A negative peer result on that box
-is not trustworthy until the name it searched under is known.
+**`SendMessage: PRESENT` on Windows is a trap, and it cost a retraction.** The same tool also
+serves subagents and agent-team teammates, so it is present on every platform regardless of
+cross-session messaging. **`ListAgents` is the only honest signal.**
+
+**The two loose ends from the old text, both dead.** `peerProtocol: 1` with no published address is
+consistent with the verb being absent, not with a hidden wire. And the `\\.\pipe\` sweep that was
+supposed to find a Windows equivalent of `/tmp/cc-socks/` was the wrong shape: the inbox is a **unix
+domain socket** (`/status` shows it as `uds:…` in a `Peer address` row), so no named pipe was ever
+going to appear. 231 pipes, zero matches — and the one apparent hit was `97CC-4F39` inside a GUID
+matching a `cc-` filter.
+
+**The naming hazard is real but does not apply here.** That machine reports three identities —
+`COMPUTERNAME=HP_LAPTOP`, `os.hostname()=HP_laptop`, and the doc's `windows-laptop` — and anything
+matching by string equality can split it in half silently. It cannot explain a negative peer result,
+though: **the verb is absent, so no lookup runs and there is no name to mis-key.** Keep the hazard
+in mind for host matching (see `DEBUG-LOG` M2), not for peer discovery.
+
+**AND THE EXPENSIVE CORRECTION, which is why this section was rewritten rather than trimmed.** From
+this evidence the fleet concluded *"peer messaging cannot work on any OS"* and designed around it
+for a day. **That is false** — `DEBUG-LOG` D15. Measured on the Mac 2026-08-11:
+`CLAUDE_CODE_MESSAGING_SOCKET` set and `ListAgents` returning **seven reachable peer sessions**,
+with no store in the path. Native delivery is available on the macOS/Linux lane today. **Windows is
+the exception; we generalised it into a law.** Use native where `ListAgents` lists the target, the
+store where it does not, and the store as the only route to the laptop.
 
 ## code → code — cross-machine · **UNVERIFIED**
 

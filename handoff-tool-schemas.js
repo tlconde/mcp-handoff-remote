@@ -164,7 +164,8 @@ const TOOLS = [
       type: 'object',
       properties: {
         surface: { type: 'string', enum: ['chat', 'cowork', 'design', 'code'], description: 'The surface you are on. Default: chat.' },
-        title_contains: { type: 'string', description: 'Limit to one conversation by title substring. Optional.' }
+        title_contains: { type: 'string', description: 'Limit to one conversation by title substring. Optional.' },
+        host: { type: 'string', description: 'REQUIRED when calling over the relay from another machine: this machine\'s own os.hostname(). The tool runs inside the daemon on the STORE HOST, so it cannot tell which device is asking — the relay passes sender_class "asserted" and no host — and the store host\'s own name is emphatically not the answer. Only records declaring this name are drained; anything else is counted, its host named, and left unread. The claim is ASSERTED exactly as agent_heartbeat\'s is, which is why an unnamed remote call is REFUSED WHOLE rather than guessed at: a wrong guess does not merely read another machine\'s mail, it issues a read receipt for mail nobody read. A LOCAL seat never needs this — its own hostname is the honest answer.' }
       },
       additionalProperties: false
     }

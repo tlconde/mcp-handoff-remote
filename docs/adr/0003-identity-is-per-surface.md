@@ -40,6 +40,33 @@ So the rule is short: **ask a machine for a machine name; ask a chat for its id.
 
 Nothing new is needed. **The identifier is already minted, already unique, already surface-typed.**
 
+## Tracked for OBSERVABILITY, never for authorization
+
+Rejected as *keys* is not rejected as *evidence*. Two of the three are real values already moving
+through the system and worth recording; the third does not exist.
+
+| value | real? | today | track it |
+|---|---|---|---|
+| `account_sub` | **yes** — Access JWT, account-VERIFIED | in ctx; persisted ONLY on the `register_remote_session` path (`handoff-core.js:1785`, `minted_by: access:…`) | **yes** — on every remote call, not one path |
+| `mcp-session-id` | **yes** — minted by our relay (`:499`) | written to `relay.access.log`; **dropped before the daemon** (`:200`) | **yes** — it is the JOIN KEY |
+| surface-class (from `user-agent`) | **yes** — `Claude-User` vs `claude-code/2.1.x` | read, then dropped | **yes** — cheap and it is the thing `280cb79` needed |
+| conversation URL | **NO — nothing on the wire carries one** | does not exist | **no** — see below |
+
+**The join key is the point.** `relay.access.log` records `mcp-session=924002a4`; `ops.jsonl` records
+`session_registered`. **They share no field, so a relay-side connection cannot today be correlated
+with a daemon-side event** — which is exactly the correlation anyone debugging a remote call needs.
+Passing `mcp-session-id` through to `ops()` closes that, and it authorises nothing.
+
+**Where it goes: `ops.jsonl`, NOT the session record.** Observability data on an identity record
+becomes identity data by proximity — someone reads it, then keys something on it, and a transport
+artefact that cannot survive a reload starts deciding who may read mail. Keeping it in the ops log
+keeps the record clean and the debugging complete.
+
+**The URL is not tracked because it is not received.** For it to exist a chat seat would have to
+SELF-REPORT it, and **whether a chat seat can even know its own conversation URL is UNMEASURED** —
+ask a chat seat before building anything. If it can, it is worth having as an identifier for opening
+and tracing a conversation; it still never authorises, because a URL is shareable.
+
 ## What this does NOT relax
 
 The invariant is **not** "name your host". It is: *never drain, deliver or attribute on the ABSENCE

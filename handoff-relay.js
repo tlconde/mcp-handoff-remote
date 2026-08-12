@@ -173,7 +173,7 @@ function homeErrorText(reply) {
   }
   return null;
 }
-async function handleMcp(msg, identity) {
+async function handleMcp(msg, identity, transport) {
   const id = msg && msg.id;
   const ok = result => ({ jsonrpc: '2.0', id, result });
   const err = (code, message) => ({ jsonrpc: '2.0', id, error: { code, message } });
@@ -197,7 +197,14 @@ async function handleMcp(msg, identity) {
       /* A remote caller holds an ACCOUNT, not a CLI session, so its stamp is honestly
        * `asserted` — account-verified, not session-verified. The door model already has that
        * vocabulary (I12); we do not mint a stronger claim than we hold. */
-      ctx: { remote: true, sender_class: 'asserted', account_sub: (identity && identity.sub) || null }
+      /* OBSERVABILITY, NEVER AUTHORIZATION (ADR-0003). The door already reads these and used to
+       * drop them, which is why relay.access.log and ops.jsonl share no field and a relay-side
+       * connection cannot be joined to a daemon-side event. They decide nothing: mcp_session is a
+       * TRANSPORT id this relay mints per initialize and which cannot survive a reload, and
+       * surface_class is a user-agent string. Anything that keys on either is a bug. */
+      ctx: { remote: true, sender_class: 'asserted', account_sub: (identity && identity.sub) || null,
+        mcp_session: (transport && transport.mcp_session) || null,
+        surface_class: (transport && transport.surface_class) || null }
     });
     /* OFFLINE AND TIMED-OUT ARE OPPOSITE FACTS AND WERE THE SAME SENTENCE.
      *
@@ -485,7 +492,12 @@ const server = http.createServer(async (req, res) => {
       }
       if (echoed && knownSession(echoed)) touchSession(echoed);
 
-      const out = await handleMcp(rpc, auth);
+      const ua = String(req.headers['user-agent'] || '');
+      const out = await handleMcp(rpc, auth, {
+        mcp_session: echoed || null,
+        // The product that is calling, which 280cb79 needed and did not have.
+        surface_class: /^Claude-User/.test(ua) ? 'claude-app' : (/^claude-code/.test(ua) ? 'claude-code' : null),
+      });
       // A notification carries no reply: 202, empty body, per JSON-RPC.
       if (out === null) return res.writeHead(202).end();
 

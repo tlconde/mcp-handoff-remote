@@ -513,6 +513,29 @@ const MIGRATED = new Set([
 /** Run a migrated tool against `core` with the caller's per-request `ctx`. */
 async function callTool(name, args, ctx, core) {
   const call = async (m, p, q, b) => (await core.handleApi(m, p, q || {}, b || {})).payload;
+  /* THE JOIN KEY, and it is the whole reason this event exists.
+   *
+   * relay.access.log records `mcp-session=<id>` per request; ops.jsonl records what the daemon
+   * DID. The two shared no field, so a relay-side connection could not be correlated with a
+   * daemon-side event — the first thing anyone reaches for when debugging a remote call, and it
+   * did not exist. The relay had already READ these values and dropped them at the door.
+   *
+   * OBSERVABILITY ONLY (ADR-0003). Nothing may key on them: `mcp_session` is a transport id this
+   * relay mints per initialize and which cannot survive a reload (653 initializes → 648 ids), and
+   * `surface_class` is a user-agent string, which is a claim rather than a credential. They are
+   * recorded HERE, in the ops log, and deliberately not on the session record — observability data
+   * living on an identity record becomes identity data by proximity, and then a value that cannot
+   * survive a page reload starts deciding who may read mail. */
+  if (ctx && ctx.remote && core && typeof core.ops === 'function') {
+    try {
+      core.ops('remote_call', {
+        tool: name,
+        account_sub: ctx.account_sub || null,
+        mcp_session: ctx.mcp_session || null,
+        surface_class: ctx.surface_class || null,
+      });
+    } catch (_) { /* telemetry must never fail a call */ }
+  }
   // Every contact from a terminal refreshes its binding, so a resumed session repairs its
   // own pointer as a side effect of doing anything at all — including draining the very
   // notification a stale binding caused. That is what makes the two-step close: send #1
@@ -1931,7 +1954,37 @@ async function callTool(name, args, ctx, core) {
      * at. Absence of a verifiable caller is not permission to drain someone's inbox. */
     const isRemoteCaller = !!(ctx && ctx.remote);
     const claimedHost = args && args.host ? String(args.host).trim() : null;
-    if (isRemoteCaller && !claimedHost) {
+    /* …AND A CHAT SEAT IS NOT A MACHINE (ADR-0003).
+     *
+     * Everything above is right for a MACHINE-scoped drain and was applied to EVERY remote caller,
+     * above all surface logic. A chat conversation has no hostname — not "missing", nonexistent —
+     * so the review seat on the Claude app had NO VALID MOVE: refused without a host, and draining
+     * nothing even with one, because the ownership filter below wants `h === claimedHost` and a
+     * chat record's declared host is null. **A caller with no possible correct answer is a closed
+     * door, not a guarded one.**
+     *
+     * Chat's identifier is the one the store MINTS for it: the surface-typed ULID record id
+     * (`handoff-core.js:189`), which exists precisely BECAUSE chat has nothing natural to assert.
+     * So the rule is one line — ask a machine for a machine name, ask a chat for its id — and the
+     * treatment is identical either way: ASSERTED, refused WHOLE when absent, never inferred. The
+     * invariant was never "name your host"; it is "never drain on the absence of evidence, and
+     * never guess", and a record-scoped drain satisfies it exactly.
+     *
+     * This is STRICTER than what preceded the host rule, not looser: before `e1c2487` a chat drain
+     * took the whole surface and cost seven messages (D9). Now it takes one named record. */
+    const HOST_DECLARING_SURFACES = new Set(['code']);
+    const machineScoped = HOST_DECLARING_SURFACES.has(surface);
+    const claimedRecord = args && args.session_id ? String(args.session_id).trim() : null;
+    if (isRemoteCaller && !machineScoped && !claimedRecord) {
+      return `REFUSED: a ${surface} conversation has no hostname — it runs in no process on no machine — ` +
+        `so this call cannot be scoped by device, and nothing was read or marked read.\n\n` +
+        `Pass session_id:"<your own record id>" to drain YOUR conversation. That id is the one the store ` +
+        `minted for you (surface-typed, e.g. sess_…); resolve_conversation returns it if you do not hold it. ` +
+        `The claim is ASSERTED exactly as a host claim is, which is why it is refused whole rather than ` +
+        `guessed: a wrong guess does not merely read another conversation's mail, it issues a read receipt ` +
+        `for mail nobody read.`;
+    }
+    if (isRemoteCaller && machineScoped && !claimedHost) {
       return `REFUSED: this call arrived over the relay, so which machine is asking cannot be established — ` +
         `and the store host's own name is NOT the answer, it is this tool's machine rather than yours. ` +
         `Nothing was read and nothing was marked read.\n\n` +
@@ -1974,6 +2027,8 @@ async function callTool(name, args, ctx, core) {
      * from one that works, which is why the fixture that caught this — a host owning nothing being
      * told it owned three records — is the more valuable one. */
     sessions = sessions.filter(s => {
+      // Record-scoped: the caller named its own minted id, and that is the whole scope.
+      if (isRemoteCaller && !machineScoped) return s.id === claimedRecord;
       const h = declaredHostOf(s);
       return isRemoteCaller ? h === claimedHost : (!h || h === HERE);
     });

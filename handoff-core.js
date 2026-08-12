@@ -810,6 +810,35 @@ function applyNickname(s, raw) {
     duplicates: others.map(x => ({ id: x.id, surface: x.surface, title: x.title || null })) };
 }
 
+/* SUBSCRIPTION + MODEL_SLUG — asserted seat attributes, not keys.
+ * Call from every enrolment write so both doors share one shape check.
+ * subscription = product account (grok, cursor, claude). model_slug = serving model (grok-4.6).
+ * Neither authorizes, drains, or participates in dedup. Empty string clears. */
+const SUBSCRIPTION_RE = /^[a-z][a-z0-9-]{0,31}$/;
+const MODEL_SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+function applySeatProduct(s, b) {
+  const previous = { previous_subscription: s.subscription || null, previous_model_slug: s.model_slug || null };
+  let nextSub = s.subscription || null;
+  let nextSlug = s.model_slug || null;
+  if (b && b.subscription !== undefined) {
+    const v = (b.subscription === null || b.subscription === '') ? null : String(b.subscription).trim();
+    if (v && !SUBSCRIPTION_RE.test(v)) {
+      return { code: 400, error: `subscription "${v}" must be one word — lowercase letters, digits, hyphen. It names the product account (grok, cursor, claude), not the title and not the lane.` };
+    }
+    nextSub = v;
+  }
+  if (b && b.model_slug !== undefined) {
+    const v = (b.model_slug === null || b.model_slug === '') ? null : String(b.model_slug).trim();
+    if (v && !MODEL_SLUG_RE.test(v)) {
+      return { code: 400, error: `model_slug "${v}" must be a slug — letters, digits, dot, hyphen, underscore (e.g. grok-4.6). Spaces are refused.` };
+    }
+    nextSlug = v;
+  }
+  s.subscription = nextSub;
+  s.model_slug = nextSlug;
+  return previous;
+}
+
 /* ---------------- DETERMINISTIC CHECKPOINT ----------------
  *
  * WHAT A CHECKPOINT IS: everything a successor needs, assembled from fields that already travel
@@ -1797,6 +1826,11 @@ async function handleApi(method, p, query, b) {
       if (acct) s.account_key = acct;
       if (b.nickname !== undefined) s.nickname = b.nickname || null;
       if (b.role !== undefined) s.role = b.role || null;
+      const convProd = applySeatProduct(s, b);
+      if (convProd.code) {
+        if (minted) delete db.sessions[s.id];
+        return { code: 400, payload: { error: convProd.error } };
+      }
       s.last_registered = now();
       ops('conversation_registered', { session: s.id, surface, title: b.title, minted, has_account: !!acct, nickname: s.nickname || null });
       save(db);
@@ -1812,6 +1846,11 @@ async function handleApi(method, p, query, b) {
       if (!s) { s = createSession({ surface: 'code', title: b.title }); }
       s.title = b.title;
       if (b.role !== undefined) s.role = b.role || null;
+      const prod = applySeatProduct(s, b);
+      if (prod.code) {
+        if (minted) delete db.sessions[s.id];
+        return { code: 400, payload: { error: prod.error } };
+      }
       s.native_ref = null; // never asserted here; the owning host's agent claims it
       s.remote = {
         host,
@@ -1841,7 +1880,12 @@ async function handleApi(method, p, query, b) {
         device_reported_by: b.cli_uuid ? String(b.cli_uuid) : (b.minted_by || 'unknown'),
         last_registered: now(),
       };
-      ops('remote_session_registered', { session: s.id, host, title: b.title, minted, minted_by: s.remote.minted_by, device_provenance: s.remote.device_provenance });
+      ops('remote_session_registered', {
+        session: s.id, host, title: b.title, minted,
+        minted_by: s.remote.minted_by, device_provenance: s.remote.device_provenance,
+        subscription: s.subscription || null, model_slug: s.model_slug || null,
+        previous_model_slug: (!minted && prod.previous_model_slug !== s.model_slug) ? prod.previous_model_slug : undefined,
+      });
       save(db);
       return { code: minted ? 201 : 200, payload: { session: s, minted } };
     }
@@ -1958,6 +2002,8 @@ async function handleApi(method, p, query, b) {
       else if (b.native_name && minted && !s._title_explicit) s.title = String(b.native_name).slice(0, 120);
       if (b.title) s._title_explicit = true;
       if (b.role !== undefined) s.role = b.role ? String(b.role).slice(0, 40) : null;
+      const seatProd = applySeatProduct(s, b);
+      if (seatProd.code) return { code: 400, payload: { error: seatProd.error } };
 
       /* A REFUSED NICKNAME MUST NOT DISCARD THE REGISTRATION. The first version returned 409
        * before save(), so the mint and the title went with it — the caller asked for identity plus
@@ -2004,7 +2050,7 @@ async function handleApi(method, p, query, b) {
         }
         ops('record_adopted', { successor: s.id, predecessor: pred.id, predecessor_title: pred.title, provenance: 'asserted' });
       }
-      ops('session_registered', { session: s.id, native: b.native_id, minted, cwd: b.cwd || null, role: s.role || null });
+      ops('session_registered', { session: s.id, native: b.native_id, minted, cwd: b.cwd || null, role: s.role || null, subscription: s.subscription || null, model_slug: s.model_slug || null });
       // Loud, never swallowed: a moved identity pointer is reported to the ops log and back
       // to the caller, so a heal is something you can see happen rather than infer.
       if (healed) ops('identity_healed', { session: s.id, from: healed.from, to: healed.to, by: healed.by, pid: b.pid || null });

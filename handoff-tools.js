@@ -23,6 +23,14 @@
  * went to a record with no native_ref, so the wake gate (dest.native_ref, send_message) was
  * false and nothing could ever start a turn there. One predicate, so a target reachable by
  * one resolver is reachable by all of them. */
+/* Display fragment for the two enrolment attributes. Used by whoami, resolve, register
+ * receipts and candidate lists — one format so they cannot drift. Empty when unset. */
+function seatProductLabel(s) {
+  if (!s) return '';
+  if (s.subscription && s.model_slug) return `${s.subscription} / ${s.model_slug}`;
+  return s.subscription || s.model_slug || '';
+}
+
 function targetNames(s) {
   const out = [];
   /* THE NICKNAME IS FIRST, because it is the name a human types from memory when they have lost
@@ -357,7 +365,7 @@ async function buildStatusReport(args, ctx, core) {
     ? ` ⚠ SHARED SESSION: ${rivals.map(r => `pid ${r.pid}${r.name ? ` ("${r.name}")` : ''}`).join(', ')} also live on this session id — renames are refused while that is true. Give one of them its own session: exit and start plain \`claude\` (not --continue, which resumes the most recent session in this DIRECTORY, and not --resume of the same id).`
     : '';
   lines[whoLine] = boundRecord
-    ? `You are: ${boundRecord.title}${nameSplit}${boundRecord.role ? ` (@${boundRecord.role}` : ' ('}${boundRecord.role ? ' · ' : ''}${boundRecord.surface}${workspace ? ` · ${workspace}` : ''})${contestNote}`
+    ? `You are: ${boundRecord.title}${nameSplit}${seatProductLabel(boundRecord) ? ` · ${seatProductLabel(boundRecord)}` : ''}${boundRecord.role ? ` (@${boundRecord.role}` : ' ('}${boundRecord.role ? ' · ' : ''}${boundRecord.surface}${workspace ? ` · ${workspace}` : ''})${contestNote}`
     : (nativeId
       ? `You are: this terminal has no name yet${workspace ? ` (${workspace})` : ''} — name it with /name <one word>, e.g. /name build${contestNote}`
       : 'You are: unidentified (no CLI uuid in this environment)');
@@ -989,7 +997,7 @@ async function callTool(name, args, ctx, core) {
         ? `\nADDRESSABLE BUT NOT YET DELIVERABLE: owned by ${d.remote.host}, and no agent there has claimed it — reachability reads "unknown", which means nobody has looked rather than that it is unreachable. A send is stored durably and nothing will cause it to be read until an agent claims the record.`
         : `\nOWNED BY ${d.remote.host}, whose agent is live and reports this record as "${verdict}". A send is stored durably; whether it is PUSHED depends on the rungs available on that machine — the store is the carrier, and the agent there decides what can be delivered locally.`;
     }
-    return `RESOLVED → [${d.surface}] "${d.title}"${term}${undeliverable}\nsession_id: ${d.id}\n\n` +
+    return `RESOLVED → [${d.surface}] "${d.title}"${seatProductLabel(d) ? ` · ${seatProductLabel(d)}` : ''}${term}${undeliverable}\nsession_id: ${d.id}\n\n` +
       `Now call send_message with session_id:"${d.id}". Check the title above is the conversation you meant — this is the only point at which a wrong target is free to correct.`;
   }
   if (name === 'retire_session') {
@@ -1859,19 +1867,25 @@ async function callTool(name, args, ctx, core) {
   if (name === 'register_remote_session') {
     if (!args || !args.title) return 'REFUSED: title required — the record exists so a human can address it by name.';
     if (!args.device) return 'REFUSED: device required — name the machine this session runs on (e.g. "windows-laptop"). Without it the record cannot be deduplicated on reconnect, and reachability has no host to ask.';
+    if (!args.subscription || !args.model_slug) {
+      return 'REFUSED: subscription and model_slug are required — declare the product account (one word, e.g. grok) and the serving model (e.g. grok-4.6). Title is the address; role is the lane. These two name what kind of seat this is.';
+    }
     const mintedBy = (ctx && ctx.remote)
       ? `access:${(ctx && ctx.account_sub) || 'authenticated'}`
       : `local:${(ctx && ctx.cli_uuid) ? 'terminal' : 'bridge'}`;
     const r = await call('POST', '/api/register-remote', {}, {
       host: args.device, title: args.title, role: args.role,
+      subscription: args.subscription, model_slug: args.model_slug,
       attested_by: (ctx && ctx.remote) ? 'access' : 'operator',
       account_sub: (ctx && ctx.account_sub) || null,
       minted_by: mintedBy,
     });
+    if (r && r.error) return `REFUSED: ${r.error}`;
     if (!r || !r.session) return 'REFUSED: the store did not return a record.';
     const s = r.session;
     const onBehalf = !(ctx && ctx.remote);
-    return `${r.minted ? 'Registered' : 'Refreshed'}: [code] "${s.title}" on device "${s.remote.host}"\n` +
+    const product = seatProductLabel(s);
+    return `${r.minted ? 'Registered' : 'Refreshed'}: [code] "${s.title}"${product ? ` · ${product}` : ''} · ${s.remote.host}\n` +
       `session_id: ${s.id}\n` +
       `Identity: asserted, attested_by ${s.remote.attested_by}. NOT CLI-verified — no process on this machine answers for it, and none is claimed.\n` +
       `Reachability: unknown until that device's agent reports in. Unknown is not "unreachable"; it means nobody has looked recently.\n` +
@@ -1915,6 +1929,9 @@ async function callTool(name, args, ctx, core) {
   }
 
   if (name === 'check_inbox') {
+    if (args && (args.subscription !== undefined || args.model_slug !== undefined)) {
+      return 'REFUSED: check_inbox is not scoped by subscription or model_slug — those name a product, not a conversation. Drain by host (code) or session_id (chat). Nothing was read and nothing was marked read.';
+    }
     const nativeId = (ctx && ctx.cli_uuid) || null;
     // Default to the surface this bridge actually lives on: a terminal bridge (CLI uuid
     // present) drains code, not chat. Found live 2026-08-08 — a terminal's no-arg drain
@@ -2189,8 +2206,10 @@ async function callTool(name, args, ctx, core) {
       if (!title) return 'REFUSED: title required — a record nobody can address by name is not an identity. Use the conversation\'s own title.';
       const r = await call('POST', '/api/register-conversation', {}, {
         surface: convSurface, title, nickname: args.nickname, role: args.role,
+        subscription: args.subscription, model_slug: args.model_slug,
         account_key: (ctx && ctx.account_sub) || null,
       });
+      if (r && r.error) return `REFUSED: ${r.error}`;
       if (!r || !r.session) return 'REFUSED: the store did not return a record.';
       const s = r.session;
       const named = s.nickname
@@ -2296,6 +2315,8 @@ async function callTool(name, args, ctx, core) {
     const r = await identitySession(ctx, core, {
       host: (ctx && ctx.peer_host) || undefined,
       title: args ? args.title : undefined, role: args ? args.role : undefined,
+      subscription: args ? args.subscription : undefined,
+      model_slug: args ? args.model_slug : undefined,
       // Adoption is EXPLICIT or it does not happen: the caller passes an id it already holds
       // from its own thread. Nothing here searches for candidates — a helpful suggestion
       // would be the guess the invariant forbids, wearing a friendly face.
@@ -2816,7 +2837,7 @@ function formatSessionCandidates(sessions, st) {
       : (s.created_at || '?');
     const tip = s.id === newestId ? ' ← latest' : '';
     return (
-      `${letter}${tip} — [${s.surface}] "${s.title}" · ${when}\n` +
+      `${letter}${tip} — [${s.surface}] "${s.title}"${seatProductLabel(s) ? ` · ${seatProductLabel(s)}` : ''} · ${when}\n` +
       `   State: ${sessionLinkNote(s, st)} · Carrier: ${sessionCarrierNote(s)}\n` +
       `   Recap: ${sessionRecap(s)}\n` +
       `   (after you choose: session_id: ${s.id} · or pick:"latest" for newest)`
@@ -2827,7 +2848,7 @@ function formatSessionCandidates(sessions, st) {
 module.exports = {
   namedOrPinned, callTool, MIGRATED,
   isTargetable,   // exported for the retirement suite: the one chokepoint every by-name path uses
-  deliveryNoteFor,
+  deliveryNoteFor, seatProductLabel,
   targetNames, matchesName, matchesNameExact, filterByName,
   age, clipText, settledDestIds, offerIsPending, offerStateOf, resolveLiveNativeId, setTerminalTitle,
   sessionRecap, sessionCarrierNote, sessionLinkNote, formatSessionCandidates,

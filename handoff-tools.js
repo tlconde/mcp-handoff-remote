@@ -2175,6 +2175,37 @@ async function callTool(name, args, ctx, core) {
   // could register but never learn its own record id, and its status would say "not yet
   // registered" immediately after registering.
   if (name === 'register_session') {
+    /* ONE CEREMONY, DIFFERENT EVIDENCE (ADR-0003). A code seat proves itself with a CLI uuid; a
+     * chat has none and never will, so it enrols on (account, surface, title) and its identity is
+     * the id the store MINTS for it. Same verb, because the ruling is that enrolment is uniform —
+     * what differs is the evidence a surface can actually possess, not the ceremony.
+     *
+     * THE RECORD ID IS RETURNED, and that is the point: chat's identifier was previously
+     * unknowable to the conversation that owned it, which is why a chat could not drain its own
+     * inbox over the relay even after the door was reopened. */
+    const convSurface = args && args.surface ? String(args.surface).trim() : null;
+    if (convSurface && convSurface !== 'code') {
+      const title = args.title ? String(args.title).trim() : null;
+      if (!title) return 'REFUSED: title required — a record nobody can address by name is not an identity. Use the conversation\'s own title.';
+      const r = await call('POST', '/api/register-conversation', {}, {
+        surface: convSurface, title, nickname: args.nickname, role: args.role,
+        account_key: (ctx && ctx.account_sub) || null,
+      });
+      if (!r || !r.session) return 'REFUSED: the store did not return a record.';
+      const s = r.session;
+      const named = s.nickname
+        ? `Nickname: "${s.nickname}" — a human can address this conversation by that word from memory.`
+        : `NOW ASK THE USER, once, in your own words: what ONE WORD should this conversation answer to? ` +
+          `Then call register_session again with that nickname. **If they say none, or do not care, keep the ` +
+          `auto-generated title and do not ask again** — the title already works as an address and the ` +
+          `ceremony is finished either way.`;
+      return `${r.minted ? 'Registered' : 'Refreshed'}: [${s.surface}] "${s.title}"\n` +
+        `session_id: ${s.id}\n` +
+        `**This id IS this conversation's identity** — it is what the store minted for a surface that has no ` +
+        `machine, no process and no hostname. Pass it as session_id to check_inbox to read mail addressed here; ` +
+        `over the relay that is required, because a ${s.surface} conversation has no host to be scoped by.\n` +
+        named;
+    }
     /* A PEER MOUNT CARRIES ITS OWN IDENTITY, and this is where the telling STICKS.
      *
      * A remote caller has no cli_uuid in ctx, because the tool runs on the store host. But a peer

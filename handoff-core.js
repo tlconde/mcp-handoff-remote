@@ -1768,6 +1768,40 @@ async function handleApi(method, p, query, b) {
      * Idempotent on (host, title): a device re-registering on reconnect UPDATES its record rather
      * than minting a second one. That reuses the store's existing same-title discrimination
      * instead of adding a second dedup mechanism with its own edge cases. */
+    /* ENROLMENT FOR A SURFACE THAT IS NOT A MACHINE (ADR-0003).
+     *
+     * register mints on a CLI uuid; register-remote mints on a device. **A chat has neither**, so
+     * until now it could not enrol at all — it only ever ACQUIRED a record as a side effect of
+     * being party to a handoff, and was never told the id it had been given. That is arrival, not
+     * enrolment, and it left the one identifier chat actually has (the minted record id) unknowable
+     * to the conversation that owns it.
+     *
+     * THE DEDUP KEY IS (account, surface, title), and account_sub is doing the job `host` does for
+     * a device: it is the only ACCOUNT-VERIFIED thing a chat holds, so re-running this from the
+     * same conversation REFRESHES rather than minting a duplicate, and it cannot collide with a
+     * different person's chat of the same name.
+     *
+     * `account_key` is a DEDUP AND OWNERSHIP key, and explicitly NOT a drain credential. The drain
+     * key stays the record id (ADR-0003). An account names a HUMAN, not a conversation, and cannot
+     * separate two chats belonging to one person — anything that scopes a read by it is a bug. */
+    if (method === 'POST' && p === '/api/register-conversation') {
+      const surface = String(b.surface || '').trim();
+      if (!surface || surface === 'code') return { code: 400, payload: { error: 'surface required, and must not be "code" — a code seat enrols through /api/register with its CLI uuid' } };
+      if (!b.title) return { code: 400, payload: { error: 'title required — the whole point of the record is that a human can address it by name' } };
+      const acct = b.account_key ? String(b.account_key) : null;
+      let s = Object.values(db.sessions).find(x =>
+        !x.archived && x.surface === surface && x.title === b.title &&
+        (acct ? x.account_key === acct : !x.account_key));
+      const minted = !s;
+      if (!s) s = createSession({ surface, title: b.title });
+      if (acct) s.account_key = acct;
+      if (b.nickname !== undefined) s.nickname = b.nickname || null;
+      if (b.role !== undefined) s.role = b.role || null;
+      s.last_registered = now();
+      ops('conversation_registered', { session: s.id, surface, title: b.title, minted, has_account: !!acct, nickname: s.nickname || null });
+      save(db);
+      return { code: minted ? 201 : 200, payload: { session: s, minted } };
+    }
     if (method === 'POST' && p === '/api/register-remote') {
       if (!b.host) return { code: 400, payload: { error: 'host required — a device record that cannot name its device is unaddressable and undedupable' } };
       if (!b.title) return { code: 400, payload: { error: 'title required — the whole point of the record is that a human can address it by name' } };

@@ -905,6 +905,40 @@ async function callTool(name, args, ctx, core) {
     if (args.surface) matches = matches.filter(s => s.surface === args.surface);
     if (args.title_contains) matches = filterByName(matches, args.title_contains);
     if (!matches.length) {
+      /* SUPERSEDED IS NOT NONEXISTENT, and this verb said the same sentence for both.
+       *
+       * `isTargetable` excludes superseded records DELIBERATELY — they stop being selectable, which
+       * is correct. But rendering that as "RESOLVED: nothing", byte-identical to the answer for an
+       * id that never existed, is class 2: a value that failed to RESOLVE reading as one that is
+       * genuinely EMPTY. The behaviour was right and only the message lied.
+       *
+       * The damage is directional, because this verb describes itself as step 1 of
+       * resolve-then-send: a caller following the prescribed order gives up on a record that
+       * `send_message` would have reached, since delivery already walks the successor chain. Two
+       * verbs, one fact, opposite answers — found by the seat it happened to, which verified the
+       * forward-walk instead of trusting the confirmation it had been given.
+       *
+       * `list_conversations` has rendered supersession correctly all along; this is that fact,
+       * said where the caller is standing when they ask. */
+      const all = Object.values(st.sessions || {});
+      const superseded = all.filter(s => s.superseded_by);
+      let sup = null;
+      if (args.session_id) sup = superseded.find(s => s.id === args.session_id) || null;
+      else if (args.title_contains) {
+        let c = filterByName(superseded, args.title_contains);
+        if (args.surface) c = c.filter(s => s.surface === args.surface);
+        if (c.length === 1) sup = c[0];
+      }
+      if (sup) {
+        const succ = resolveSuccessorIn(st, sup.id);
+        const to = (st.sessions || {})[succ.id] || null;
+        return `RESOLVED: SUPERSEDED, not missing. "${sup.title}" (${sup.id}) was superseded` +
+          (to && to.id !== sup.id ? ` by "${to.title}" (${to.id})${succ.hops > 1 ? `, through ${succ.hops} links` : ''}` : '') +
+          `. Its history stays where it is; delivery follows the live record. ` +
+          (to && to.id !== sup.id
+            ? `Send to ${to.id} — and addressing the OLD id also walks forward, so anything you already sent there arrived.`
+            : `Its successor is not in this store, so nothing here can be addressed for it.`);
+      }
       return `RESOLVED: nothing. No protocol-known conversation matches ${args.session_id ? `id "${args.session_id}"` : `"${args.title_contains}"`}${args.surface ? ` on ${args.surface}` : ''}. ` +
         `Call list_conversations to see what is addressable. (Local Claude Code terminal sessions cannot receive queued messages — reopen those with claude --resume.)`;
     }

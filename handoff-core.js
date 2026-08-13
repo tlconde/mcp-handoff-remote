@@ -1290,11 +1290,30 @@ function resolveSuccessor(id) {
   }
   return { id: cur, via, hops: via.length };
 }
+function nativeSessionsDir() {
+  return process.env.HANDOFF_NATIVE_SESSIONS_DIR || path.join(os.homedir(), '.claude', 'sessions');
+}
+function nativeUuidInspectable(uuid) {
+  if (!uuid) return false;
+  try {
+    const dir = nativeSessionsDir();
+    if (!fs.existsSync(dir)) return false;
+    const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+    for (const f of files) {
+      try {
+        const r = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+        if (!r || r.sessionId !== uuid) continue;
+        if (!r.pid) return true;
+        try { process.kill(r.pid, 0); return true; } catch (e) { if (e.code === 'EPERM') return true; }
+      } catch (_) { /* skip unreadable row */ }
+    }
+    return false;
+  } catch (_) { return false; }
+}
 function nativeUuidIsLive(uuid) {
   if (!uuid) return false;
   try {
-    const os = require('os');
-    const dir = process.env.HANDOFF_NATIVE_SESSIONS_DIR || path.join(os.homedir(), '.claude', 'sessions');
+    const dir = nativeSessionsDir();
     const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
     for (const f of files) {
       try {
@@ -1994,7 +2013,14 @@ async function handleApi(method, p, query, b) {
         const title = b.title || b.native_name || ('terminal · ' + (b.cwd ? path.basename(b.cwd) : String(b.native_id).slice(0, 8)));
         const localId = parseClientUuid(b.native_id, 'code');
         s = createSession({ surface: 'code', title, id: localId.error ? undefined : localId.id });
-        s.native_ref = { kind: 'claude-code', session_id: b.native_id, cwd: b.cwd || null, resume: `claude --resume ${b.native_id}` };
+        /* native_ref is inspectable-here, not "I exist". A peer/Grok uuid the home
+         * host cannot see in ~/.claude/sessions must stay null — faking kind:claude-code
+         * is the unbundle native-ref defect. */
+        if (nativeUuidInspectable(b.native_id)) {
+          s.native_ref = { kind: 'claude-code', session_id: b.native_id, cwd: b.cwd || null, resume: `claude --resume ${b.native_id}` };
+        } else {
+          s.native_ref = null;
+        }
       }
       /* THE DEVICE THE SEAT REPORTED, recorded so ownership can be decided.
        *
@@ -2005,11 +2031,21 @@ async function handleApi(method, p, query, b) {
        *
        * Self-reported only: this value arrives with the seat's own cli_uuid. The operator's ruling
        * is that a device string is the seat's to state and nobody else's, so it is stored verbatim —
-       * no normalising, no case-folding, no repair. HPlaptop and HP_LAPTOP are two devices. */
+       * no normalising, no case-folding, no repair. HPlaptop and HP_LAPTOP are two devices.
+       *
+       * Host lives on remote.host when native_ref is null. Putting it on a fabricated
+       * native_ref made "inspectable here" and "which machine" the same field. */
       if (b.host) {
-        s.native_ref = s.native_ref || { kind: 'claude-code', session_id: b.native_id };
-        s.native_ref.host = String(b.host);
-        s.native_ref.host_provenance = 'self-reported';
+        if (s.native_ref) {
+          s.native_ref.host = String(b.host);
+          s.native_ref.host_provenance = 'self-reported';
+        } else {
+          s.remote = s.remote || { attested_by: 'peer-mount', minted_by: 'peer-mount' };
+          s.remote.host = String(b.host);
+          s.remote.device_provenance = 'self-reported';
+          s.remote.device_reported_by = String(b.native_id);
+          s.remote.last_registered = now();
+        }
       }
       /* A CORRUPTING WRITE IS WORSE THAN A WRONG READ (§I2b family, 2026-08-09).
        * Reads already refuse ambiguity: the wake tier will not pick between two live
@@ -2034,13 +2070,15 @@ async function handleApi(method, p, query, b) {
           pids: claimants, id: s.id
         } };
       }
-      if (b.cwd) s.native_ref.cwd = b.cwd;
-      // pid is a refreshable ATTRIBUTE of the binding, never the identity — it is what lets a
-      // /clear (same process, forked transcript) heal without guessing.
-      if (b.pid) s.native_ref.pid = b.pid;
-      // Adopt native's registration facts — read, never minted (identity convergence).
-      if (b.native_name) s.native_ref.name = b.native_name;
-      if (b.messaging_socket) s.native_ref.messaging_socket_path = b.messaging_socket;
+      if (s.native_ref) {
+        if (b.cwd) s.native_ref.cwd = b.cwd;
+        // pid is a refreshable ATTRIBUTE of the binding, never the identity — it is what lets a
+        // /clear (same process, forked transcript) heal without guessing.
+        if (b.pid) s.native_ref.pid = b.pid;
+        // Adopt native's registration facts — read, never minted (identity convergence).
+        if (b.native_name) s.native_ref.name = b.native_name;
+        if (b.messaging_socket) s.native_ref.messaging_socket_path = b.messaging_socket;
+      }
       // An explicit protocol title is the alias and still overrides display; without one,
       // keep the display in sync with native's name so the two layers never diverge.
       /* NAME ROT — §I2b at the naming layer. Native `name` is nameSource:"derived" and

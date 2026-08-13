@@ -9,7 +9,7 @@
       "name": "handoff",
       "source": "./",
       "description": "Hand work between Claude conversations and machines: envelopes that carry a task, its decisions and its artifacts, a shared store, and a per-machine wake agent that delivers locally.",
-      "version": "0.1.5",
+      "version": "0.1.6",
       "license": "MIT",
       "keywords": [
         "handoff",

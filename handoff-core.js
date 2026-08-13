@@ -962,7 +962,17 @@ function buildCheckpoint(session) {
  * reporting impossible gets routed around, so this one makes honesty the cheap path. */
 const OBJECT_TYPES = ['session', 'todo'];
 const OUTCOME_KINDS = new Set(['mirrored', 'delivered', 'suite_passed', 'live']);
-const EVENT_KINDS = new Set(['proposed', 'settled', 'claim', 'note', 'blob_pruned', ...OUTCOME_KINDS]);
+/* `changed` is Feature A S2: a fact on the parent object, not a new collection and not an
+ * outcome kind. Hashes live on body or evidence; identical hashes are "nothing changed". */
+const EVENT_KINDS = new Set(['proposed', 'settled', 'claim', 'note', 'blob_pruned', 'changed', ...OUTCOME_KINDS]);
+const SHA256_HEX = /^[0-9a-f]{64}$/i;
+
+function changedHashes(b) {
+  const bag = {};
+  if (b && b.body && typeof b.body === 'object' && !Array.isArray(b.body)) Object.assign(bag, b.body);
+  if (b && b.evidence && typeof b.evidence === 'object' && !Array.isArray(b.evidence)) Object.assign(bag, b.evidence);
+  return { before: bag.sha256_before, after: bag.sha256_after };
+}
 
 function normalizeObjectType(type) {
   const t = type || 'session';
@@ -1019,6 +1029,24 @@ function appendObjectEvent(obj, b) {
       return { code: 400, payload: {
         error: 'settled must cite an unpaired proposed event as body.settles — pair the items or the projection invents a negative open count',
         field: 'body.settles',
+      } };
+    }
+  }
+  if (kind === 'changed') {
+    const { before, after } = changedHashes(b);
+    const afterHex = typeof after === 'string' && SHA256_HEX.test(after);
+    const beforeAbsent = before == null || before === '';
+    const beforeHex = typeof before === 'string' && SHA256_HEX.test(before);
+    if (!afterHex || !(beforeAbsent || beforeHex)) {
+      return { code: 400, payload: {
+        error: 'changed refused: sha256_after must be 64-char hex; sha256_before is 64-char hex or null on first sight — prose is not a hash. Re-send as kind:"claim" to file the same words honestly, or attach the hashes.',
+        field: 'evidence', downgrade: 'claim'
+      } };
+    }
+    if (beforeHex && String(before).toLowerCase() === String(after).toLowerCase()) {
+      return { code: 400, payload: {
+        error: 'changed refused: sha256_before equals sha256_after — nothing changed',
+        field: 'sha256_after'
       } };
     }
   }

@@ -40,6 +40,9 @@
  * WHAT IT CHECKS
  *   1. every shared runtime file in the repo is byte-identical to the lane the daemon/relay run from
  *   2. the running daemon and relay booted AFTER the files they load were last modified
+ *   3. tools/list on a FRESH mcp-handoff process lists session_uuid on whoami and
+ *      register_remote_session. plugin.json is not this door. A connected client's cached
+ *      list is still not this door.
  *
  * WHAT IT DOES NOT CHECK, and this is the honest limit: what a CONNECTED CLIENT holds. Clients cache
  * tool schemas for the life of a session, so a green result here still means a peer may be talking
@@ -48,8 +51,9 @@
  * never touches.
  */
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 
 const REPO = path.join(__dirname, '..');
 /* Discovered from the running processes rather than hardcoded — the whole class exists because the
@@ -139,9 +143,116 @@ for (const p of procs()) {
   }
 }
 
+/* THE LAUNCH DOOR. plugin.json can read 0.1.3 while a live process still advertises the old
+ * whoami. Callers learn the schema from tools/list, so that list on a process that just started
+ * is the claim. A connected session may still hold a cached copy — this does not settle that. */
+function mcpDoors() {
+  const doors = new Set();
+  doors.add(path.join(REPO, 'mcp-handoff.js'));
+  for (const lane of lanes) {
+    const p = path.join(lane, 'mcp-handoff.js');
+    if (fs.existsSync(p)) doors.add(fs.realpathSync(p));
+  }
+  try {
+    const out = execFileSync('ps', ['-Ao', 'command'], { encoding: 'utf8' });
+    for (const line of out.split('\n')) {
+      const m = /(\S+)\/mcp-handoff\.js/.exec(line);
+      if (m) {
+        const p = m[1] + '/mcp-handoff.js';
+        if (fs.existsSync(p)) doors.add(fs.realpathSync(p));
+      }
+    }
+  } catch (_) { /* no ps: still measure the repo door */ }
+  return [...doors];
+}
+
+function toolsList(mcpJs) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'deploy-check-list-'));
+  const payload = [
+    { jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'deploy-check', version: '0' } } },
+    { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }
+  ].map(x => JSON.stringify(x)).join('\n') + '\n';
+  const env = Object.assign({}, process.env, {
+    HANDOFF_HOME: home,
+    HANDOFF_ROLE: 'host',
+    HANDOFF_NO_CLI: '1',
+    HANDOFF_NO_AUTORECEIPT: '1',
+    HANDOFF_NO_AUTOOPEN: '1',
+    HANDOFF_TEST: '1'
+  });
+  delete env.CLAUDE_CODE_SESSION_ID;
+  delete env.CLAUDE_PID;
+  delete env.HANDOFF_SESSION_ID;
+  const r = spawnSync(process.execPath, [mcpJs], {
+    input: payload, encoding: 'utf8', timeout: 20000, env
+  });
+  try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) { /* scratch */ }
+  if (r.error) return { error: r.error.message };
+  if (r.status !== 0 && !r.stdout) return { error: `exit ${r.status}${r.stderr ? ': ' + r.stderr.trim() : ''}` };
+  let listed = null;
+  for (const line of String(r.stdout || '').split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const msg = JSON.parse(line);
+      if (msg.id === 1) listed = msg;
+    } catch (_) { /* ignore non-JSON banners */ }
+  }
+  if (!listed) return { error: 'fresh process produced no tools/list reply' };
+  if (listed.error) return { error: listed.error.message || JSON.stringify(listed.error) };
+  return { tools: ((listed.result || {}).tools) || [] };
+}
+
+function sessionUuidDoor(tools, name) {
+  const t = (tools || []).find(x => x.name === name);
+  if (!t) return { ok: false, detail: `${name} not advertised` };
+  const schema = t.inputSchema || t.input_schema || {};
+  const props = schema.properties || {};
+  if (!props.session_uuid) return { ok: false, detail: `${name} has no session_uuid property` };
+  if (name === 'register_remote_session') {
+    const req = schema.required || [];
+    if (!req.includes('session_uuid')) return { ok: false, detail: `${name}.session_uuid is optional — required for the 0.1.3 door` };
+  }
+  return { ok: true, detail: `${name}.session_uuid listed` };
+}
+
+let pluginVer = null;
+try { pluginVer = JSON.parse(fs.readFileSync(path.join(REPO, 'plugin.json'), 'utf8')).version; } catch (_) {}
+console.log(`\n  plugin.json version: ${pluginVer || '(unreadable)'} — not a launch claim. tools/list on a fresh process is.`);
+
+const doors = mcpDoors();
+let listProblems = 0;
+if (!doors.length) {
+  problems++;
+  listProblems++;
+  console.log('  ✗ no mcp-handoff.js to tools/list — cannot claim the session_uuid door');
+} else {
+  for (const door of doors) {
+    const listed = toolsList(door);
+    console.log(`\n  tools/list (fresh process) ${door}`);
+    if (listed.error) {
+      problems++;
+      listProblems++;
+      console.log(`    ✗ ${listed.error}`);
+      continue;
+    }
+    for (const name of ['whoami', 'register_remote_session']) {
+      const gate = sessionUuidDoor(listed.tools, name);
+      if (gate.ok) console.log(`    ✓ ${gate.detail}`);
+      else {
+        problems++;
+        listProblems++;
+        console.log(`    ✗ ${gate.detail}`);
+      }
+    }
+  }
+}
+
 if (problems) {
   console.log(`\n${problems} problem(s). Deploy to the runtime lane and let the process restart, then re-run.`);
+  if (listProblems) console.log('Do not claim 0.1.3 until a fresh tools/list lists session_uuid.');
+  else console.log('Fresh tools/list listed session_uuid. Remaining problems are file/process freshness, not that door.');
   console.log('Note: a green result here says nothing about a CONNECTED CLIENT — schemas are cached per session.');
   process.exit(1);
 }
-console.log('\ndeploy-check: OK — what is committed is what is running. (Connected clients may still hold cached schemas.)');
+console.log('\ndeploy-check: OK — files match, processes are current, and a fresh tools/list lists session_uuid.');
+console.log('Claim 0.1.3 only from that list, not from plugin.json. (Connected clients may still hold cached schemas.)');

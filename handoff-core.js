@@ -1075,7 +1075,36 @@ function appendObjectEvent(obj, b) {
    * happened to this" rather than "this did something", which is not what passive/active is for. */
   if (actorKind !== 'system') markActive(obj, 'append');
   ops('object_event', { object: obj.id, kind, actor_kind: actorKind, event: ev.id });
+  if (kind === 'changed' && actorKind !== 'system') notifyChanged(obj, ev, (b && b.actor) || null);
   return { code: 201, payload: { event_id: ev.id, object: obj.id, participation: obj.participation } };
+}
+
+/* Feature A S3 — mail, not wake. Same evt_ id as the history row. Recipients are the
+ * other ends of active links, walked through successor; the actor is never mailed. */
+function notifyChanged(obj, ev, actor) {
+  const live = resolveSuccessor(obj.id);
+  const liveObj = db.sessions[live.id] || obj;
+  const recipients = new Set();
+  for (const l of Object.values(db.links || {})) {
+    if (l.status !== 'active') continue;
+    if (l.origin === obj.id || l.origin === live.id) recipients.add(l.dest);
+    if (l.dest === obj.id || l.dest === live.id) recipients.add(l.origin);
+  }
+  const watch = liveObj.participants || obj.participants;
+  if (Array.isArray(watch)) for (const id of watch) if (id) recipients.add(id);
+  recipients.delete(obj.id);
+  recipients.delete(live.id);
+  if (actor) recipients.delete(actor);
+  const { before, after } = changedHashes({ body: ev.body, evidence: ev.evidence });
+  const saw = before ? ` You saw ${before}.` : '';
+  const text = `Object ${live.id} ("${liveObj.title}") changed.${saw} It is now ${after}. Session ${actor || 'unknown'} appended ${ev.id} at ${ev.ts}.`;
+  for (const rid of recipients) {
+    const destId = resolveSuccessor(rid).id;
+    if (destId === actor || destId === live.id || destId === obj.id) continue;
+    const dest = db.sessions[destId];
+    if (!dest || dest.archived) continue;
+    addMessage(dest, { role: 'user', kind: 'xmsg', from_session: live.id, sender_class: 'asserted', text });
+  }
 }
 
 /* PROJECTION IS DERIVED, NEVER STORED AS TRUTH. §14: the history is the log and the projection is

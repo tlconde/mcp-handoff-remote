@@ -255,4 +255,4 @@ if (problems) {
   process.exit(1);
 }
 console.log('\ndeploy-check: OK — files match, processes are current, and a fresh tools/list lists session_uuid.');
-console.log('Claim 0.1.3 only from that list, not from plugin.json. (Connected clients may still hold cached schemas.)');
+console.log('Claim the list, not plugin.json. (Connected clients may still hold cached schemas.)');

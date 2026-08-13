@@ -753,8 +753,10 @@ function createSession({ surface, title, id: explicitId }) {
    * never a trust class). Suffix is the product conversation id when the caller has one;
    * otherwise a minted ULID (chat, or a caller that did not pass an id).
    * Existing ids stay valid: matching is exact-string, so nothing is rewritten. */
+  const typed = normalizeObjectType(arguments[0] && arguments[0].type);
+  if (typed.error) return { error: typed.error };
   const sid = explicitId || id('sess_' + (surface || 'x'));
-  const s = { id: sid, surface, title: title || 'Untitled', created_at: now(), messages: [], decisions: [], artifacts: [], open_items: [], archived: false, participation: 'passive', type: (arguments[0] && arguments[0].type) || 'session' };
+  const s = { id: sid, surface, title: title || 'Untitled', created_at: now(), messages: [], decisions: [], artifacts: [], open_items: [], archived: false, participation: 'passive', type: typed.type };
   db.sessions[s.id] = s;
   return s;
 }
@@ -962,6 +964,31 @@ const OBJECT_TYPES = ['session', 'todo'];
 const OUTCOME_KINDS = new Set(['mirrored', 'delivered', 'suite_passed', 'live']);
 const EVENT_KINDS = new Set(['proposed', 'settled', 'claim', 'note', 'blob_pruned', ...OUTCOME_KINDS]);
 
+function normalizeObjectType(type) {
+  const t = type || 'session';
+  if (!OBJECT_TYPES.includes(t)) {
+    return { error: `unknown object type "${t}" — known types: ${OBJECT_TYPES.join(', ')}` };
+  }
+  return { type: t };
+}
+
+function citedProposedId(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const raw = body.settles;
+  return raw ? String(raw) : null;
+}
+
+function unpairedProposed(history) {
+  const h = Array.isArray(history) ? history : [];
+  const taken = new Set();
+  for (const e of h) {
+    if (e.kind !== 'settled') continue;
+    const cite = citedProposedId(e.body);
+    if (cite) taken.add(cite);
+  }
+  return h.filter(e => e.kind === 'proposed' && !taken.has(e.id));
+}
+
 /* Evidence is machine-checkable when a rechecker COULD recompute it and return false — the same
  * "check that the assertion can fail" rule this repo applies to tests, turned on outcomes. Prose
  * is malformed input, not weak evidence: a string cannot be rechecked, so it cannot be falsified,
@@ -985,6 +1012,16 @@ function appendObjectEvent(obj, b) {
     return { code: 400, payload: { error: `unknown event kind "${kind}" — absence is never permission; known kinds: ${[...EVENT_KINDS].join(', ')}` } };
   }
   const actorKind = (b && b.actor_kind) || 'agent';
+  if (kind === 'settled') {
+    const cite = citedProposedId(b && b.body);
+    const open = unpairedProposed(obj.history);
+    if (!cite || !open.some(e => e.id === cite)) {
+      return { code: 400, payload: {
+        error: 'settled must cite an unpaired proposed event as body.settles — pair the items or the projection invents a negative open count',
+        field: 'body.settles',
+      } };
+    }
+  }
   if (OUTCOME_KINDS.has(kind) && !evidenceIsCheckable(b && b.evidence)) {
     /* THE REFUSAL NAMES THE FIELD, NAMES THE REMEDY, AND OFFERS THE DOWNGRADE — §17's three
      * deliberate properties. The caller is not asked to guess which field was wrong, and its
@@ -1019,13 +1056,15 @@ function appendObjectEvent(obj, b) {
  * the same bytes, frozen and addressed. */
 function projectObject(obj) {
   const h = Array.isArray(obj.history) ? obj.history : [];
-  const settled = h.filter(e => e.kind === 'settled');
+  const open = unpairedProposed(h);
+  const unpairedSettled = h.filter(e => e.kind === 'settled' && !h.some(p => p.kind === 'proposed' && p.id === citedProposedId(e.body)));
   return {
     id: obj.id, type: obj.type || 'session', title: obj.title,
     participation: obj.participation || 'passive',
     nickname: obj.nickname || null,
     events: h.length,
-    open: h.filter(e => e.kind === 'proposed').length - settled.length,
+    open: open.length,
+    unpaired_settled: unpairedSettled.length,
     outcomes: h.filter(e => OUTCOME_KINDS.has(e.kind)).map(e => ({ kind: e.kind, evidence_class: e.evidence_class, at: e.ts })),
     claims: h.filter(e => e.kind === 'claim').length,
     last_event_at: h.length ? h[h.length - 1].ts : null,
@@ -2157,6 +2196,7 @@ async function handleApi(method, p, query, b) {
     if (method === 'POST' && p === '/api/sessions') {
       if (!SURFACES.includes(b.surface)) return { code: 400, payload: { error: 'surface must be one of ' + SURFACES } };
       const s = createSession(b);
+      if (s.error) return { code: 400, payload: { error: s.error } };
       if (Array.isArray(b.open_items)) s.open_items = b.open_items.map(String);
       if (Array.isArray(b.artifacts)) s.artifacts = b.artifacts;
       if (b.notes && typeof b.notes === 'object') s.notes = b.notes; // constraints, entities, non_goals, expected_return, deadline
@@ -2596,7 +2636,7 @@ async function handleApi(method, p, query, b) {
 
 module.exports = {
   handleApi, HOME, PREFS, OPS, FULL_THRESHOLD, SURFACES, NAMES,
-  sessionRecordId, parseClientUuid,
+  sessionRecordId, parseClientUuid, projectObject,
   claudeCliAvailable, claudeBin, mcpRegistered, ops, autoReceipt, getPrefs, setPref, resolveAutosend,
   artifactCap, artifactBlock, buildBrief, fencedBlock,
   __claudeCompactForTests: claudeCompact,

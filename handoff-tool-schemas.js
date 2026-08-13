@@ -97,7 +97,11 @@ const TOOLS = [
     description: 'List conversations the protocol knows (every session that has handed off, been picked up, or been dispatched — the app exposes no global conversation list, so this is the addressable universe). Users reference these by TITLE. Use before send_message, or when the user asks "which chats can I send to?".',
     inputSchema: {
       type: 'object',
-      properties: { surface: { type: 'string', enum: ['chat', 'cowork', 'design', 'code'], description: 'Filter by surface. Optional.' } },
+      properties: {
+        surface: { type: 'string', enum: ['chat', 'cowork', 'design', 'code'], description: 'Filter by surface. Optional.' },
+        include_passive: { type: 'boolean', description: 'Show mint-only records that have never written. Default omits them from the picker (they stay addressable and can receive). The default list always says how many it hid. Pass true when looking for a seat that registered but has not spoken.' },
+        include_retired: { type: 'boolean', description: 'Show ended records. Default hides them. Hidden is not the same as gone.' }
+      },
       additionalProperties: false
     }
   },

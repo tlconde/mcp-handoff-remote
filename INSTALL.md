@@ -58,10 +58,10 @@ That is the whole install. The store is created at `~/.claude-handoff/` on first
 **Name any seat** — chat, cowork, design, or code — by typing this in that conversation:
 
 ```
-Start onboarding for Checker
+Name this seat Chad
 ```
 
-(one word). The seat calls `register_session` with that word as title and nickname (`surface` only on chat/cowork/design). Same phrase on every new seat you want to address. `/name` still works on a Code terminal.
+(one word). That is handoff enrolment, not company onboarding. The seat calls `register_session` (or `register_remote_session` on Grok). `/name` and `/onboard` are the same verb.
 
 
 **Optional — the background daemon.** One process serving every terminal, so sessions can

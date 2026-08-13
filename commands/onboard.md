@@ -1,7 +1,9 @@
 ---
-description: Enrol THIS seat in one word so it can be addressed by name
+description: Name THIS seat in one word so others can send to it
 ---
 <!-- handoff-protocol command v1 -->
-Call register_session with title: $ARGUMENTS, nickname: $ARGUMENTS (one human word). No ids, no second question. Pass surface only if this seat is chat, cowork, or design — omit surface on a code terminal. If they named a surface in the sentence, use that. Then whoami. If $ARGUMENTS is empty, whoami only.
+The user said "Name this seat <word>" or /onboard or /name. This is handoff enrolment, not HR, not a web search. Do not search the web. Do not list files.
 
-A Grok or other asserted code seat that has a product session id uses register_remote_session instead (title, device=os.hostname(), session_uuid, subscription, model_slug). Do not invent those fields.
+Call register_session with title: $ARGUMENTS, nickname: $ARGUMENTS (one word). Pass surface only for chat/cowork/design. Omit surface on a Claude Code terminal. Then whoami. Empty → whoami only.
+
+Asserted code (Grok): register_remote_session with that title; device, session_uuid, subscription, model_slug must already be known.

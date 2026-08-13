@@ -1,6 +1,6 @@
 # Handoff
 
-Carry a conversation between Claude surfaces without losing what it knew — summary, decisions, open items, and artifacts — on a self-hosted store.
+Carry a conversation between seats — Claude or Grok, chat or code — without losing what it knew: summary, decisions, open items, and artifacts, on a self-hosted store.
 
 ## Language
 
@@ -16,9 +16,37 @@ _Avoid_: package, payload, brief (except as the short form shown after pick_up)
 The self-hosted file directory that holds session records and mail. Conversation data lives only here; the relay holds none of it.
 _Avoid_: database, backend, cloud
 
+**Seat**:
+A running conversation that has, or will have, a session record. Several seats may share one client (one device, or one surface).
+_Avoid_: agent (when meaning the conversation), client (when meaning this conversation), project, workspace, folder
+
+**Project**:
+The folder path a seat is working in. It is not a name in the store. Opening a path does not make a conversation that path's previous nickname.
+_Avoid_: name, title, seat, workspace (when meaning the path)
+
 **Session record**:
-The protocol's durable identity for a conversation in the store — stable id, surface, title, mail, and optional bindings.
+The stored seat. Its id **is** the session uuid.
 _Avoid_: chat, thread, conversation (when meaning the store record); agent (when meaning the record)
+
+**Session uuid**:
+`sess_<surface>_<client-uuid>`. Prefix is kind + surface. Suffix is that product’s conversation id (Claude CLI uuid, Grok session id, Gemini’s id). Mint a suffix only when the surface has no natural id (chat).
+_Avoid_: a second store-minted id beside the product id, install id
+
+**Install id**:
+The product install, not the conversation (Grok `~/.grok/agent_id`). Optional. Logs only. Never a session uuid, never a drain key.
+_Avoid_: session uuid
+
+**Client**:
+A device or surface type that uses the server (the home store + daemon). Devices and surfaces are both clients. Each holds seats.
+_Avoid_: seat, subscription, connector, peer (peer is coding agents only)
+
+**Peer**:
+A coding agent only — a code seat that uses the Claude Code channel (`ListAgents` / `SendMessage`). Not a chat, not Grok, not “any remote process.”
+_Avoid_: client, host, seat (when the seat is not a coding agent)
+
+**Name**:
+The session’s one-word nickname. Collisions list every match; never guess.
+_Avoid_: title (alone), project, folder, workspace
 
 **Title**:
 The protocol name on a session record, set at creation and used by resolvers (`resolve_conversation`, `send_to`, `send_message`). It does not automatically follow app or terminal renames.
@@ -32,9 +60,17 @@ _Avoid_: resume id (alone), CLI uuid (as the protocol identity)
 Free-text sender string on a message. Observational only — nothing resolves against it.
 _Avoid_: identity, title, name
 
+**Subscription**:
+The product account a seat is running as (`grok`, `cursor`, `claude`). Asserted at enrolment. Not the title, not the lane (`role`), not a drain key.
+_Avoid_: vendor (alone), role, plan name
+
+**Model slug**:
+The model serving that seat right now (`grok-4.6`). Asserted, refreshable. Spaces refused. A model switch updates the same record.
+_Avoid_: model name (marketing string with spaces), version (alone)
+
 **Surface**:
-Where a conversation runs: Chat, Cowork, Design, or Code.
-_Avoid_: client, app, channel (except message channels)
+Where a seat runs. Known today: chat, cowork, design, code. The set is open — add a surface when it is measured.
+_Avoid_: app, channel (except message channels), closed enum
 
 **Origin**:
 The session that offered a handoff or opened a return link.

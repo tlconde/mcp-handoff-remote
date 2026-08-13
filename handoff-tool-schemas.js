@@ -181,11 +181,15 @@ const TOOLS = [
       properties: {
         title: { type: 'string', description: 'The name a human will address it by, one word if possible ("build").' },
         device: { type: 'string', description: 'The machine it runs on ("second-laptop"). Required: it is the dedup key on reconnect and the host whose agent answers for reachability.' },
+        session_uuid: { type: 'string', description: 'REQUIRED. The client product\'s own conversation id (Grok session id, Claude CLI uuid, Gemini session id). The store record id becomes sess_code_<this>. Pass the product id or the full sess_code_<id>. Do not invent a ULID.' },
         subscription: { type: 'string', description: 'REQUIRED. Product account this seat is running as — one word (grok, cursor, claude, copilot, chatgpt, gemini, codex). Not the title, not the lane, not a credential. Asserted: the store does not verify billing. Cursor-on-Claude is subscription "cursor" with a Claude model_slug.' },
         model_slug: { type: 'string', description: 'REQUIRED. Model serving this seat right now (grok-4.6, claude-opus-4-6). Letters, digits, dot, hyphen, underscore. Spaces refused. Refreshable: re-register updates the slug, does not mint a second record.' },
+        install_id: { type: 'string', description: 'Optional product install id (Grok ~/.grok/agent_id). Shared by every seat on that install. Logs only — never a session uuid, never a drain key.' },
+        succeeds: { type: 'string', description: 'Optional. Adopt an older record id this seat is continuing (e.g. a store-minted sess_code_ULID). Append-only; the old id walks forward.' },
+        adoption_evidence: { type: 'string', description: 'One sentence on why this is the same seat. Optional.' },
         role: { type: 'string', description: 'Optional role/lane label discriminating sessions on one device ("build", "ux"). Not the product — that is subscription.' }
       },
-      required: ['title', 'device', 'subscription', 'model_slug'],
+      required: ['title', 'device', 'session_uuid', 'subscription', 'model_slug'],
       additionalProperties: false
     }
   },
@@ -333,7 +337,8 @@ const TOOLS = [
     name: 'whoami',
     description: 'Which session am I, and what do I call it? Returns one line: the human name of THIS terminal, its role, surface and workspace. Use when the user asks "which session is this", "what is this one called", or is deciding where to send something. Naming is one word via register_session (slash: /name build).',
     inputSchema: { type: 'object', properties: {
-        cli_uuid: { type: 'string', description: 'REQUIRED when calling over the relay from another machine, and unnecessary locally. This tool runs on the STORE HOST and cannot see your CLAUDE_CODE_SESSION_ID, so without it you will be told you are unidentified even when your seat IS registered — and a seat that believes its registration failed re-registers, which is how duplicate records get made. Pass the same value you registered with.' },
+        session_uuid: { type: 'string', description: 'This seat\'s product conversation id (Grok session id, Claude CLI uuid). Required for a non-Claude seat and for any caller over the relay. The store record is sess_<surface>_<this>.' },
+        cli_uuid: { type: 'string', description: 'Claude Code CLI uuid — same fact as session_uuid for a Claude seat. Pass one of the two.' },
         cli_pid: { type: 'number', description: 'Optional, alongside cli_uuid: your process id, so a contested uuid resolves by fact rather than preference.' },}, additionalProperties: false }
   },
   {

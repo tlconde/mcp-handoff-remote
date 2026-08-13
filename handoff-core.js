@@ -187,6 +187,27 @@ function save() {
   }
 }
 function id(prefix) { return prefix + '_' + ulid(); }
+/* sess_<surface>_<client-uuid>. Prefix is kind + surface. Suffix is the product's
+ * conversation id (Claude CLI uuid, Grok session id, …). Mint a ULID suffix only when
+ * the caller has no natural id (chat, or a fixture that did not pass one). */
+const CLIENT_UUID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{3,127}$/;
+function sessionRecordId(surface, clientUuid) {
+  return 'sess_' + (surface || 'x') + '_' + clientUuid;
+}
+function parseClientUuid(raw, surface) {
+  const v = String(raw || '').trim();
+  if (!v) return { error: 'session_uuid required — the client product\'s own conversation id (Grok session id, Claude CLI uuid). The store id is sess_<surface>_<that id>.' };
+  const pref = 'sess_' + (surface || 'code') + '_';
+  let part = v;
+  if (v.startsWith(pref)) part = v.slice(pref.length);
+  else if (/^sess_[a-z]+_/.test(v)) {
+    return { error: 'session_uuid prefix does not match this surface — pass the product id, or sess_' + (surface || 'code') + '_<id>.' };
+  }
+  if (!CLIENT_UUID_RE.test(part)) {
+    return { error: 'session_uuid must be the product conversation id — letters, digits, dot, hyphen, underscore. No spaces.' };
+  }
+  return { part, id: sessionRecordId(surface || 'code', part) };
+}
 function now() { return new Date().toISOString(); }
 function ops(event, data) {
   try {
@@ -727,20 +748,13 @@ function renderHandoffMd(env, session, target) {
 }
 
 /* ---------------- domain ---------------- */
-function createSession({ surface, title }) {
-  /* SURFACE-TYPED IDS. sess_chat_… / sess_code_… / sess_cowork_… / sess_design_… rather than one
-   * opaque sess_… for everything. It is legibility where legibility pays: the id is what a human
-   * pastes and what a wrong target hides in, and several of this week's misroutes would have been
-   * obvious on sight.
-   *
-   * THE PREFIX IS ASSERTED, NEVER VERIFICATION, and nothing may branch on it as if it were a trust
-   * class. sess_code_… claims a code surface; only CLI registration VERIFIES one, and that fact
-   * lives on the record's status where it always has. Someone will eventually be tempted to read
-   * the prefix as provenance — this comment exists to make that a deliberate choice rather than an
-   * easy one.
-   *
-   * Existing ids stay valid: matching is exact-string, so nothing is rewritten or migrated. */
-  const s = { id: id('sess_' + (surface || 'x')), surface, title: title || 'Untitled', created_at: now(), messages: [], decisions: [], artifacts: [], open_items: [], archived: false, participation: 'passive', type: (arguments[0] && arguments[0].type) || 'session' };
+function createSession({ surface, title, id: explicitId }) {
+  /* SURFACE-TYPED IDS. sess_<surface>_<client-uuid>. Prefix is kind + surface (asserted,
+   * never a trust class). Suffix is the product conversation id when the caller has one;
+   * otherwise a minted ULID (chat, or a caller that did not pass an id).
+   * Existing ids stay valid: matching is exact-string, so nothing is rewritten. */
+  const sid = explicitId || id('sess_' + (surface || 'x'));
+  const s = { id: sid, surface, title: title || 'Untitled', created_at: now(), messages: [], decisions: [], artifacts: [], open_items: [], archived: false, participation: 'passive', type: (arguments[0] && arguments[0].type) || 'session' };
   db.sessions[s.id] = s;
   return s;
 }
@@ -1840,16 +1854,35 @@ async function handleApi(method, p, query, b) {
       if (!b.host) return { code: 400, payload: { error: 'host required — a device record that cannot name its device is unaddressable and undedupable' } };
       if (!b.title) return { code: 400, payload: { error: 'title required — the whole point of the record is that a human can address it by name' } };
       const host = String(b.host);
-      let s = Object.values(db.sessions).find(x =>
-        !x.archived && x.remote && x.remote.host === host && x.title === b.title);
+      const rawUuid = b.session_uuid || b.cli_uuid || null;
+      const parsed = rawUuid ? parseClientUuid(rawUuid, 'code') : null;
+      if (parsed && parsed.error) return { code: 400, payload: { error: parsed.error } };
+      /* Identity is the session uuid when the caller has one. (host, title) is only the
+       * reconnect key for a seat that has not yet named its product conversation id.
+       * Falling back to (host, title) while a NEW uuid is in hand would refresh a store-minted
+       * ULID in place and never mint sess_<surface>_<client-uuid> — the live Falcon/Luke defect. */
+      let s = parsed
+        ? Object.values(db.sessions).find(x => !x.archived && x.id === parsed.id)
+        : Object.values(db.sessions).find(x =>
+          !x.archived && x.remote && x.remote.host === host && x.title === b.title);
       const minted = !s;
-      if (!s) { s = createSession({ surface: 'code', title: b.title }); }
+      if (!s) {
+        s = createSession({ surface: 'code', title: b.title, id: parsed ? parsed.id : undefined });
+      }
       s.title = b.title;
       if (b.role !== undefined) s.role = b.role || null;
       const prod = applySeatProduct(s, b);
       if (prod.code) {
         if (minted) delete db.sessions[s.id];
         return { code: 400, payload: { error: prod.error } };
+      }
+      if (b.install_id !== undefined) {
+        const inst = (b.install_id === null || b.install_id === '') ? null : String(b.install_id).trim();
+        if (inst && !CLIENT_UUID_RE.test(inst)) {
+          if (minted) delete db.sessions[s.id];
+          return { code: 400, payload: { error: 'install_id must be the product install id — letters, digits, dot, hyphen, underscore. It is not a session uuid.' } };
+        }
+        s.install_id = inst;
       }
       s.native_ref = null; // never asserted here; the owning host's agent claims it
       s.remote = {
@@ -1876,10 +1909,28 @@ async function handleApi(method, p, query, b) {
          * for the seat that reports it, and the split is the DISCRIMINATOR rather than a bug: two
          * seats, two transports, two socket namespaces. Four records were retired today because a
          * third party's belief about a machine was recorded as its name. */
-        device_provenance: b.cli_uuid ? 'self-reported' : 'claimed-on-behalf',
-        device_reported_by: b.cli_uuid ? String(b.cli_uuid) : (b.minted_by || 'unknown'),
+        device_provenance: (b.cli_uuid || b.session_uuid) ? 'self-reported' : 'claimed-on-behalf',
+        device_reported_by: parsed ? parsed.part : (b.minted_by || 'unknown'),
         last_registered: now(),
       };
+      let adopted = null;
+      if (b.succeeds && b.succeeds !== s.id) {
+        const pred = db.sessions[b.succeeds];
+        if (!pred) return { code: 404, payload: { error: `no record ${b.succeeds} to succeed — nothing was changed` } };
+        if (pred.superseded_by && pred.superseded_by !== s.id) {
+          return { code: 409, payload: { error: 'that adoption would create a successor cycle — nothing was changed' } };
+        }
+        pred.superseded_by = s.id;
+        adopted = { predecessor: pred.id, predecessor_title: pred.title };
+        s.succeeds = Array.isArray(s.succeeds) ? s.succeeds : [];
+        if (!s.succeeds.some(a => a.session_id === pred.id)) {
+          s.succeeds.push({
+            session_id: pred.id,
+            evidence: String(b.adoption_evidence || 'attested thread continuity held in the adopting session\'s context').slice(0, 300),
+          });
+        }
+        ops('record_adopted', { successor: s.id, predecessor: pred.id, predecessor_title: pred.title, provenance: 'asserted' });
+      }
       ops('remote_session_registered', {
         session: s.id, host, title: b.title, minted,
         minted_by: s.remote.minted_by, device_provenance: s.remote.device_provenance,
@@ -1887,7 +1938,7 @@ async function handleApi(method, p, query, b) {
         previous_model_slug: (!minted && prod.previous_model_slug !== s.model_slug) ? prod.previous_model_slug : undefined,
       });
       save(db);
-      return { code: minted ? 201 : 200, payload: { session: s, minted } };
+      return { code: minted ? 201 : 200, payload: { session: s, minted, adopted } };
     }
 
     if (method === 'POST' && p === '/api/register') {
@@ -1941,7 +1992,8 @@ async function handleApi(method, p, query, b) {
         // Name unification: native name is the display handle. On mint, an explicit protocol
         // title wins (it becomes the alias), else the native name, else the old fallback.
         const title = b.title || b.native_name || ('terminal · ' + (b.cwd ? path.basename(b.cwd) : String(b.native_id).slice(0, 8)));
-        s = createSession({ surface: 'code', title });
+        const localId = parseClientUuid(b.native_id, 'code');
+        s = createSession({ surface: 'code', title, id: localId.error ? undefined : localId.id });
         s.native_ref = { kind: 'claude-code', session_id: b.native_id, cwd: b.cwd || null, resume: `claude --resume ${b.native_id}` };
       }
       /* THE DEVICE THE SEAT REPORTED, recorded so ownership can be decided.
@@ -2506,6 +2558,7 @@ async function handleApi(method, p, query, b) {
 
 module.exports = {
   handleApi, HOME, PREFS, OPS, FULL_THRESHOLD, SURFACES, NAMES,
+  sessionRecordId, parseClientUuid,
   claudeCliAvailable, claudeBin, mcpRegistered, ops, autoReceipt, getPrefs, setPref, resolveAutosend,
   artifactCap, artifactBlock, buildBrief, fencedBlock,
   __claudeCompactForTests: claudeCompact,

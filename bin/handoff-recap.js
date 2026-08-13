@@ -53,7 +53,10 @@ try {
   let payload = {};
   try { if (!process.stdin.isTTY) payload = JSON.parse(fs.readFileSync(0, 'utf8') || '{}'); } catch (_) { payload = {}; }
   const nativeId = payload.session_id || process.env.CLAUDE_CODE_SESSION_ID || null;
-  const myIds = new Set(sessions.filter(s => nativeId && s.native_ref && s.native_ref.session_id === nativeId).map(s => s.id));
+  const myIds = new Set(sessions.filter(s => nativeId && (
+    (s.native_ref && s.native_ref.session_id === nativeId) ||
+    s.id === ('sess_' + (s.surface || 'code') + '_' + nativeId)
+  )).map(s => s.id));
   const ambient = [];
   for (const s of sessions) for (const m of s.messages || []) {
     if (m.from_session && myIds.has(m.from_session) && m.read_at && !m.settled_at) ambient.push(m);

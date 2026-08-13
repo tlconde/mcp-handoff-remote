@@ -25,6 +25,21 @@
  * one resolver is reachable by all of them. */
 /* Display fragment for the two enrolment attributes. Used by whoami, resolve, register
  * receipts and candidate lists — one format so they cannot drift. Empty when unset. */
+function boundSeat(sessions, nativeId, args, core) {
+  const want = (args && (args.session_uuid || args.cli_uuid)) || nativeId || null;
+  const sid = (surface, part) => (core && core.sessionRecordId)
+    ? core.sessionRecordId(surface, part)
+    : ('sess_' + surface + '_' + part);
+  if (want) {
+    const hit = sessions.find(s =>
+      s.id === want ||
+      (s.surface && s.id === sid(s.surface, want)) ||
+      (nativeId && s.native_ref && s.native_ref.session_id === nativeId));
+    if (hit) return hit;
+  }
+  if (nativeId) return sessions.find(s => s.native_ref && s.native_ref.session_id === nativeId) || null;
+  return null;
+}
 function seatProductLabel(s) {
   if (!s) return '';
   if (s.subscription && s.model_slug) return `${s.subscription} / ${s.model_slug}`;
@@ -293,7 +308,6 @@ function inboxScope(st, ctx, args) {
   }
   return { refused: null, surface, sessions, foreign, HERE, claimedHost };
 }
-
 function unreadCount(s) {
   return freshMessages(s).length;
 }
@@ -409,9 +423,7 @@ async function buildStatusReport(args, ctx, core) {
 
   const sessions = Object.values(st.sessions || {}).filter(s => !s.archived);
   // The record this terminal's LIVE uuid actually binds to — the authority, over any cache.
-  const boundRecord = nativeId
-    ? sessions.find(s => s.native_ref && s.native_ref.session_id === nativeId) || null
-    : null;
+  const boundRecord = boundSeat(sessions, nativeId, args, core);
   const workspace = (() => {
     const c = (boundRecord && boundRecord.native_ref && boundRecord.native_ref.cwd) || (ctx && ctx.cwd) || null;
     return c ? require('path').basename(c) : null;
@@ -439,9 +451,9 @@ async function buildStatusReport(args, ctx, core) {
     ? `You are: ${boundRecord.title}${nameSplit}${seatProductLabel(boundRecord) ? ` · ${seatProductLabel(boundRecord)}` : ''}${boundRecord.role ? ` (@${boundRecord.role}` : ' ('}${boundRecord.role ? ' · ' : ''}${boundRecord.surface}${workspace ? ` · ${workspace}` : ''})${contestNote}`
     : (nativeId
       ? `You are: this terminal has no name yet${workspace ? ` (${workspace})` : ''} — name it with /name <one word>, e.g. /name build${contestNote}`
-      : 'You are: unidentified (no CLI uuid in this environment)');
+      : 'You are: unidentified (no session uuid in this environment — pass session_uuid, the product conversation id)');
   lines[identityLine] = `Identity: ${boundRecord
-    ? `${boundRecord.id} — "${boundRecord.title}"${nameSplit} (CLI ${nativeId.slice(0, 8)}…)`
+    ? `${boundRecord.id} — "${boundRecord.title}"${nameSplit} (${nativeId ? `CLI ${nativeId.slice(0, 8)}…` : boundRecord.id})`
     : (identityId || (nativeId
       ? `CLI ${nativeId.slice(0, 8)}… not yet registered (auto on first send; register_session names a title/role)`
       /* Same correction as register_session's refusal: over the relay the tool runs on the store
@@ -455,7 +467,13 @@ async function buildStatusReport(args, ctx, core) {
   // Next-action must never point at a conversation that is not mine — that would eat another
   // session's mail before that session ever reads it.
   const mineIds = new Set([pinnedId, identityId].filter(Boolean));
-  if (nativeId) for (const s of sessions) if (s.native_ref && s.native_ref.session_id === nativeId) mineIds.add(s.id);
+  if (nativeId) {
+    for (const s of sessions) {
+      if ((s.native_ref && s.native_ref.session_id === nativeId) || (core && core.sessionRecordId && s.id === core.sessionRecordId(s.surface, nativeId))) mineIds.add(s.id);
+    }
+  }
+  const bound = boundSeat(sessions, nativeId, args);
+  if (bound) mineIds.add(bound.id);
   const settled = settledDestIds(st);
   const pending = sessions.filter(s => offerIsPending(s, settled));
   const withUnread = sessions.map(s => ({ s, n: unreadCount(s), returns: unreadReturnCount(s) })).filter(x => x.n > 0);
@@ -662,9 +680,9 @@ async function callTool(name, args, ctx, core) {
   /* whoami — status's first line, alone. The same answer, without making you read a health
    * report to get it. One source: it IS the status line, sliced, so the two can never drift. */
   if (name === 'whoami') {
-    const full = await buildStatusReport({}, ctx, core);
+    const full = await buildStatusReport(args || {}, ctx, core);
     const line = String(full).split('\n').find(l => l.startsWith('You are:'));
-    return line || 'You are: unidentified (no CLI uuid in this environment)';
+    return line || 'You are: unidentified (no session uuid in this environment)';
   }
   /* AGENT HEARTBEAT — the one verb the remote door was widened for.
    *
@@ -694,7 +712,7 @@ async function callTool(name, args, ctx, core) {
     for (const sid of Object.keys(sessions)) {
       const rec = (st.sessions || {})[sid];
       if (!rec) { foreign.push(`${sid} (no such record)`); continue; }
-      const declared = (rec.remote && rec.remote.host) || (rec.native_ref && rec.native_ref.host) || null;
+      const declared = reach.declaredHost(rec);
       if (declared && declared !== host) foreign.push(`${sid} (belongs to ${declared})`);
     }
     if (foreign.length) {
@@ -723,7 +741,7 @@ async function callTool(name, args, ctx, core) {
       }
       for (const [sid, rec] of Object.entries(st.sessions || {})) {
         if (rec && rec.archived) continue;
-        const declared = (rec.remote && rec.remote.host) || (rec.native_ref && rec.native_ref.host) || null;
+        const declared = reach.declaredHost(rec);
         if (declared === host && merged[sid] === undefined) merged[sid] = dv;
       }
     }
@@ -1904,21 +1922,32 @@ async function callTool(name, args, ctx, core) {
     if (!args.subscription || !args.model_slug) {
       return 'REFUSED: subscription and model_slug are required — declare the product account (one word, e.g. grok) and the serving model (e.g. grok-4.6). Title is the address; role is the lane. These two name what kind of seat this is.';
     }
+    if (!args.session_uuid && !args.cli_uuid) {
+      return 'REFUSED: session_uuid required — the client product\'s own conversation id (Grok session id, Claude CLI uuid). The store record id is sess_code_<that id>.';
+    }
     const mintedBy = (ctx && ctx.remote)
       ? `access:${(ctx && ctx.account_sub) || 'authenticated'}`
       : `local:${(ctx && ctx.cli_uuid) ? 'terminal' : 'bridge'}`;
     const r = await call('POST', '/api/register-remote', {}, {
       host: args.device, title: args.title, role: args.role,
       subscription: args.subscription, model_slug: args.model_slug,
+      session_uuid: args.session_uuid || args.cli_uuid,
+      install_id: args.install_id,
+      succeeds: args.succeeds,
+      adoption_evidence: args.adoption_evidence,
       attested_by: (ctx && ctx.remote) ? 'access' : 'operator',
       account_sub: (ctx && ctx.account_sub) || null,
       minted_by: mintedBy,
+      cli_uuid: args.session_uuid || args.cli_uuid,
     });
     if (r && r.error) return `REFUSED: ${r.error}`;
     if (!r || !r.session) return 'REFUSED: the store did not return a record.';
     const s = r.session;
     const onBehalf = !(ctx && ctx.remote);
     const product = seatProductLabel(s);
+    const adopted = r.adopted
+      ? `\nADOPTED: this record now SUPERSEDES ${r.adopted.predecessor} ("${r.adopted.predecessor_title}"). Sends to the old id walk forward. Nothing was deleted.\n`
+      : '';
     return `${r.minted ? 'Registered' : 'Refreshed'}: [code] "${s.title}"${product ? ` · ${product}` : ''} · ${s.remote.host}\n` +
       `session_id: ${s.id}\n` +
       `Identity: asserted, attested_by ${s.remote.attested_by}. NOT CLI-verified — no process on this machine answers for it, and none is claimed.\n` +
@@ -1926,7 +1955,8 @@ async function callTool(name, args, ctx, core) {
       (onBehalf
         ? `Provenance: minted from HERE on that device's behalf (${mintedBy}), not by its own agent. Recorded on the record so it is not mistaken for one later.\n`
         : `Provenance: minted by the device itself over the authenticated relay.\n`) +
-      `It is now visible and addressable from every device: send_to / send_message by the name "${s.title}".`;
+      `It is now visible and addressable from every device: send_to / send_message by the name "${s.title}".` +
+      adopted;
   }
 
   if (name === 'peek_inbox') {

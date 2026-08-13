@@ -175,28 +175,17 @@ function forgetKeysExcept(state, prefix, keep) {
   }
 }
 
-/** Is this pid alive HERE? Only ever asked about records this host owns. */
-function aliveHere(pid) {
-  if (!pid) return false;
-  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
-}
+const reach = require('../handoff-reachability');
 
-/* This host's verdict for one of ITS OWN sessions. The vocabulary is the same four values peek
- * reports, and the honesty rule is the same: 'none' means this host looked and found nothing,
- * which only this host is entitled to say. 'unknown' is never written — an agent that is running
- * has looked, so it always has a real answer for its own records. */
+/* This host's verdict for one of ITS OWN sessions. Same inspect peek uses on a local record.
+ * 'unknown' is never written — an agent that is running has looked. */
 function verdictFor(session) {
-  const nr = session.native_ref;
-  if (!nr) return 'none';
-  return aliveHere(nr.pid) ? 'process' : 'stale-binding';
+  return reach.inspectLocal(session);
 }
 
-/** Records this host owns: a native_ref bound here, or a remote record naming this host. */
+/** Records this host owns. Same host rule peek and heartbeat use. */
 function ownedHere(s) {
-  if (s.archived) return false;
-  const nr = s.native_ref;
-  if (nr) return !nr.host || nr.host === HOST;
-  return !!(s.remote && s.remote.host === HOST);
+  return reach.ownedHere(s, HOST);
 }
 
 async function cycle(state) {

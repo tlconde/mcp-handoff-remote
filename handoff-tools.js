@@ -137,13 +137,10 @@ function deliveryNoteFor(woke, dest, windowName) {
  *
  * Returns 'process' | 'none' | 'stale-binding' when a live agent has spoken, and 'unknown' when
  * nobody has. 'unknown' means NOBODY HAS LOOKED — never "unreachable". */
-const HEARTBEAT_STALE_MS = 3 * 30 * 1000; // ~3 poll intervals at the 30s upper bound
+const reach = require('./handoff-reachability');
+const HEARTBEAT_STALE_MS = reach.HEARTBEAT_STALE_MS;
 function agentVerdictFor(host, recordId, st) {
-  const beat = (st && st.agents && st.agents[host]) || null;
-  if (!beat || !beat.last_seen) return 'unknown';
-  const age = Date.now() - Date.parse(beat.last_seen);
-  if (!(age >= 0) || age > HEARTBEAT_STALE_MS) return 'unknown';   // a stale agent speaks for nobody
-  return (recordId && beat.sessions && beat.sessions[recordId]) || 'unknown';
+  return reach.agentVerdict(host, recordId, st);
 }
 
 /** Substring match on any addressable name. */
@@ -1786,48 +1783,11 @@ async function callTool(name, args, ctx, core) {
    * A record carries no liveness claim of its own (S5): a record is data, reachability is the
    * owning agent's runtime assertion layered on top. That keeps the mint idempotent and makes a
    * record whose agent has died read honestly as 'unknown' rather than falsely as anything. */
-  const HEARTBEAT_STALE_MS = 3 * 30 * 1000; // ~3 poll intervals at the 30s upper bound
   function reachabilityOf(sess, st) {
-    const nr = sess && sess.native_ref;
-    const remoteHost = sess && sess.remote && sess.remote.host;
-    /* A record owned by another device has NO native_ref at all — the mint refuses to assert one
-     * and its agent has not claimed it yet. Keying ownership off native_ref alone made those read
-     * 'none' ("the owning host looked and found nothing"), which is the precise wrong-direction
-     * failure the fourth value exists to prevent: nobody looked, and nobody had even been asked.
-     *
-     * FIXING A CLASS AT ONE LAYER DOES NOT FIX IT AT THE LAYER ABOVE. The commit that introduced
-     * this vocabulary reintroduced the same failure one layer up, in itself. It surfaced only
-     * because the test asserted the specific honest value ('unknown') rather than "some value
-     * came back" — the second time in one day that distinction was the only thing standing
-     * between a fix and its own regression. Assert the value, not the shape. */
-    /* Keyed by the PROTOCOL RECORD ID, not by native_ref.session_id. A remote record has no
-     * native_ref — the mint refuses to assert one — so keying the verdict off it meant a heartbeat
-     * could never answer for exactly the records heartbeats exist to answer for. It would have sat
-     * at 'unknown' forever with its host's agent running and reporting, and the acceptance test
-     * (a remote record flipping to a host-asserted verdict) could not have passed. Found by trying
-     * to run it rather than by reading it. The record id exists for every record, local or not. */
-    if (!nr) return remoteHost ? remoteVerdict(remoteHost, sess.id, st) : 'none';
-    /* os.hostname() ONLY — the override is gone here too, and it had to go from BOTH places at
-     * once. A machine whose agent computed its name one way while its mount computed it another
-     * would disagree with itself about which records it owns, which is the misnaming failure with
-     * an extra layer. The device reports what it is called; nothing overrides it. */
-    const here = !nr.host || nr.host === require('os').hostname();
-    if (here) {
-      if (!nr.pid) return 'stale-binding';
-      try { process.kill(nr.pid, 0); return 'process'; }
-      catch (e) { return e.code === 'EPERM' ? 'process' : 'stale-binding'; }
-    }
-    // Another device owns it. Only its agent may say, and only recently.
-    return remoteVerdict(nr.host, sess.id, st);
+    return reach.of(sess, st);
   }
-  /** The owning host's own verdict, or 'unknown'. Never a local inference. */
   function remoteVerdict(host, sessionKey, st) {
-    const beat = (st && st.agents && st.agents[host]) || null;
-    if (!beat || !beat.last_seen) return 'unknown';
-    const age = Date.now() - Date.parse(beat.last_seen);
-    if (!(age >= 0) || age > HEARTBEAT_STALE_MS) return 'unknown';
-    const verdict = sessionKey && beat.sessions && beat.sessions[sessionKey];
-    return verdict || 'unknown';
+    return reach.agentVerdict(host, sessionKey, st);
   }
 
   /* PEEK — read the inbox WITHOUT consuming it. The wake agent's only read verb.

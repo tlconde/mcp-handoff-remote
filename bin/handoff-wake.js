@@ -347,29 +347,10 @@ function nativeReach(native_ref) {
   const out = { open: false, name: null, socket: null, cwd: null, reason: 'no native_ref', candidates: 0, stale_binding: false, pid: null };
   try {
     if (!native_ref || !native_ref.session_id) return out;
-    /* ANOTHER DEVICE OWNS IT — and this machine cannot answer for it.
-     *
-     * Everything below validates the binding against THIS host: liveRows() is a readdir of the
-     * local session registry plus process.kill() into the local process table. For a record that
-     * declares another device, neither can ever contain it, so `bound` was always falsy and every
-     * remote seat was reported `stale_binding` — permanently, from the moment it enrolled.
-     *
-     * That produced a sentence that was false in all three of its clauses: nothing was stale, no
-     * resume had occurred, and the remedy it offered ("opening it heals the binding") is a LOOP
-     * for a seat this host will never see. A correct-sounding error that leaves the caller no
-     * route, and does not say so, is absorbed as a convention rather than reported as a defect —
-     * two seats read it for an evening and took it for a fact about themselves.
-     *
-     * `peek_inbox` (handoff-tools.js:1732) already guards precisely this, with the same test. This
-     * is that guard, applied in the sibling consumer that skipped it. The honest verdict for a
-     * foreign record is neither open nor stale: it is NOT DETERMINABLE FROM HERE, and only the
-     * owning seat may say otherwise.
-     *
-     * NOTE the asymmetry with an ABSENT host, which is deliberate and must stay: no host means
-     * LOCAL to this store host, which is correct for a terminal on this machine and is why the
-     * check is `host && host !== me` rather than a positive match. */
-    const me = require('os').hostname();
-    if (native_ref.host && native_ref.host !== me) {
+    /* Host guard is the same rule peek uses (handoff-reachability.foreignHost).
+     * A pid on another machine is not stale — it is not determinable from here. */
+    const reach = require('../handoff-reachability');
+    if (reach.foreignHost(native_ref.host)) {
       out.name = native_ref.name || null;
       out.cwd = native_ref.cwd || null;
       out.foreign_host = native_ref.host;

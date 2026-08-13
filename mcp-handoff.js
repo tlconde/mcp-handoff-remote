@@ -358,9 +358,10 @@ const PEER_URL = process.env.HANDOFF_REMOTE_URL || null;
  * that gates it. So the rule is no longer "a peer must declare itself" but the symmetric one:
  * EVERY role is declared, and silence is UNKNOWN. Unknown never mints.
  *
- *   peer  — HANDOFF_REMOTE_URL is set (unchanged)
- *   host  — HANDOFF_ROLE=host, OR a store already exists here (see below)
- *   else  — REFUSE, and create nothing
+ *   client — HANDOFF_REMOTE_URL is set (this machine uses a remote store)
+ *   host   — HANDOFF_ROLE=host, OR a store already exists here (see below)
+ *   else   — REFUSE, and create nothing
+ * HANDOFF_ROLE=peer is the coding-agent word. It is refused and names client.
  *
  * THE GRANDFATHER CLAUSE IS EVIDENCE, NOT INFERENCE. An existing store/v1 is a durable artefact
  * a human deliberately created; reading it as "this machine is the host" is not the same move as
@@ -374,10 +375,11 @@ const PEER_URL = process.env.HANDOFF_REMOTE_URL || null;
  * the enrollment ceremony ships, the event supersedes the env var and this comment should say so
  * rather than leaving two answers to one question. */
 function declaredRole() {
-  if (PEER_URL) return 'peer';
+  if (PEER_URL) return 'client';
   const explicit = String(process.env.HANDOFF_ROLE || '').trim().toLowerCase();
   if (explicit === 'host') return 'host';
-  if (explicit === 'peer') return 'peer-undeliverable';   // declared peer with no URL to reach
+  if (explicit === 'peer') return 'legacy-peer';
+  if (explicit === 'client') return 'client-undeliverable';
   try {
     const os = require('os'), fs = require('fs'), path = require('path');
     const home = process.env.HANDOFF_HOME || path.join(os.homedir(), '.claude-handoff');
@@ -393,7 +395,7 @@ function undeclaredRefusal() {
     `correctly about a universe no other machine can see — which is far harder to notice than ` +
     `this message, and has already cost one investigation.\n\n` +
     `Declare the role:\n` +
-    `  • THIS MACHINE IS A PEER (the usual case for a second device):\n` +
+    `  • THIS MACHINE IS A CLIENT (any device or surface that uses a remote store):\n` +
     `      set HANDOFF_REMOTE_URL (and a credential) in .agent-env beside the clone\n` +
     `  • THIS MACHINE HOSTS THE STORE (exactly one machine may):\n` +
     `      set HANDOFF_ROLE=host\n\n` +
@@ -401,15 +403,20 @@ function undeclaredRefusal() {
     `host keeps working untouched. If you are seeing this on a machine that HAS a store, then ` +
     `HANDOFF_HOME is not pointing at it.`;
 }
-function undeliverablePeerRefusal() {
-  return `REFUSED — HANDOFF_ROLE=peer is declared but HANDOFF_REMOTE_URL is not set, so there is ` +
+function undeliverableClientRefusal() {
+  return `REFUSED — HANDOFF_ROLE=client is declared but HANDOFF_REMOTE_URL is not set, so there is ` +
     `nowhere to reach the home store. Nothing was read and NO local store was created.\n\n` +
-    `A declared peer with no address is a configuration that is half-arrived, and the failure it ` +
+    `A declared client with no address is a configuration that is half-arrived, and the failure it ` +
     `would otherwise produce — falling back to a local store — is the exact one this refusal exists ` +
     `to prevent. Set HANDOFF_REMOTE_URL in .agent-env beside the clone.`;
 }
+function legacyPeerRoleRefusal() {
+  return `REFUSED — HANDOFF_ROLE=peer is the coding-agent word (Claude ListAgents / SendMessage). ` +
+    `This env names a machine that uses a remote store. That machine is a client.\n\n` +
+    `Set HANDOFF_ROLE=client and HANDOFF_REMOTE_URL. peer is not accepted as an alias.`;
+}
 function peerRefusal(reason) {
-  return `REFUSED — this machine is configured as a REMOTE PEER (HANDOFF_REMOTE_URL is set) and the ` +
+  return `REFUSED — this machine is configured as a REMOTE CLIENT (HANDOFF_REMOTE_URL is set) and the ` +
     `home store could not be reached: ${reason}\n\n` +
     `Nothing was written and NO local store was created. That refusal is deliberate: minting a local ` +
     `store here would give you a session that answers every question correctly about a universe no ` +
@@ -466,7 +473,8 @@ async function callTool(name, args) {
    * that has declared nothing, there is no correct answer at all. Both refusals come before any
    * code that could create a directory, so an undeclared machine leaves no trace of having run. */
   if (ROLE === 'undeclared') return undeclaredRefusal();
-  if (ROLE === 'peer-undeliverable') return undeliverablePeerRefusal();
+  if (ROLE === 'legacy-peer') return legacyPeerRoleRefusal();
+  if (ROLE === 'client-undeliverable') return undeliverableClientRefusal();
   if (PEER_URL) return callToolViaRelay(name, args);
   // THE FLIP: forward every tool to the managed daemon (one socket round-trip), then apply
   // the same write-back. The daemon owns TOOL staleness (exit-on-stale), so the bridge-side

@@ -46,23 +46,31 @@ const clean = { HANDOFF_REMOTE_URL: '', HANDOFF_ROLE: '', HANDOFF_ACCESS_CLIENT_
   ok(!/REFUSED/.test(out3),
     'grandfathered: an EXISTING store is evidence of a deliberate host — migration needs no declaration');
 
-  // ---- 4. PEER DECLARED, and cwd-independent ----
-  const home4 = path.join(os.tmpdir(), 'role-peer-' + process.pid);
+  // ---- 4. CLIENT DECLARED by URL, and cwd-independent ----
+  const home4 = path.join(os.tmpdir(), 'role-client-' + process.pid);
   const out4 = await drive(Object.assign({}, clean, { HANDOFF_HOME: home4, HANDOFF_REMOTE_URL: 'http://127.0.0.1:9/mcp' }), elsewhere);
-  ok(/REFUSED/.test(out4) && /REMOTE PEER/.test(out4),
-    'peer declared: refuses with the PEER refusal when the home store is unreachable');
+  ok(/REFUSED/.test(out4) && /REMOTE CLIENT/.test(out4),
+    'client declared: refuses with the CLIENT refusal when the home store is unreachable');
   ok(!fs.existsSync(home4),
-    'peer declared: still creates no local store when it cannot reach home (05a9ed8 holds)');
+    'client declared: still creates no local store when it cannot reach home (05a9ed8 holds)');
 
-  // ---- 5. DECLARED PEER WITH NO ADDRESS: half-arrived config refuses rather than falling back ----
-  const home5 = path.join(os.tmpdir(), 'role-halfpeer-' + process.pid);
-  const out5 = await drive(Object.assign({}, clean, { HANDOFF_HOME: home5, HANDOFF_ROLE: 'peer' }), elsewhere);
+  // ---- 5. DECLARED CLIENT WITH NO ADDRESS: half-arrived config refuses rather than falling back ----
+  const home5 = path.join(os.tmpdir(), 'role-halfclient-' + process.pid);
+  const out5 = await drive(Object.assign({}, clean, { HANDOFF_HOME: home5, HANDOFF_ROLE: 'client' }), elsewhere);
   ok(/REFUSED/.test(out5) && /nowhere to reach the home store/.test(out5),
-    'declared peer with no URL: refuses rather than silently becoming a local host');
+    'declared client with no URL: refuses rather than silently becoming a local host');
   ok(!fs.existsSync(home5),
-    'declared peer with no URL: creates nothing');
+    'declared client with no URL: creates nothing');
 
-  for (const h of [home1, home2, home3, home4, home5]) { try { fs.rmSync(h, { recursive: true, force: true }); } catch (_) {} }
+  // ---- 6. DOCTOR: the old env value is refused and names the new one ----
+  const home6 = path.join(os.tmpdir(), 'role-legacypeer-' + process.pid);
+  const out6 = await drive(Object.assign({}, clean, { HANDOFF_HOME: home6, HANDOFF_ROLE: 'peer' }), elsewhere);
+  ok(/REFUSED/.test(out6) && /HANDOFF_ROLE=client/.test(out6) && /coding-agent/.test(out6),
+    'legacy HANDOFF_ROLE=peer: refuses and names client — not an alias');
+  ok(!fs.existsSync(home6),
+    'legacy HANDOFF_ROLE=peer: creates nothing');
+
+  for (const h of [home1, home2, home3, home4, home5, home6]) { try { fs.rmSync(h, { recursive: true, force: true }); } catch (_) {} }
   try { fs.rmSync(elsewhere, { recursive: true, force: true }); } catch (_) {}
   console.log(`\nrole-tests: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

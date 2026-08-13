@@ -45,7 +45,7 @@ A coding agent only — a code seat that uses the Claude Code channel (`ListAgen
 _Avoid_: client, host, seat (when the seat is not a coding agent)
 
 **Name**:
-The session’s one-word nickname. Collisions list every match; never guess.
+The session’s one-word nickname. Collisions list every match; never guess. A chat is named by the user typing `Start onboarding for <name>` (or `/onboard <name>`); that word is title and nickname in one `register_session`. Code still uses `/name`.
 _Avoid_: title (alone), project, folder, workspace
 
 **Title**:

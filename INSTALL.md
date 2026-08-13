@@ -55,6 +55,15 @@ claude
 
 That is the whole install. The store is created at `~/.claude-handoff/` on first use.
 
+**Chat seats** have no `/name`. In that conversation type:
+
+```
+Start onboarding for Checker
+```
+
+(one word). The chat must then call `register_session` with `surface: "chat"`, `title` and `nickname` both that word. Same phrase every time you open a new chat you want to address.
+
+
 **Optional — the background daemon.** One process serving every terminal, so sessions can
 reach each other and wake each other:
 

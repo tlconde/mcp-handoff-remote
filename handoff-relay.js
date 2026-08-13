@@ -297,6 +297,10 @@ function pruneSessions() {
   const cutoff = Date.now() - SESSION_TTL_MS;
   for (const [id, seen] of sessions) if (seen < cutoff) sessions.delete(id);
 }
+function dropSession(id) {
+  if (!id) return false;
+  return sessions.delete(id);
+}
 
 /* EXIT-ON-STALE, the same doctrine the daemon follows — added 2026-08-10 after this process
  * served pre-change code for ELEVEN HOURS while looking healthy.
@@ -467,7 +471,20 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/mcp') {
     const auth = await verifyToken(req.headers);
     if (!auth.ok) return unauthorized(res, auth.reason, auth.detail);
-    return send(res, 405, { error: 'method_not_allowed', detail: 'this server replies to POST; it does not offer a server-initiated SSE stream' }, { allow: 'POST' });
+    return send(res, 405, { error: 'method_not_allowed', detail: 'this server replies to POST; it does not offer a server-initiated SSE stream' }, { allow: 'POST, DELETE' });
+  }
+
+  /* DELETE /mcp — Streamable HTTP session teardown. grok-connectors-manager (measured
+   * 2026-08-13) POSTs initialize + tools/call 200, then DELETE → 404. A 404 here is the same
+   * lie GET used to tell: "no such URL" after the URL just worked. Terminate is idempotent:
+   * known id is dropped; unknown id is already gone. No SSE, no store write. */
+  if (req.method === 'DELETE' && url.pathname === '/mcp') {
+    const auth = await verifyToken(req.headers);
+    if (!auth.ok) return unauthorized(res, auth.reason, auth.detail);
+    const echoed = req.headers['mcp-session-id'] ? String(req.headers['mcp-session-id']) : null;
+    dropSession(echoed);
+    res.writeHead(204, { allow: 'POST, DELETE' }).end();
+    return;
   }
 
   if (req.method === 'POST' && url.pathname === '/mcp') {
@@ -496,7 +513,7 @@ const server = http.createServer(async (req, res) => {
       const out = await handleMcp(rpc, auth, {
         mcp_session: echoed || null,
         // The product that is calling, which 280cb79 needed and did not have.
-        surface_class: /^Claude-User/.test(ua) ? 'claude-app' : (/^claude-code/.test(ua) ? 'claude-code' : null),
+        surface_class: /^Claude-User/.test(ua) ? 'claude-app' : (/^claude-code/.test(ua) ? 'claude-code' : (/grok-connectors-manager/i.test(ua) ? 'grok-app' : null)),
       });
       // A notification carries no reply: 202, empty body, per JSON-RPC.
       if (out === null) return res.writeHead(202).end();

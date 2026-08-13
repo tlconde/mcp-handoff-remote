@@ -76,7 +76,9 @@ the read receipt for it.* Preserved by scoping each operation to what the caller
 - **machine-scoped** (records that DECLARE a host) → require a self-reported `host`;
 - **record-scoped** (everything else) → require the caller to name its OWN minted id.
 
-Both asserted, both refused **whole** when absent, neither ever inferred. A chat caller gains the
+Both asserted, both refused **whole** when absent, neither ever inferred. **`peek_inbox` and
+`check_inbox` share these axes** — a watcher must not see a wider world than check may drain.
+A chat caller gains the
 ability to drain the one record it names, and gains nothing else — **stricter** than the pre-
 `e1c2487` behaviour, which drained a whole surface and cost seven messages (D9).
 

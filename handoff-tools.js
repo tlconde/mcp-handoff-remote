@@ -220,6 +220,80 @@ function freshMessages(s) {
   const lastCheck = lastCheckIndex(s);
   return messagesOf(s).filter((m2, i) => UNREAD_KINDS.has(m2.kind) && i > lastCheck);
 }
+
+const HOST_DECLARING_SURFACES = new Set(['code']);
+
+function declaredHostOf(s) {
+  return (s.remote && s.remote.host) || (s.native_ref && s.native_ref.host) || null;
+}
+
+/* Shared by peek_inbox and check_inbox. A watcher must not see a wider world than
+ * check may drain. Same axes: host on a host-declaring surface, session_id on the rest.
+ * Remote callers omit the axis → refuse WHOLE. Never subscription. */
+function inboxScope(st, ctx, args) {
+  if (args && (args.subscription !== undefined || args.model_slug !== undefined)) {
+    return {
+      refused: 'REFUSED: check_inbox is not scoped by subscription or model_slug — those name a product, not a conversation. Drain by host (code) or session_id (chat). Nothing was read and nothing was marked read.',
+    };
+  }
+  const nativeId = (ctx && ctx.cli_uuid) || null;
+  const surface = (args && args.surface) || (nativeId ? 'code' : 'chat');
+  const isRemoteCaller = !!(ctx && ctx.remote);
+  const machineScoped = HOST_DECLARING_SURFACES.has(surface);
+  const claimedHost = args && args.host ? String(args.host).trim() : '';
+  const claimedRecord = args && args.session_id ? String(args.session_id).trim() : '';
+  if (isRemoteCaller && !machineScoped && !claimedRecord) {
+    return {
+      refused: `REFUSED: a ${surface} conversation has no hostname — it runs in no process on no machine — ` +
+        `so this call cannot be scoped by device, and nothing was read or marked read.\n\n` +
+        `Pass session_id:"<your own record id>" to drain YOUR conversation. That id is the one the store ` +
+        `minted for you (surface-typed, e.g. sess_…); resolve_conversation returns it if you do not hold it. ` +
+        `The claim is ASSERTED exactly as a host claim is, which is why it is refused whole rather than ` +
+        `guessed: a wrong guess does not merely read another conversation's mail, it issues a read receipt ` +
+        `for mail nobody read.`,
+    };
+  }
+  if (isRemoteCaller && machineScoped && !claimedHost) {
+    return {
+      refused: `REFUSED: this call arrived over the relay, so which machine is asking cannot be established — ` +
+        `and the store host's own name is NOT the answer, it is this tool's machine rather than yours. ` +
+        `Nothing was read and nothing was marked read.\n\n` +
+        `Pass host:"<this machine's os.hostname()>" to drain the records that declare it. The claim is ` +
+        `ASSERTED, exactly as agent_heartbeat's is — which is why it is refused whole rather than guessed: ` +
+        `a wrong guess here reads someone else's mail AND issues them a read receipt for it.`,
+    };
+  }
+  const HERE = claimedHost || require('os').hostname();
+  let sessions = Object.values(st.sessions || {}).filter(s => !s.archived && s.surface === surface);
+  const foreign = sessions.filter(s => {
+    const h = declaredHostOf(s);
+    return h && h !== HERE && freshMessages(s).length;
+  });
+  sessions = sessions.filter(s => {
+    if (isRemoteCaller && !machineScoped) return s.id === claimedRecord;
+    const h = declaredHostOf(s);
+    return isRemoteCaller ? h === claimedHost : (!h || h === HERE);
+  });
+  {
+    const have = new Set(sessions.map(s => s.id));
+    const extra = [];
+    for (const s of sessions) {
+      for (const a of (Array.isArray(s.succeeds) ? s.succeeds : [])) {
+        const pred = (st.sessions || {})[a.session_id];
+        if (!pred || pred.archived || have.has(pred.id)) continue;
+        extra.push(pred);
+        have.add(pred.id);
+      }
+    }
+    sessions = sessions.concat(extra);
+  }
+  if (args && args.title_contains) {
+    const t = args.title_contains.toLowerCase();
+    sessions = sessions.filter(s => s.title.toLowerCase().includes(t));
+  }
+  return { refused: null, surface, sessions, foreign, HERE, claimedHost };
+}
+
 function unreadCount(s) {
   return freshMessages(s).length;
 }
@@ -1856,12 +1930,15 @@ async function callTool(name, args, ctx, core) {
   }
 
   if (name === 'peek_inbox') {
-    const nativeId = (ctx && ctx.cli_uuid) || null;
-    const surface = (args && args.surface) || (nativeId ? 'code' : 'chat');
     const since = args && args.since ? String(args.since) : null;
     const st = await call('GET', '/api/state');
-    let sessions = Object.values(st.sessions).filter(s => !s.archived && s.surface === surface);
-    if (args && args.title_contains) sessions = filterByName(sessions, args.title_contains);
+    const scoped = inboxScope(st, ctx, args);
+    if (scoped.refused) return scoped.refused;
+    const { sessions, foreign, surface, HERE } = scoped;
+    const foreignNote = foreign.length
+      ? `\n${foreign.length} conversation(s) on this surface hold unread mail for ANOTHER host ` +
+        `(${[...new Set(foreign.map(declaredHostOf))].join(', ')}) — not listed and NOT marked read.`
+      : '';
 
     const rows = [];
     let newest = since;
@@ -1870,7 +1947,6 @@ async function callTool(name, args, ctx, core) {
       if (!fresh.length) continue;
       for (const m of fresh) if (!newest || String(m.id || '') > newest) newest = String(m.id || '');
       const nr = s.native_ref || null;
-      // Whether a leg could even reach it, so the agent does not attempt a wake it cannot perform.
       rows.push({
         session_id: s.id, title: s.title, surface: s.surface,
         unread: fresh.length,
@@ -1880,97 +1956,21 @@ async function callTool(name, args, ctx, core) {
       });
     }
     if (!rows.length) {
-      return `PEEK ${surface}: nothing waiting${since ? ` since ${since}` : ''}. Cursor unchanged. Nothing was marked read — peek never consumes.`;
+      return `PEEK ${surface}: nothing waiting${since ? ` since ${since}` : ''}. Cursor unchanged. Nothing was marked read — peek never consumes.` +
+        (HERE ? ` Scoped to host "${HERE}".` : '') + foreignNote;
     }
     return `PEEK ${surface} — ${rows.length} conversation(s) holding unread mail. NOTHING MARKED READ.\n` +
       rows.map(r => `- "${r.title}"${r.native_name && r.native_name !== r.title ? ` (native: ${r.native_name})` : ''} · ${r.unread} unread${r.returns ? `, ${r.returns} return(s)` : ''} · reachable: ${r.reachable}\n  session_id: ${r.session_id}`).join('\n') +
       `\ncursor: ${newest || '(none)'} — pass it back as \`since\` to see only what is newer.` +
-      `\nThe text stays unread and belongs to its reader; check_inbox in that conversation delivers it.`;
+      `\nThe text stays unread and belongs to its reader; check_inbox in that conversation delivers it.` +
+      foreignNote;
   }
 
   if (name === 'check_inbox') {
-    if (args && (args.subscription !== undefined || args.model_slug !== undefined)) {
-      return 'REFUSED: check_inbox is not scoped by subscription or model_slug — those name a product, not a conversation. Drain by host (code) or session_id (chat). Nothing was read and nothing was marked read.';
-    }
-    const nativeId = (ctx && ctx.cli_uuid) || null;
-    // Default to the surface this bridge actually lives on: a terminal bridge (CLI uuid
-    // present) drains code, not chat. Found live 2026-08-08 — a terminal's no-arg drain
-    // looked at chat, reported nothing, and left its own two queued probes unread.
-    const surface = (args && args.surface) || (nativeId ? 'code' : 'chat');
     const st = await call('GET', '/api/state');
-    /* OWN-HOST ONLY. This filtered by SURFACE ALONE, so every seat on the code surface drained
-     * every code conversation in the store — including records belonging to other machines.
-     *
-     * Measured 2026-08-11, and it is the delivery bug the fleet spent two days chasing from the
-     * wrong end: eight messages addressed to a Windows peer were marked read by this Mac's routine
-     * inbox checks, minutes after each was sent. The peer reported an empty inbox every time and
-     * was correct. Worse than losing them, the sender got a ✓✓ READ RECEIPT — so the system did not
-     * merely fail to deliver, it reported a delivery that had never happened, which is the one
-     * failure class this codebase exists to kill.
-     *
-     * The ownership rule already existed and was already enforced for the wake tier: a record
-     * declaring another host belongs to that host's agent. check_inbox simply never asked. So it
-     * asks now, by the same rule — a record with NO declared host is local and drainable, a record
-     * declaring THIS machine is ours, and anything else is someone else's mail.
-     *
-     * Foreign mail is COUNTED AND REPORTED rather than silently skipped, because "you have no
-     * mail" and "you have mail you may not read" are different facts, and hiding the second is how
-     * this stayed invisible. */
-    /* A REMOTE CALLER'S HOST IS NOT os.hostname(), AND THE TOOL RUNS ON THE STORE'S MACHINE.
-     *
-     * The ownership filter below asks "is this record mine", and for a LOCAL seat os.hostname() is
-     * the honest answer. For a caller arriving over the relay it is the opposite of the answer:
-     * the tool executes inside the daemon on the store host, so os.hostname() names the MAC while
-     * the caller is a laptop. Scoping a remote drain by that value would hand a peer this
-     * machine's mail — the same defect being fixed here, pointed the other way.
-     *
-     * The relay knows the caller is remote (ctx.remote) and knows nothing about which device it
-     * is: it passes `sender_class: 'asserted'` and an account, never a host. So a remote caller
-     * must SAY which host it is, exactly as agent_heartbeat already requires, and gets the same
-     * treatment — the claim is asserted, not verified, and it is refused whole rather than guessed
-     * at. Absence of a verifiable caller is not permission to drain someone's inbox. */
-    const isRemoteCaller = !!(ctx && ctx.remote);
-    const claimedHost = args && args.host ? String(args.host).trim() : null;
-    /* …AND A CHAT SEAT IS NOT A MACHINE (ADR-0003).
-     *
-     * Everything above is right for a MACHINE-scoped drain and was applied to EVERY remote caller,
-     * above all surface logic. A chat conversation has no hostname — not "missing", nonexistent —
-     * so the review seat on the Claude app had NO VALID MOVE: refused without a host, and draining
-     * nothing even with one, because the ownership filter below wants `h === claimedHost` and a
-     * chat record's declared host is null. **A caller with no possible correct answer is a closed
-     * door, not a guarded one.**
-     *
-     * Chat's identifier is the one the store MINTS for it: the surface-typed ULID record id
-     * (`handoff-core.js:189`), which exists precisely BECAUSE chat has nothing natural to assert.
-     * So the rule is one line — ask a machine for a machine name, ask a chat for its id — and the
-     * treatment is identical either way: ASSERTED, refused WHOLE when absent, never inferred. The
-     * invariant was never "name your host"; it is "never drain on the absence of evidence, and
-     * never guess", and a record-scoped drain satisfies it exactly.
-     *
-     * This is STRICTER than what preceded the host rule, not looser: before `e1c2487` a chat drain
-     * took the whole surface and cost seven messages (D9). Now it takes one named record. */
-    const HOST_DECLARING_SURFACES = new Set(['code']);
-    const machineScoped = HOST_DECLARING_SURFACES.has(surface);
-    const claimedRecord = args && args.session_id ? String(args.session_id).trim() : null;
-    if (isRemoteCaller && !machineScoped && !claimedRecord) {
-      return `REFUSED: a ${surface} conversation has no hostname — it runs in no process on no machine — ` +
-        `so this call cannot be scoped by device, and nothing was read or marked read.\n\n` +
-        `Pass session_id:"<your own record id>" to drain YOUR conversation. That id is the one the store ` +
-        `minted for you (surface-typed, e.g. sess_…); resolve_conversation returns it if you do not hold it. ` +
-        `The claim is ASSERTED exactly as a host claim is, which is why it is refused whole rather than ` +
-        `guessed: a wrong guess does not merely read another conversation's mail, it issues a read receipt ` +
-        `for mail nobody read.`;
-    }
-    if (isRemoteCaller && machineScoped && !claimedHost) {
-      return `REFUSED: this call arrived over the relay, so which machine is asking cannot be established — ` +
-        `and the store host's own name is NOT the answer, it is this tool's machine rather than yours. ` +
-        `Nothing was read and nothing was marked read.\n\n` +
-        `Pass host:"<this machine's os.hostname()>" to drain the records that declare it. The claim is ` +
-        `ASSERTED, exactly as agent_heartbeat's is — which is why it is refused whole rather than guessed: ` +
-        `a wrong guess here reads someone else's mail AND issues them a read receipt for it.`;
-    }
-    const HERE = claimedHost || require('os').hostname();
-    const declaredHostOf = s => (s.remote && s.remote.host) || (s.native_ref && s.native_ref.host) || null;
+    const scoped = inboxScope(st, ctx, args);
+    if (scoped.refused) return scoped.refused;
+    const { sessions, foreign, surface, HERE, claimedHost } = scoped;
 
     /* READING MAIL CANCELS ITS DELIVERY, AND THAT MUST BE VISIBLE.
      *
@@ -1986,33 +1986,6 @@ async function callTool(name, args, ctx, core) {
     const agents = (st && st.agents) || {};
     const AGENT_FRESH_MS = 60 * 60 * 1000;
     const preempted = [];
-    let sessions = Object.values(st.sessions).filter(s => !s.archived && s.surface === surface);
-    const foreign = sessions.filter(s => {
-      const h = declaredHostOf(s);
-      return h && h !== HERE && freshMessages(s).length;
-    });
-    /* A HOSTLESS RECORD BELONGS TO THE STORE HOST, NOT TO WHOEVER ASKS.
-     *
-     * The first cut read "no declared host OR my name", for everyone. That is right for a LOCAL
-     * seat — a record minted here without a host is this machine's — and wrong for a remote one,
-     * because it handed every hostless record on the store host to any peer that named any host at
-     * all. The original defect, wearing the fix as a hat.
-     *
-     * It survived its own test suite: the case asserting a remote caller "does not reach the store
-     * host's records" passed because that record had already been drained earlier in the run and
-     * had no fresh mail left to leak. A test that passes for the wrong reason is indistinguishable
-     * from one that works, which is why the fixture that caught this — a host owning nothing being
-     * told it owned three records — is the more valuable one. */
-    sessions = sessions.filter(s => {
-      // Record-scoped: the caller named its own minted id, and that is the whole scope.
-      if (isRemoteCaller && !machineScoped) return s.id === claimedRecord;
-      const h = declaredHostOf(s);
-      return isRemoteCaller ? h === claimedHost : (!h || h === HERE);
-    });
-    if (args && args.title_contains) {
-      const t = args.title_contains.toLowerCase();
-      sessions = sessions.filter(s => s.title.toLowerCase().includes(t));
-    }
     const out = [];
     let returnTotal = 0;
     for (const s of sessions) {

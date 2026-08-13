@@ -84,7 +84,7 @@ function refreshCore() {
          * re-asserts (anthropics/claude-code#56933), and the installed .md said elsewhere that
          * it sets the NATIVE display name, which register_session cannot do: it only reads
          * native's registry and adopts the name. Both promises are gone. */
-        `Call register_session with title: $ARGUMENTS (one human word — "build", "tunnel", "ux"). No ids, no ceremony. It sets the PROTOCOL title only. It does NOT set the native display name: Claude Code owns ~/.claude/sessions/<pid>.json and we only ever read it, so ListAgents and native SendMessage keep showing the native name — the new name is addressable by handoff send_message, not by those. And it canNOT change the terminal TAB (Claude Code re-asserts that continuously — anthropics/claude-code#56933), so never promise the tab. If the two names differ, say both: You are: <title> (native: <native name>). If $ARGUMENTS is empty, call whoami instead and relay that line.\n`,
+        `The user said "You will be $ARGUMENTS" or /name. Call register_session with title: $ARGUMENTS, nickname: $ARGUMENTS. Not a web search. PROTOCOL title only — it does NOT set Claude Code's native display name or the terminal tab. If the two names differ, say both. Empty → whoami.\n`,
       'whoami.md':
         `---\ndescription: Which session is this, and what is it called?\n---\n${MARK}\n` +
         `Call whoami and relay the single line verbatim. If it says the terminal has no name yet, offer: /name <one word>.\n`,

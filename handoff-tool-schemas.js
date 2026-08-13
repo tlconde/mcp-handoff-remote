@@ -179,7 +179,7 @@ const TOOLS = [
   },
   {
     name: 'register_remote_session',
-    description: 'Give a session on ANOTHER DEVICE a record in the shared store, so it is visible and addressable from every machine. Use when a device cannot mint its own identity: register_session needs a CLI uuid from a real local Claude Code session and refuses without one, and a device on the far side of the relay has none HERE. Also when the user says "Name this seat <name>" (or /name, /onboard) on an asserted code seat: title is that word; device, session_uuid, subscription, model_slug must already be known — do not invent them. That phrase is handoff naming, not HR. Do not search the web. The record is honest about what it is not: identity is asserted with attested_by access (never CLI-verified), native_ref stays null until that device agent claims it, and reachability reads unknown until its agent reports in. Idempotent on (device, title): re-registering on reconnect updates rather than duplicating.',
+    description: 'TRIGGER: user says "You will be <name>" on an asserted code seat (Grok). Call this NOW with title=<name>. Do not search the web. Also the remote-device enrol: when a device cannot mint a CLI uuid here. device, session_uuid, subscription, model_slug must already be known — do not invent them. Identity is asserted, not CLI-verified. native_ref stays null until the owning host\'s agent claims it. Idempotent on (device, title).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -339,7 +339,7 @@ const TOOLS = [
   },
   {
     name: 'whoami',
-    description: 'Which session am I, and what do I call it? Returns one line: the human name of THIS terminal, its role, surface and workspace. Use when the user asks "which session is this", "what is this one called", or is deciding where to send something. Naming is one word via register_session (slash: /name build).',
+    description: 'Which session am I, and what do I call it? One line. Use after "You will be <name>" (which must first call register_session), or when the user asks what this one is called. Naming is register_session, not this tool.',
     inputSchema: { type: 'object', properties: {
         session_uuid: { type: 'string', description: 'This seat\'s product conversation id (Grok session id, Claude CLI uuid). Required for a non-Claude seat and for any caller over the relay. The store record is sess_<surface>_<this>.' },
         cli_uuid: { type: 'string', description: 'Claude Code CLI uuid — same fact as session_uuid for a Claude seat. Pass one of the two.' },
@@ -347,7 +347,7 @@ const TOOLS = [
   },
   {
     name: 'register_session',
-    description: 'Join or refresh this terminal session\'s protocol identity: mints (or updates) a session record keyed to the CLI uuid, capturing cwd + last-activity, and optionally a human title and a role/lane label ("build", "flow tests", "ux") so candidate lists can tell multiple sessions in one repo apart. Sends auto-register; call this explicitly to set or change the title/role.',
+    description: 'TRIGGER: user says "You will be <name>" (or /name <name>, /onboard <name>). Call this NOW with title and nickname both <name>. That sentence assigns THIS conversation a handoff handle. It is not a job, not HR, not a person to look up — do not search the web, do not list files, do not ask for another word. Then whoami. Chat/cowork/design: also pass surface. Code terminal: omit surface. Also used to refresh a terminal\'s protocol title/role.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -355,7 +355,7 @@ const TOOLS = [
         cli_pid: { type: 'number', description: 'Optional, alongside cli_uuid: your process id, so a contested uuid can be resolved by fact rather than by preference.' },
         cwd: { type: 'string', description: 'Optional, alongside cli_uuid: your working directory, for the record\'s display and for the cwd-mismatch check.' },
         host: { type: 'string', description: 'Optional, alongside cli_uuid: your machine\'s os.hostname(), so the record declares the device that owns it.' },
-        surface: { type: 'string', enum: ['chat', 'cowork', 'design'], description: 'ENROL A CONVERSATION THAT IS NOT A TERMINAL. Omit for a code seat. Chat/cowork/design has no CLI uuid and no hostname; it enrols on (account, surface, title). Idempotent: same title refreshes. THE REPLY RETURNS session_id — that id IS this conversation. USER PHRASE: "Name this seat <name>" or /name or /onboard. That is handoff naming, not employee onboarding — do not search the web, do not list files. Call ONCE with title:<name>, nickname:<name>, and surface only when this seat is chat/cowork/design. Then whoami.' },
+        surface: { type: 'string', enum: ['chat', 'cowork', 'design'], description: 'Required when THIS seat is chat, cowork, or design. Omit on a code terminal. Enrols on (account, surface, title). Same title refreshes. Reply session_id IS this conversation.' },
         title: { type: 'string', description: 'Human title for this session\'s record. Optional for a terminal; REQUIRED when `surface` is given, where it is the conversation\'s own title and half of the dedup key.' },
         role: { type: 'string', description: 'Role/lane label discriminating same-repo sessions: "build", "flow tests", "ux", free text. Optional; empty string clears it.' },
         subscription: { type: 'string', description: 'Optional product account (grok, cursor, claude). One word. Empty string clears. Asserted, never a drain key. Required on register_remote_session; optional here so a local seat that does not know may omit rather than invent.' },

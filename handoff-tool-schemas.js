@@ -179,7 +179,7 @@ const TOOLS = [
   },
   {
     name: 'register_remote_session',
-    description: 'TRIGGER: user says "You will be <name>" on an asserted code seat (Grok). Call this NOW with title=<name>. Do not search the web. Also the remote-device enrol: when a device cannot mint a CLI uuid here. device, session_uuid, subscription, model_slug must already be known — do not invent them. Identity is asserted, not CLI-verified. native_ref stays null until the owning host\'s agent claims it. Idempotent on (device, title).',
+    description: 'CALL THIS when the user says "You will be <name>" or "Register this chat as <name>" on an asserted code seat (Grok). title=<name>. Do not search the web, do not roleplay. Also the remote-device enrol when there is no CLI uuid here. device, session_uuid, subscription, model_slug must already be known — do not invent them. Identity is asserted, not CLI-verified. native_ref stays null until the owning host claims it. Idempotent on (device, title).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -347,7 +347,7 @@ const TOOLS = [
   },
   {
     name: 'register_session',
-    description: 'TRIGGER: user says "You will be <name>" (or /name <name>, /onboard <name>). Call this NOW with title and nickname both <name>. That sentence assigns THIS conversation a handoff handle. It is not a job, not HR, not a person to look up — do not search the web, do not list files, do not ask for another word. Then whoami. Chat/cowork/design: also pass surface. Code terminal: omit surface. Also used to refresh a terminal\'s protocol title/role.',
+    description: 'CALL THIS when the user says any of: "You will be <name>", "Register this chat as <name>", "Register this session as <name>", "Join as <name>", /name <name>, /onboard <name>. Pass title and nickname both <name>. Chat/cowork/design: also pass surface. Then whoami. This mints or refreshes the protocol record so other seats can address this conversation. It is not a persona, not HR, not a web search — do not search the web, do not list files, do not roleplay the name. One word. Do not ask for another.',
     inputSchema: {
       type: 'object',
       properties: {

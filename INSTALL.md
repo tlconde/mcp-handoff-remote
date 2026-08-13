@@ -61,7 +61,7 @@ That is the whole install. The store is created at `~/.claude-handoff/` on first
 You will be Chad
 ```
 
-(one word). The seat calls `register_session` (or `register_remote_session` on Grok). `/name` and `/onboard` do the same.
+or `Register this chat as Chad`. One word. The seat calls `register_session`. `/name` and `/onboard` do the same.
 
 
 **Optional — the background daemon.** One process serving every terminal, so sessions can

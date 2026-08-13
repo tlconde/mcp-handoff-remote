@@ -1,6 +1,6 @@
 ---
 name: onboard
-description: User said "You will be <name>" — enrol THIS handoff seat as that word. Also /name and /onboard. Not HR. Do not search the web.
+description: Enrol THIS handoff seat. Triggers: "You will be <name>", "Register this chat as <name>", "Register this session as <name>", "Join as <name>", /name, /onboard. Not a persona. Do not search the web.
 ---
 
 # You will be \<name\>

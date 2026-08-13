@@ -30,6 +30,14 @@ HANDOFF.md
 .agent-env
 
 docs-seed/
+# Lab write-ups and editor state. These landed in the product tree untracked;
+# one `git add .` would ship them. They live in the notebook. This stops a
+# future add only — it does not scrub history.
+AUDIT-*.md
+ENGINEERING-REVIEW.md
+PLAN.md
+test-results.md
+.cursor/
 # The `data` directory is used for storing data files that are too large to be committed to the repository.
 
 # Build/test surface — how the plugin was proven, not the plugin. Kept on disk for local

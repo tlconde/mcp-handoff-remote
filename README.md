@@ -40,7 +40,7 @@ Full guide, including remote access from your phone or a second laptop: [INSTALL
   surface is pull, by platform design. Which pairs wake, which wait, and how long each actually
   took: [TRANSPORT-MATRIX.md](TRANSPORT-MATRIX.md).
 - **`whoami` / `/name`** — name a terminal in one word and address it by that name.
-- **`Start onboarding for <name>` / `/onboard`** — name a **chat** (or cowork/design) seat the same way. Type that sentence in the chat. The seat calls `register_session` once with that word as title and nickname. No second question.
+- **`Start onboarding for <name>` / `/onboard`** — name **this** seat, any surface. Type that sentence. One `register_session` (or `register_remote_session` on an asserted code seat) with that word as title and nickname. No second question.
 - **Returns** — a session can owe a result back, and the origin sees it arrive.
 
 ## Design, in three rules

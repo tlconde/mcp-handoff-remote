@@ -55,13 +55,13 @@ claude
 
 That is the whole install. The store is created at `~/.claude-handoff/` on first use.
 
-**Chat seats** have no `/name`. In that conversation type:
+**Name any seat** — chat, cowork, design, or code — by typing this in that conversation:
 
 ```
 Start onboarding for Checker
 ```
 
-(one word). The chat must then call `register_session` with `surface: "chat"`, `title` and `nickname` both that word. Same phrase every time you open a new chat you want to address.
+(one word). The seat calls `register_session` with that word as title and nickname (`surface` only on chat/cowork/design). Same phrase on every new seat you want to address. `/name` still works on a Code terminal.
 
 
 **Optional — the background daemon.** One process serving every terminal, so sessions can

@@ -1,7 +1,7 @@
 ---
-description: Enrol THIS chat in one word so it can be addressed by name
+description: Enrol THIS seat in one word so it can be addressed by name
 ---
 <!-- handoff-protocol command v1 -->
-Call register_session with surface: chat, title: $ARGUMENTS, nickname: $ARGUMENTS (one human word — "Checker", "review", "nicky"). No ids, no second question. The name they typed is the name. Then call whoami and relay that line. If $ARGUMENTS is empty, call whoami only.
+Call register_session with title: $ARGUMENTS, nickname: $ARGUMENTS (one human word). No ids, no second question. Pass surface only if this seat is chat, cowork, or design — omit surface on a code terminal. If they named a surface in the sentence, use that. Then whoami. If $ARGUMENTS is empty, whoami only.
 
-This is the chat equivalent of /name. It does not name a terminal. Code seats still use /name.
+A Grok or other asserted code seat that has a product session id uses register_remote_session instead (title, device=os.hostname(), session_uuid, subscription, model_slug). Do not invent those fields.

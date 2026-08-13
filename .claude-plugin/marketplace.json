@@ -8,8 +8,8 @@
     {
       "name": "handoff",
       "source": "./",
-      "description": "Hand work between Claude conversations and machines: envelopes that carry a task, its decisions and its artifacts, a shared store, and a per-machine wake agent that delivers locally.",
-      "version": "0.1.10",
+      "description": "Hand work between seats — Claude or Grok, chat or code — and machines: envelopes that carry a task, its decisions and its artifacts, a shared store, and a per-machine wake agent that delivers locally.",
+      "version": "0.1.11",
       "license": "MIT",
       "keywords": [
         "handoff",

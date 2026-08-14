@@ -128,7 +128,7 @@ to `git clone` and inherits exactly these credentials:
 ```powershell
 claude plugin marketplace add <owner>/handoff-remote
 claude plugin install handoff@handoff
-claude plugin list                      # expect: handoff@handoff  0.1.1  enabled
+claude plugin list                      # expect: handoff@handoff  0.1.26  enabled
 ```
 
 Measured on macOS: with credentials present both commands succeed; from an environment with no

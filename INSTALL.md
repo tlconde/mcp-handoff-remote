@@ -14,9 +14,17 @@ No tunnel, no cloud account, no third party, no network surface at all. The **MC
 (Grok Build, Cursor, Claude Code, a Cloud Agent) spawns `node mcp-handoff.js` over **stdio**
 per connection. There is no `start` service.
 
+**Two doors, never both on one client.** Repo-link install is **Door A**: clone this repo and
+mount one stdio server that runs `node …/mcp-handoff.js` (Claude Code can wrap that as the
+`handoff` plugin). Chat, a phone, or another device is **Door B**: add ONE remote MCP at the
+home relay URL — on grok.com that is the existing connector named **Handoff Remote** (do not
+rename it). Same store, same tools, different transport because the surface cannot do the
+other one. A second mount of the same tool-name hash is a refuse, not a compatibility mode:
+`node bin/handoff-mount-doctor.js` names which mount to disable. It does not delete a
+connector.
+
 **The contract** is `mcp.json`: `command` `node`, `args` `[mcp-handoff.js]`. Point your host
-at that. One mount per seat. On the machine that *hosts* the store, do not also add the
-HTTP relay — that is three copies of the same 27 tools.
+at that. One mount per client.
 
 ```bash
 git clone https://github.com/<owner>/handoff-remote.git
@@ -66,6 +74,11 @@ or `Register this chat as Chad`. One word. grok.com / claude.ai / Claude chat ca
 `register_chat_session`. A machine (this laptop, a Cloud Agent) calls
 `register_code_session`. `/name` and `/onboard` do the same. A seat that omits required
 fields is refused, not half-enrolled.
+
+Over the relay, `whoami` cannot see a chat seat unless you pass the `session_id`
+register just returned (`session_uuid` or `session_id` — same value). A no-arg
+`whoami` after a successful register says unidentified; that is not a failed enrol.
+Do not register again.
 
 
 **Optional — the background daemon.** One process serving every terminal, so sessions can
@@ -182,7 +195,8 @@ one result that means something is wrong.
 
 ### 5. Connect a remote host
 
-- **grok.com:** add the connector at the same MCP URL. Keep the grok.com redirect URI above.
+- **grok.com:** add the connector at the same MCP URL, keeping the existing name
+  **Handoff Remote**. Do not rename it. Keep the grok.com redirect URI above.
 - **claude.ai / Desktop / mobile:** Settings → Connectors → Add custom connector → your MCP
   URL. Leave the OAuth fields blank if your provider supports dynamic client registration.
 - **Claude Code, on another machine:**
@@ -193,10 +207,11 @@ one result that means something is wrong.
 - **Grok Build / Cursor on another machine:** add an HTTP MCP at the same URL (not a second
   stdio copy of the home store).
 
-> On the machine that *hosts* the store, keep using the tier-1 stdio server. It is a unix
-> socket instead of a round trip through the internet — faster, and it works offline. And give
-> the remote one a different name (`handoff-remote`, not `handoff`) or you will have two copies
-> of the same tools in one session with no way to tell which one answered.
+> On the machine that *hosts* the store, keep Door A (tier-1 stdio) and do **not** also add
+> Door B on that same client. A different pretty name does not make a second mount safe — the
+> three observed copies (`handoff`, `handoff-store`, `handoff_remote`) already had different
+> names and identical tool-name hashes. Disable the extras; do not rename Handoff Remote on
+> grok.com. Run `node bin/handoff-mount-doctor.js` to name which mount to turn off.
 
 ---
 
@@ -211,7 +226,7 @@ owner who could offer it safely, not as something this project will ship.
 ## Uninstall
 
 ```bash
-# remove the stdio (or HTTP) server in your MCP host — name may be handoff / handoff-store / handoff-remote
+# remove this client's one Handoff mount (stdio Door A, or HTTP Door B — not both)
 deploy/install.sh --uninstall     # if you installed the daemon
 rm -rf ~/.claude-handoff          # deletes your store — this is your data, so read it first
 ```

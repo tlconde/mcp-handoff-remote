@@ -300,7 +300,12 @@ above, and by nothing else.
   wherever one is possible**, and where none is possible, say so explicitly rather than trusting
   the prose to hold. `bin/settings-drift-check.js` is the first of these: it fails on any documented
   `.agent-env` key that nothing reads, or that is read before the loader runs. Run it wherever
-  `bin/build-plugin-manifests.js --check` runs.
+  `bin/build-plugin-manifests.js --check` runs. `bin/handoff-mount-doctor.js` is the same shape for
+  the two-door install rule: it fails if two connected MCP servers expose the same handoff
+  tool-name hash (not the pretty name — those already differed when the triple mount was
+  measured). `--self-test` is the fixture that proves the checker can go red. `bin/chat-whoami-check.js`
+  fails if a grok-app relay register succeeds and no-arg whoami still tells the seat to enrol again
+  (measured 2026-08-14: Chad).
 - **A documented setting is a claim, and claims need effects.** If a doc tells an operator to write
   a value somewhere, one test must set it THAT WAY — the file, not `process.env`. Setting the
   environment directly proves the code reads a variable; it never proves the operator can set it.

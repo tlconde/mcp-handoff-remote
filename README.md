@@ -16,7 +16,10 @@ which hops are trusted.
 ## Install
 
 Start at tier 1 — no network surface at all. Clone the repo and add a **stdio** MCP in your
-host (`node …/mcp-handoff.js`). That is the contract. Claude Code can also install it as a
+host (`node …/mcp-handoff.js`). That is Door A. Chat or another device is Door B: one remote
+MCP (on grok.com, the connector named **Handoff Remote** — do not rename it). Never both on
+one client; `node bin/handoff-mount-doctor.js` fails if two connected servers expose the same
+handoff tool-name hash, and names which mount to disable. Claude Code can wrap Door A as a
 plugin; Cursor and Grok Build mount the same file. See [INSTALL.md](INSTALL.md).
 
 Full guide, including remote access from your phone or a second laptop: [INSTALL.md](INSTALL.md).

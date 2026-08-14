@@ -8,4 +8,4 @@ grok.com / claude.ai / Claude chat: register_chat_session with surface, title, n
 
 A machine (Grok Build, Claude Code): register_code_session with title, device = os.hostname(), session_uuid, subscription, model_slug.
 
-Then whoami. Empty → whoami only. Do not call register_session or register_remote_session.
+Then whoami with session_uuid set to the session_id register just returned (same value; session_id is an alias). A no-arg whoami over the relay is unidentified even after a successful register — do not register again. Empty → whoami only. Do not call register_session or register_remote_session.

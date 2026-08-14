@@ -139,8 +139,19 @@ async function main() {
   }
 
   console.log(statusText.replace(/^/gm, '  '));
+
+  console.log('\nMount doctor (two doors, never both on one client)…');
+  const doctor = spawnSync(process.execPath, [path.join(ROOT, 'bin/handoff-mount-doctor.js')], {
+    encoding: 'utf8', cwd: ROOT,
+  });
+  if (doctor.stdout) console.log(doctor.stdout.replace(/^/gm, '  ').replace(/\s+$/, ''));
+  if (doctor.status !== 0) {
+    if (doctor.stderr) console.error(doctor.stderr.trim());
+    process.exit(doctor.status || 1);
+  }
+
   console.log('\nDone. In a new Claude Code session run /status (or ask "is handoff working?").');
-  console.log('Docs: GETTING-STARTED.md');
+  console.log('Docs: INSTALL.md');
 }
 
 main().catch((e) => die(e.message || String(e)));

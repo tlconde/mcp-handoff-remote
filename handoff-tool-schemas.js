@@ -13,8 +13,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        cli_uuid: { type: 'string', description: 'REQUIRED when calling over the relay from another machine, and unnecessary locally. This tool runs on the STORE HOST and cannot see your CLAUDE_CODE_SESSION_ID, so without it you will be told you are unidentified even when your seat IS registered — and a seat that believes its registration failed re-registers, which is how duplicate records get made. Pass the same value you registered with.' },
+        cli_uuid: { type: 'string', description: 'REQUIRED when calling over the relay from another machine on a CODE seat, and unnecessary locally. This tool runs on the STORE HOST and cannot see your CLAUDE_CODE_SESSION_ID, so without it you will be told you are unidentified even when your seat IS registered — and a seat that believes its registration failed re-registers, which is how duplicate records get made. Pass the same value you registered with.' },
         cli_pid: { type: 'number', description: 'Optional, alongside cli_uuid: your process id, so a contested uuid resolves by fact rather than preference.' },
+        session_uuid: { type: 'string', description: 'Chat/cowork/design over the relay: the sess_… id register_chat_session returned. Same fact as session_id. Required there — a chat has no uuid in the environment.' },
+        session_id: { type: 'string', description: 'Same value as session_uuid — the field name register prints. Pass either.' },
         surface: { type: 'string', enum: ['chat', 'cowork', 'design', 'code'], description: 'Optional hint for phrasing the next action.' }
       },
       additionalProperties: false
@@ -367,9 +369,10 @@ const TOOLS = [
   },
   {
     name: 'whoami',
-    description: 'Which session am I, and what do I call it? One line. After naming, call this. grok.com / claude.ai / Claude chat: if unidentified, register_chat_session (not register_code_session, not status). A machine: register_code_session. If the line contains INCOMPLETE, re-register with the named fields; do not invent them.',
+    description: 'Which session am I, and what do I call it? One line. After naming, call this WITH the session_id register just returned as session_uuid (or session_id — same value). A no-arg whoami over the relay is unidentified even after a successful register — that is the relay, not a failed enrol; do not register again. grok.com / claude.ai / Claude chat: if never registered, register_chat_session (not register_code_session, not status). A machine: register_code_session. If the line contains INCOMPLETE, re-register with the named fields; do not invent them.',
     inputSchema: { type: 'object', properties: {
-        session_uuid: { type: 'string', description: 'This seat\'s product conversation id (Grok session id, Claude CLI uuid). Required for a non-Claude seat and for any caller over the relay. The store record is sess_<surface>_<this>.' },
+        session_uuid: { type: 'string', description: 'This seat\'s product conversation id (Grok session id, Claude CLI uuid), OR the store id register_chat_session returned (sess_chat_…). Required for a non-Claude seat and for any caller over the relay. Chat has no uuid in the environment — pass the minted id.' },
+        session_id: { type: 'string', description: 'Same value as session_uuid — the field name register_chat_session prints. Pass either.' },
         cli_uuid: { type: 'string', description: 'Claude Code CLI uuid — same fact as session_uuid for a Claude seat. Pass one of the two.' },
         cli_pid: { type: 'number', description: 'Optional, alongside cli_uuid: your process id, so a contested uuid resolves by fact rather than preference.' },}, additionalProperties: false }
   },

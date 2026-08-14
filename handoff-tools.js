@@ -25,8 +25,22 @@
  * one resolver is reachable by all of them. */
 /* Display fragment for the two enrolment attributes. Used by whoami, resolve, register
  * receipts and candidate lists — one format so they cannot drift. Empty when unset. */
+function unidentifiedWhoamiLine(ctx) {
+  /* Chad's loop, measured 2026-08-14: register_chat_session returned sess_chat_…, then
+   * no-arg whoami said unidentified and told the seat to register_chat_session again. The
+   * register had succeeded. Over the relay there is no uuid in the environment; the minted
+   * id is the only handle, and a no-arg whoami cannot see it. Telling them to enrol again
+   * is how duplicate records get made — the same trap the cli_uuid path already named. */
+  if (ctx && ctx.remote && ctx.surface_class && (ctx.surface_class === 'grok-app' || ctx.surface_class === 'claude-app')) {
+    return 'You are: unidentified (no session uuid on this call — over the relay, pass session_uuid or session_id: the sess_… value register_chat_session returned. If you already have that id, pass it; do not register again. Never registered: register_chat_session with surface, title, nickname, subscription, model_slug. Do not call register_remote_session or register_code_session. Do not call status to enrol.)';
+  }
+  if (ctx && ctx.remote) {
+    return 'You are: unidentified (no session uuid on this call — over the relay, pass session_uuid, the product conversation id, or the session_id register returned)';
+  }
+  return 'You are: unidentified (no session uuid in this environment — pass session_uuid, the product conversation id)';
+}
 function boundSeat(sessions, nativeId, args, core) {
-  const want = (args && (args.session_uuid || args.cli_uuid)) || nativeId || null;
+  const want = (args && (args.session_uuid || args.session_id || args.cli_uuid)) || nativeId || null;
   const sid = (surface, part) => (core && core.sessionRecordId)
     ? core.sessionRecordId(surface, part)
     : ('sess_' + surface + '_' + part);
@@ -452,9 +466,7 @@ async function buildStatusReport(args, ctx, core) {
     ? `You are: ${boundRecord.title}${nameSplit}${seatProductLabel(boundRecord) ? ` · ${seatProductLabel(boundRecord)}` : ''}${boundRecord.role ? ` (@${boundRecord.role}` : ' ('}${boundRecord.role ? ' · ' : ''}${boundRecord.surface}${workspace ? ` · ${workspace}` : ''})${incompleteNote(boundRecord)}${reregisterNote(boundRecord, ctx)}${contestNote}`
     : nativeId
       ? `You are: this terminal has no name yet${workspace ? ` (${workspace})` : ''} — name it with /name <one word>, e.g. /name build${contestNote}`
-      : ((ctx && ctx.remote && ctx.surface_class && (ctx.surface_class === 'grok-app' || ctx.surface_class === 'claude-app'))
-        ? 'You are: unidentified (no session uuid in this environment — pass session_uuid if whoami needs it, then register_chat_session: surface, title, nickname, subscription, model_slug. Do not call register_remote_session or register_code_session. Do not call status to enrol.)'
-        : 'You are: unidentified (no session uuid in this environment — pass session_uuid, the product conversation id)');
+      : unidentifiedWhoamiLine(ctx);
   lines[identityLine] = `Identity: ${boundRecord
     ? `${boundRecord.id} — "${boundRecord.title}"${nameSplit} (${nativeId ? `CLI ${nativeId.slice(0, 8)}…` : boundRecord.id})`
     : (identityId || (nativeId
@@ -685,7 +697,7 @@ async function callTool(name, args, ctx, core) {
   if (name === 'whoami') {
     const full = await buildStatusReport(args || {}, ctx, core);
     const line = String(full).split('\n').find(l => l.startsWith('You are:'));
-    return line || 'You are: unidentified (no session uuid in this environment)';
+    return line || unidentifiedWhoamiLine(ctx);
   }
   /* AGENT HEARTBEAT — the one verb the remote door was widened for.
    *
@@ -2208,7 +2220,9 @@ async function callTool(name, args, ctx, core) {
         `Nickname: "${s.nickname}" — a human can address this conversation by that word from memory.\n` +
         `**This id IS this conversation's identity** — it is what the store minted for a surface that has no ` +
         `machine, no process and no hostname. Pass it as session_id to check_inbox to read mail addressed here; ` +
-        `over the relay that is required, because a ${s.surface} conversation has no host to be scoped by.`;
+        `over the relay that is required, because a ${s.surface} conversation has no host to be scoped by.\n` +
+        `Then whoami with session_uuid:"${s.id}" (session_id is the same value — it is the field name this receipt prints). ` +
+        `A no-arg whoami over the relay cannot see this seat and will say unidentified; that is not a failed register. Do not register again.`;
     }
     /* A PEER MOUNT CARRIES ITS OWN IDENTITY, and this is where the telling STICKS.
      *

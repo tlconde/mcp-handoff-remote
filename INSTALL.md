@@ -56,6 +56,15 @@ claude plugin install handoff@handoff
 `node bin/build-plugin-manifests.js` only regenerates `.claude-plugin/*`. Other hosts do not
 need it to run the bridge.
 
+**Cursor Agent CLI — identity on sessionStart (optional).** Copy
+[`hooks/cursor-hooks.json.example`](hooks/cursor-hooks.json.example) into the project’s
+`.cursor/hooks.json` (or merge the `sessionStart` entry into your user
+`~/.cursor/hooks.json`). The script calls the same `/api/register` door as Claude’s
+SessionStart, with `kind: "cursor-cli"` — `native_ref.kind`/`session_id` from the Cursor
+conversation id (no Claude resume/pid heal), no inbox drain, no invented title. Name the
+seat afterwards with `You will be <word>` / `/onboard`. Skipped on
+`cursor agent --resume`; not available on cloud agents.
+
 > **While this repo is private**, clone/plugin commands need a git that can already
 > authenticate. Measured 2026-08-10: with credentials the Claude plugin install reports
 > `0.1.1, enabled`; without a helper the clone fails before the marketplace is read.

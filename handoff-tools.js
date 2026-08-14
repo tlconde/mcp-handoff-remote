@@ -2447,7 +2447,7 @@ async function identitySession(ctx, core, extra) {
    * lets multi-claimant succession resolve by construction instead of by guess. */
   const pid = callerPid || (nat && nat.pid) || null;
   const body = Object.assign(
-    { native_id: nativeId, cwd: (nat && nat.cwd) || (ctx && ctx.cwd) || process.cwd() },
+    { kind: 'claude-code', native_id: nativeId, cwd: (nat && nat.cwd) || (ctx && ctx.cwd) || process.cwd() },
     pid ? { pid } : {},
     nat ? { native_name: nat.name, messaging_socket: nat.messaging_socket } : {},
     extra || {});

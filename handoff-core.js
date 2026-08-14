@@ -2088,7 +2088,117 @@ async function handleApi(method, p, query, b) {
       // Idempotent upsert: first contact mints; every contact refreshes the handle facts
       // (cwd, last_seen) that candidate lists discriminate by. Role/lane label ("build",
       // "flow tests", "ux") is how three sessions in one repo stay tellable apart.
+      //
+      // KIND is asserted, never guessed from uuid shape. Same door for Claude Code and
+      // Cursor CLI; the arms diverge before any Claude-only heal/resume/pid logic runs.
+      // Omitted kind defaults to claude-code so existing SessionStart callers keep working
+      // for one release — Cursor hooks MUST pass kind:'cursor-cli' explicitly.
       if (!b.native_id) return { code: 400, payload: { error: 'native_id required — an identity record without the CLI uuid is just another anonymous session' } };
+      const REGISTER_KINDS = new Set(['claude-code', 'cursor-cli']);
+      const registerKind = (b.kind === undefined || b.kind === null || b.kind === '')
+        ? 'claude-code'
+        : String(b.kind).trim();
+      if (!REGISTER_KINDS.has(registerKind)) {
+        return { code: 400, payload: { error: `kind must be claude-code or cursor-cli — got "${registerKind}". Kind is asserted; it is never inferred from the uuid.` } };
+      }
+
+      /* ---- cursor-cli arm ----
+       * native_ref holds the Cursor conversation id under kind:'cursor-cli' — same binding
+       * attribute shape as Claude, without pid heal or `claude --resume`. Provenance is
+       * asserted (no ~/.claude/sessions inspectability). Naming stays with
+       * register_code_session / /onboard. */
+      if (registerKind === 'cursor-cli') {
+        const parsed = parseClientUuid(b.native_id, 'code');
+        if (parsed.error) return { code: 400, payload: { error: parsed.error } };
+        let s = Object.values(db.sessions).find(x =>
+          x.native_ref && x.native_ref.kind === 'cursor-cli' && x.native_ref.session_id === parsed.part && !x.archived);
+        if (!s) {
+          const byId = db.sessions[parsed.id];
+          if (byId && !byId.archived) {
+            if ((byId.native_ref && byId.native_ref.kind === 'claude-code') || byId.enrolment_kind === 'claude-code') {
+              return { code: 409, payload: { error: `contested_kind: ${parsed.id} is already a claude-code binding — a Cursor seat cannot adopt it. Nothing was changed.` } };
+            }
+            s = byId;
+          }
+        }
+        if (!s && b.refresh_only) {
+          return { code: 200, payload: { id: null, minted: false, healed: null, refreshed: false, kind: registerKind } };
+        }
+        const minted = !s;
+        if (!s) {
+          const title = b.title ? String(b.title).slice(0, 120) : 'Untitled';
+          s = createSession({ surface: 'code', title, id: parsed.id });
+          if (b.title) s._title_explicit = true;
+        }
+        const priorCwd = (s.native_ref && s.native_ref.cwd) || null;
+        const priorHost = (s.native_ref && s.native_ref.host) || null;
+        const priorHostProv = (s.native_ref && s.native_ref.host_provenance) || null;
+        s.native_ref = {
+          kind: 'cursor-cli',
+          session_id: parsed.part,
+          cwd: (b.cwd !== undefined) ? (b.cwd || null) : priorCwd,
+        };
+        s.enrolment_kind = 'cursor-cli';
+        if (b.host) {
+          s.native_ref.host = String(b.host);
+          s.native_ref.host_provenance = 'self-reported';
+        } else if (priorHost) {
+          s.native_ref.host = priorHost;
+          if (priorHostProv) s.native_ref.host_provenance = priorHostProv;
+        }
+        if (b.title) { s.title = String(b.title).slice(0, 120); s._title_explicit = true; }
+        if (b.role !== undefined) s.role = b.role ? String(b.role).slice(0, 40) : null;
+        const seatProd = applySeatProduct(s, b);
+        if (seatProd.code) {
+          if (minted) delete db.sessions[s.id];
+          return { code: 400, payload: { error: seatProd.error } };
+        }
+        let nickRefusal = null, nickAdvisory = null;
+        if (b.nickname !== undefined) {
+          const r = applyNickname(s, b.nickname);
+          if (r && r.error) nickRefusal = Object.assign({}, r, { error: r.error + ` Your registration stands and your record is ${s.id}.` });
+          else if (r && r.advisory) nickAdvisory = r;
+        }
+        markActive(s, 'register');
+        s.last_seen = now();
+        let adopted = null;
+        if (b.succeeds && b.succeeds !== s.id) {
+          const pred = db.sessions[b.succeeds];
+          if (!pred) return { code: 404, payload: { error: `no record ${b.succeeds} to succeed — nothing was changed` } };
+          if (resolveSuccessor(s.id).id === pred.id || pred.id === s.id) {
+            return { code: 409, payload: { error: 'that adoption would create a successor cycle — nothing was changed' } };
+          }
+          if (pred.superseded_by && pred.superseded_by !== s.id) {
+            return { code: 409, payload: { error: `${pred.id} is already superseded by ${pred.superseded_by} — annul that first` } };
+          }
+          adopted = { predecessor: pred.id, predecessor_title: pred.title };
+          pred.superseded_by = s.id;
+          s.succeeds = Array.isArray(s.succeeds) ? s.succeeds : [];
+          if (!s.succeeds.some(a => a.session_id === pred.id)) {
+            s.succeeds.push({
+              session_id: pred.id, title: pred.title, at: now(),
+              evidence: String(b.adoption_evidence || 'attested thread continuity held in the adopting session\'s context').slice(0, 300),
+              provenance: 'asserted'
+            });
+          }
+          ops('record_adopted', { successor: s.id, predecessor: pred.id, predecessor_title: pred.title, provenance: 'asserted' });
+        }
+        ops('session_registered', {
+          session: s.id, native: parsed.part, minted, cwd: b.cwd || null, role: s.role || null,
+          subscription: s.subscription || null, model_slug: s.model_slug || null, kind: registerKind
+        });
+        save();
+        if (nickRefusal) {
+          return { code: nickRefusal.code, payload: { error: nickRefusal.error, held_by: nickRefusal.held_by, id: s.id, minted, session: s, kind: registerKind } };
+        }
+        return { code: minted ? 201 : 200, payload: {
+          id: s.id, minted, healed: null, session: s, adopted, kind: registerKind,
+          nickname_note: nickAdvisory ? nickAdvisory.advisory : undefined,
+          nickname_duplicates: nickAdvisory ? nickAdvisory.duplicates : undefined
+        } };
+      }
+
+      /* ---- claude-code arm (default) ---- */
       let s = Object.values(db.sessions).find(x =>
         x.native_ref && x.native_ref.kind === 'claude-code' && x.native_ref.session_id === b.native_id && !x.archived);
       /* SELF-HEALING BINDING. The uuid is the terminal's CURRENT address, not its identity:
@@ -2125,7 +2235,19 @@ async function handleApi(method, p, query, b) {
       // corrects an identity but never invents one. Minting stays with the explicit verbs
       // (register_session, or a send that needs a verified sender), so the first
       // register_session still honestly reports "Registered" rather than "Refreshed".
-      if (!s && b.refresh_only) return { code: 200, payload: { id: null, minted: false, healed, refreshed: false } };
+      if (!s && b.refresh_only) return { code: 200, payload: { id: null, minted: false, healed, refreshed: false, kind: registerKind } };
+      if (!s) {
+        const localId = parseClientUuid(b.native_id, 'code');
+        if (!localId.error && db.sessions[localId.id] && !db.sessions[localId.id].archived) {
+          const prior = db.sessions[localId.id];
+          if (prior.enrolment_kind === 'cursor-cli' || (prior.native_ref && prior.native_ref.kind === 'cursor-cli')) {
+            return { code: 409, payload: { error: `contested_kind: ${localId.id} is already bound as cursor-cli — a claude-code seat cannot adopt it. Nothing was changed.` } };
+          }
+          // Same product id already has a record (e.g. uninspectable first mint left native_ref
+          // null so the kind-keyed find missed it). Reuse — never overwrite via createSession.
+          s = prior;
+        }
+      }
       const minted = !s;
       if (!s) {
         // Name unification: native name is the display handle. On mint, an explicit protocol
@@ -2141,6 +2263,7 @@ async function handleApi(method, p, query, b) {
         } else {
           s.native_ref = null;
         }
+        s.enrolment_kind = 'claude-code';
       }
       /* THE DEVICE THE SEAT REPORTED, recorded so ownership can be decided.
        *
@@ -2260,7 +2383,7 @@ async function handleApi(method, p, query, b) {
         }
         ops('record_adopted', { successor: s.id, predecessor: pred.id, predecessor_title: pred.title, provenance: 'asserted' });
       }
-      ops('session_registered', { session: s.id, native: b.native_id, minted, cwd: b.cwd || null, role: s.role || null, subscription: s.subscription || null, model_slug: s.model_slug || null });
+      ops('session_registered', { session: s.id, native: b.native_id, minted, cwd: b.cwd || null, role: s.role || null, subscription: s.subscription || null, model_slug: s.model_slug || null, kind: registerKind });
       // Loud, never swallowed: a moved identity pointer is reported to the ops log and back
       // to the caller, so a heal is something you can see happen rather than infer.
       if (healed) ops('identity_healed', { session: s.id, from: healed.from, to: healed.to, by: healed.by, pid: b.pid || null });
@@ -2268,12 +2391,13 @@ async function handleApi(method, p, query, b) {
       /* The registration is saved FIRST, then the nickname refusal is reported — so the caller
        * ends up with a real record and an honest "the name was refused", never with neither. */
       if (nickRefusal) {
-        return { code: nickRefusal.code, payload: { error: nickRefusal.error, held_by: nickRefusal.held_by, id: s.id, minted, session: s } };
+        return { code: nickRefusal.code, payload: { error: nickRefusal.error, held_by: nickRefusal.held_by, id: s.id, minted, session: s, kind: registerKind } };
       }
-      return { code: minted ? 201 : 200, payload: { id: s.id, minted, healed, session: s, adopted,
+      return { code: minted ? 201 : 200, payload: { id: s.id, minted, healed, session: s, adopted, kind: registerKind,
         nickname_note: nickAdvisory ? nickAdvisory.advisory : undefined,
         nickname_duplicates: nickAdvisory ? nickAdvisory.duplicates : undefined } };
     }
+
     if (method === 'POST' && p === '/api/sessions') {
       if (!SURFACES.includes(b.surface)) return { code: 400, payload: { error: 'surface must be one of ' + SURFACES } };
       const s = createSession(b);

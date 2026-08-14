@@ -17,6 +17,9 @@
  * It also never drains an inbox. A hook that consumed mail would eat conversations the user has not
  * looked at yet, and draining belongs to the reader.
  *
+ * KIND is asserted as claude-code. Cursor CLI uses hooks/cursor-session-start.js with
+ * kind:cursor-cli on the same /api/register door — never this file with a Cursor uuid.
+ *
  * FAILURE IS SILENT AND EXIT 0, ALWAYS. A hook runs before the user has typed anything; a session
  * that will not start because a background nicety failed is worse than a session with no protocol
  * identity. Every path below ends in exit 0 — including the paths that fail — and the reason is
@@ -64,13 +67,14 @@ async function main() {
 
   try {
     const r = await core.handleApi('POST', '/api/register', {}, {
+      kind: 'claude-code',
       native_id: sessionId,
       cwd,
       // No title and no role: naming is the human's, and a hook that invented one would be
       // asserting an identity nobody chose. Refreshing a binding is not the same as naming a thing.
     });
     const rec = r && r.payload;
-    note(rec && rec.id ? `registered ${rec.id} (minted: ${!!rec.minted})` : `register returned ${r && r.code}`);
+    note(rec && rec.id ? `registered ${rec.id} kind=${rec.kind || 'claude-code'} (minted: ${!!rec.minted})` : `register returned ${r && r.code}`);
   } catch (e) {
     note(`register failed (${e.message}) — session continues without a protocol record`);
   }

@@ -339,7 +339,7 @@ const TOOLS = [
   },
   {
     name: 'whoami',
-    description: 'Which session am I, and what do I call it? One line. Use after "You will be <name>" (which must first call register_session), or when the user asks what this one is called. Naming is register_session, not this tool.',
+    description: 'Which session am I, and what do I call it? One line. Use after "You will be <name>" (which must first call register_session), or when the user asks what this one is called. If the line contains INCOMPLETE, the enrolment is missing named fields — re-register with those fields; do not invent them. Naming is register_session, not this tool.',
     inputSchema: { type: 'object', properties: {
         session_uuid: { type: 'string', description: 'This seat\'s product conversation id (Grok session id, Claude CLI uuid). Required for a non-Claude seat and for any caller over the relay. The store record is sess_<surface>_<this>.' },
         cli_uuid: { type: 'string', description: 'Claude Code CLI uuid — same fact as session_uuid for a Claude seat. Pass one of the two.' },
@@ -347,7 +347,7 @@ const TOOLS = [
   },
   {
     name: 'register_session',
-    description: 'CALL THIS when the user says any of: "You will be <name>", "Register this chat as <name>", "Register this session as <name>", "Join as <name>", /name <name>, /onboard <name>. Pass title and nickname both <name>. Chat/cowork/design: also pass surface. Then whoami. This mints or refreshes the protocol record so other seats can address this conversation. It is not a persona, not HR, not a web search — do not search the web, do not list files, do not roleplay the name. One word. Do not ask for another.',
+    description: 'CALL THIS when the user says any of: "You will be <name>", "Register this chat as <name>", "Register this session as <name>", "Join as <name>", /name <name>, /onboard <name>. Pass title and nickname both <name>. Chat/cowork/design: also pass surface, subscription (grok/claude/…) and model_slug (the model serving this seat). Incomplete enrolment is refused — do not invent the product fields; if you do not know them, whoami only. Then whoami. This mints or refreshes the protocol record so other seats can address this conversation. It is not a persona, not HR, not a web search — do not search the web, do not list files, do not roleplay the name. One word. Do not ask for another.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -358,8 +358,8 @@ const TOOLS = [
         surface: { type: 'string', enum: ['chat', 'cowork', 'design'], description: 'Required when THIS seat is chat, cowork, or design. Omit on a code terminal. Enrols on (account, surface, title). Same title refreshes. Reply session_id IS this conversation.' },
         title: { type: 'string', description: 'Human title for this session\'s record. Optional for a terminal; REQUIRED when `surface` is given, where it is the conversation\'s own title and half of the dedup key.' },
         role: { type: 'string', description: 'Role/lane label discriminating same-repo sessions: "build", "flow tests", "ux", free text. Optional; empty string clears it.' },
-        subscription: { type: 'string', description: 'Optional product account (grok, cursor, claude). One word. Empty string clears. Asserted, never a drain key. Required on register_remote_session; optional here so a local seat that does not know may omit rather than invent.' },
-        model_slug: { type: 'string', description: 'Optional serving-model slug (grok-4.6). Refreshable. Empty string clears. Spaces refused.' },
+        subscription: { type: 'string', description: 'Product account (grok, cursor, claude). One word. REQUIRED with nickname and model_slug when surface is chat/cowork/design — incomplete enrolment is refused. Optional on a local code seat so it may omit rather than invent. Empty string clears. Asserted, never a drain key.' },
+        model_slug: { type: 'string', description: 'Serving-model slug (grok-4.6). REQUIRED with subscription when surface is chat/cowork/design. Optional on a local code seat. Refreshable. Empty string clears. Spaces refused.' },
         nickname: { type: 'string', description: 'ONE WORD a human can type from memory to address this record — the recovery path for the first call after context is lost, when the model no longer knows which session it is. Unique per surface and REFUSED AT SET TIME if another live record on this surface holds it, because a collision found at use time is found by someone who has already lost their identity. A refusal names the holder and leaves your registration intact. Empty string clears it. Letters, digits, hyphen, underscore only: a name that needs quoting is not one you type under pressure.' },
         succeeds: { type: 'string', description: 'ADOPT A THREAD: the session_id of an older record whose conversation this session is continuing — typically a record left behind when this terminal fragmented across /clear, so the thread and the live binding ended up apart. Append-only: nothing is overwritten or archived, the old record keeps its history and gains superseded_by, and sends addressed to it resolve through to this one. Pass ONLY an id you already hold from your own context; provenance is ASSERTED, never CLI-verified (I12). There is deliberately no way to search for one.' },
         adoption_evidence: { type: 'string', description: 'One sentence on why you know this is your thread. Recorded verbatim on the adoption event. Optional.' }

@@ -16,6 +16,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
+const { registrationMissing } = require('./handoff-enrolment');
 
 const HOME = process.env.HANDOFF_HOME || path.join(os.homedir(), '.claude-handoff');
 const DATA = path.join(HOME, 'data.json');
@@ -1953,12 +1954,23 @@ async function handleApi(method, p, query, b) {
       const minted = !s;
       if (!s) s = createSession({ surface, title: b.title });
       if (acct) s.account_key = acct;
-      if (b.nickname !== undefined) s.nickname = b.nickname || null;
       if (b.role !== undefined) s.role = b.role || null;
       const convProd = applySeatProduct(s, b);
       if (convProd.code) {
         if (minted) delete db.sessions[s.id];
         return { code: 400, payload: { error: convProd.error } };
+      }
+      if (b.nickname !== undefined) {
+        const nickR = applyNickname(s, b.nickname);
+        if (nickR && nickR.error) {
+          if (minted) delete db.sessions[s.id];
+          return { code: nickR.code || 400, payload: { error: nickR.error } };
+        }
+      }
+      const convGaps = registrationMissing(s);
+      if (convGaps.length) {
+        if (minted) delete db.sessions[s.id];
+        return { code: 400, payload: { error: `INCOMPLETE: missing ${convGaps.join(', ')} — a conversation enrolment must name title, nickname, subscription and model_slug in the same call. Do not invent them. Nothing was written.` } };
       }
       s.last_registered = now();
       ops('conversation_registered', { session: s.id, surface, title: b.title, minted, has_account: !!acct, nickname: s.nickname || null });
@@ -1990,6 +2002,11 @@ async function handleApi(method, p, query, b) {
       if (prod.code) {
         if (minted) delete db.sessions[s.id];
         return { code: 400, payload: { error: prod.error } };
+      }
+      const remoteGaps = registrationMissing(s);
+      if (remoteGaps.length) {
+        if (minted) delete db.sessions[s.id];
+        return { code: 400, payload: { error: `INCOMPLETE: missing ${remoteGaps.join(', ')} — a remote enrolment must name title, subscription and model_slug. Do not invent them. Nothing was written.` } };
       }
       if (b.install_id !== undefined) {
         const inst = (b.install_id === null || b.install_id === '') ? null : String(b.install_id).trim();
@@ -2693,7 +2710,7 @@ async function handleApi(method, p, query, b) {
 
 module.exports = {
   handleApi, HOME, PREFS, OPS, FULL_THRESHOLD, SURFACES, NAMES,
-  sessionRecordId, parseClientUuid, projectObject,
+  sessionRecordId, parseClientUuid, projectObject, registrationMissing,
   claudeCliAvailable, claudeBin, mcpRegistered, ops, autoReceipt, getPrefs, setPref, resolveAutosend,
   artifactCap, artifactBlock, buildBrief, fencedBlock,
   __claudeCompactForTests: claudeCompact,

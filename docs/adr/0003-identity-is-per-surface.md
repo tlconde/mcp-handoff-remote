@@ -7,7 +7,9 @@ regression that could not have been caught
 
 **Each surface asserts a different KIND of identity, because each product is a different kind of
 thing.** One enrolment ceremony, but the evidence it carries is not uniform, and **no verb may demand
-evidence a surface cannot possess.**
+evidence a surface cannot possess.** Subscription and model_slug are possessable on every surface
+that can name the product it is running as — a chat enrol that omits them is incomplete and the
+write is refused. Host remains unaskable of chat.
 
 | surface | what it can assert | why |
 |---|---|---|

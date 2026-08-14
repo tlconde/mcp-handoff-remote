@@ -84,10 +84,10 @@ function refreshCore() {
          * re-asserts (anthropics/claude-code#56933), and the installed .md said elsewhere that
          * it sets the NATIVE display name, which register_session cannot do: it only reads
          * native's registry and adopts the name. Both promises are gone. */
-        `The user said "You will be $ARGUMENTS" or /name. Call register_session with title: $ARGUMENTS, nickname: $ARGUMENTS. Not a web search. PROTOCOL title only — it does NOT set Claude Code's native display name or the terminal tab. If the two names differ, say both. Empty → whoami.\n`,
+        `The user said "You will be $ARGUMENTS" or /name. Call register_session with title: $ARGUMENTS, nickname: $ARGUMENTS. Chat/cowork/design: also pass surface, subscription and model_slug — incomplete enrolment is refused; do not invent those fields. Not a web search. PROTOCOL title only — it does NOT set Claude Code's native display name or the terminal tab. If the two names differ, say both. Empty → whoami.\n`,
       'whoami.md':
         `---\ndescription: Which session is this, and what is it called?\n---\n${MARK}\n` +
-        `Call whoami and relay the single line verbatim. If it says the terminal has no name yet, offer: /name <one word>.\n`,
+        `Call whoami and relay the single line verbatim. If it says the terminal has no name yet, offer: /name <one word>. If it says INCOMPLETE, re-register with the named fields; do not invent them.\n`,
       'status.md':
         `---\ndescription: Is handoff healthy? Pending offers, unread inbox, workers, and what to do next\n---\n${MARK}\n` +
         `Call the handoff MCP tool status. Present the report compactly. If it says STALE BRIDGE or BLOCKED, tell the user to restart this Claude session / the Claude app before any handoff. If Next action is non-empty, offer to do that action.\n`

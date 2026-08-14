@@ -153,6 +153,7 @@ function deliveryNoteFor(woke, dest, windowName) {
  * Returns 'process' | 'none' | 'stale-binding' when a live agent has spoken, and 'unknown' when
  * nobody has. 'unknown' means NOBODY HAS LOOKED — never "unreachable". */
 const reach = require('./handoff-reachability');
+const { registrationMissing, incompleteNote } = require('./handoff-enrolment');
 const HEARTBEAT_STALE_MS = reach.HEARTBEAT_STALE_MS;
 function agentVerdictFor(host, recordId, st) {
   return reach.agentVerdict(host, recordId, st);
@@ -448,10 +449,10 @@ async function buildStatusReport(args, ctx, core) {
     ? ` ⚠ SHARED SESSION: ${rivals.map(r => `pid ${r.pid}${r.name ? ` ("${r.name}")` : ''}`).join(', ')} also live on this session id — renames are refused while that is true. Give one of them its own session: exit and start plain \`claude\` (not --continue, which resumes the most recent session in this DIRECTORY, and not --resume of the same id).`
     : '';
   lines[whoLine] = boundRecord
-    ? `You are: ${boundRecord.title}${nameSplit}${seatProductLabel(boundRecord) ? ` · ${seatProductLabel(boundRecord)}` : ''}${boundRecord.role ? ` (@${boundRecord.role}` : ' ('}${boundRecord.role ? ' · ' : ''}${boundRecord.surface}${workspace ? ` · ${workspace}` : ''})${contestNote}`
-    : (nativeId
+    ? `You are: ${boundRecord.title}${nameSplit}${seatProductLabel(boundRecord) ? ` · ${seatProductLabel(boundRecord)}` : ''}${boundRecord.role ? ` (@${boundRecord.role}` : ' ('}${boundRecord.role ? ' · ' : ''}${boundRecord.surface}${workspace ? ` · ${workspace}` : ''})${incompleteNote(boundRecord)}${contestNote}`
+    : nativeId
       ? `You are: this terminal has no name yet${workspace ? ` (${workspace})` : ''} — name it with /name <one word>, e.g. /name build${contestNote}`
-      : 'You are: unidentified (no session uuid in this environment — pass session_uuid, the product conversation id)');
+      : 'You are: unidentified (no session uuid in this environment — pass session_uuid, the product conversation id)';
   lines[identityLine] = `Identity: ${boundRecord
     ? `${boundRecord.id} — "${boundRecord.title}"${nameSplit} (${nativeId ? `CLI ${nativeId.slice(0, 8)}…` : boundRecord.id})`
     : (identityId || (nativeId
@@ -1086,7 +1087,7 @@ async function callTool(name, args, ctx, core) {
         ? `\nADDRESSABLE BUT NOT YET DELIVERABLE: owned by ${d.remote.host}, and no agent there has claimed it — reachability reads "unknown", which means nobody has looked rather than that it is unreachable. A send is stored durably and nothing will cause it to be read until an agent claims the record.`
         : `\nOWNED BY ${d.remote.host}, whose agent is live and reports this record as "${verdict}". A send is stored durably; whether it is PUSHED depends on the rungs available on that machine — the store is the carrier, and the agent there decides what can be delivered locally.`;
     }
-    return `RESOLVED → [${d.surface}] "${d.title}"${seatProductLabel(d) ? ` · ${seatProductLabel(d)}` : ''}${term}${undeliverable}\nsession_id: ${d.id}\n\n` +
+    return `RESOLVED → [${d.surface}] "${d.title}"${seatProductLabel(d) ? ` · ${seatProductLabel(d)}` : ''}${incompleteNote(d)}${term}${undeliverable}\nsession_id: ${d.id}\n\n` +
       `Now call send_message with session_id:"${d.id}". Check the title above is the conversation you meant — this is the only point at which a wrong target is free to correct.`;
   }
   if (name === 'retire_session') {
@@ -2167,6 +2168,11 @@ async function callTool(name, args, ctx, core) {
     if (convSurface && convSurface !== 'code') {
       const title = args.title ? String(args.title).trim() : null;
       if (!title) return 'REFUSED: title required — a record nobody can address by name is not an identity. Use the conversation\'s own title.';
+      const preview = { surface: convSurface, title, nickname: args.nickname, subscription: args.subscription, model_slug: args.model_slug };
+      const gaps = registrationMissing(preview);
+      if (gaps.length) {
+        return `REFUSED: INCOMPLETE — missing ${gaps.join(', ')}. A ${convSurface} enrolment must pass title, nickname, subscription and model_slug in the same call. Do not invent them. Nothing was written.`;
+      }
       const r = await call('POST', '/api/register-conversation', {}, {
         surface: convSurface, title, nickname: args.nickname, role: args.role,
         subscription: args.subscription, model_slug: args.model_slug,
@@ -2175,18 +2181,13 @@ async function callTool(name, args, ctx, core) {
       if (r && r.error) return `REFUSED: ${r.error}`;
       if (!r || !r.session) return 'REFUSED: the store did not return a record.';
       const s = r.session;
-      const named = s.nickname
-        ? `Nickname: "${s.nickname}" — a human can address this conversation by that word from memory.`
-        : `NOW ASK THE USER, once, in your own words: what ONE WORD should this conversation answer to? ` +
-          `Then call register_session again with that nickname. **If they say none, or do not care, keep the ` +
-          `auto-generated title and do not ask again** — the title already works as an address and the ` +
-          `ceremony is finished either way.`;
-      return `${r.minted ? 'Registered' : 'Refreshed'}: [${s.surface}] "${s.title}"\n` +
+      const product = seatProductLabel(s);
+      return `${r.minted ? 'Registered' : 'Refreshed'}: [${s.surface}] "${s.title}"${product ? ` · ${product}` : ''}${incompleteNote(s)}\n` +
         `session_id: ${s.id}\n` +
+        `Nickname: "${s.nickname}" — a human can address this conversation by that word from memory.\n` +
         `**This id IS this conversation's identity** — it is what the store minted for a surface that has no ` +
         `machine, no process and no hostname. Pass it as session_id to check_inbox to read mail addressed here; ` +
-        `over the relay that is required, because a ${s.surface} conversation has no host to be scoped by.\n` +
-        named;
+        `over the relay that is required, because a ${s.surface} conversation has no host to be scoped by.`;
     }
     /* A PEER MOUNT CARRIES ITS OWN IDENTITY, and this is where the telling STICKS.
      *
@@ -2800,7 +2801,7 @@ function formatSessionCandidates(sessions, st) {
       : (s.created_at || '?');
     const tip = s.id === newestId ? ' ← latest' : '';
     return (
-      `${letter}${tip} — [${s.surface}] "${s.title}"${seatProductLabel(s) ? ` · ${seatProductLabel(s)}` : ''} · ${when}\n` +
+      `${letter}${tip} — [${s.surface}] "${s.title}"${seatProductLabel(s) ? ` · ${seatProductLabel(s)}` : ''}${incompleteNote(s)} · ${when}\n` +
       `   State: ${sessionLinkNote(s, st)} · Carrier: ${sessionCarrierNote(s)}\n` +
       `   Recap: ${sessionRecap(s)}\n` +
       `   (after you choose: session_id: ${s.id} · or pick:"latest" for newest)`
@@ -2811,7 +2812,7 @@ function formatSessionCandidates(sessions, st) {
 module.exports = {
   namedOrPinned, callTool, MIGRATED,
   isTargetable,   // exported for the retirement suite: the one chokepoint every by-name path uses
-  deliveryNoteFor, seatProductLabel,
+  deliveryNoteFor, seatProductLabel, registrationMissing, incompleteNote,
   targetNames, matchesName, matchesNameExact, filterByName,
   age, clipText, settledDestIds, offerIsPending, offerStateOf, resolveLiveNativeId, setTerminalTitle,
   sessionRecap, sessionCarrierNote, sessionLinkNote, formatSessionCandidates,

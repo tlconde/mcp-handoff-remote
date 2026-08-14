@@ -61,11 +61,11 @@ Free-text sender string on a message. Observational only — nothing resolves ag
 _Avoid_: identity, title, name
 
 **Subscription**:
-The product account a seat is running as (`grok`, `cursor`, `claude`). Asserted at enrolment. Not the title, not the lane (`role`), not a drain key.
+The product account a seat is running as (`grok`, `cursor`, `claude`). Asserted at enrolment. Required on a chat/cowork/design or remote enrol — omitting it is INCOMPLETE and the write is refused. Not the title, not the lane (`role`), not a drain key.
 _Avoid_: vendor (alone), role, plan name
 
 **Model slug**:
-The model serving that seat right now (`grok-4.6`). Asserted, refreshable. Spaces refused. A model switch updates the same record.
+The model serving that seat right now (`grok-4.6`). Asserted, refreshable. Required with subscription on a conversation or remote enrol. Spaces refused. A model switch updates the same record.
 _Avoid_: model name (marketing string with spaces), version (alone)
 
 **Surface**:

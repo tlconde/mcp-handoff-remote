@@ -347,7 +347,7 @@ const TOOLS = [
   },
   {
     name: 'register_session',
-    description: 'CALL THIS when the user says any of: "You will be <name>", "Register this chat as <name>", "Register this session as <name>", "Join as <name>", /name <name>, /onboard <name>. Pass title and nickname both <name>. Chat/cowork/design: also pass surface, subscription (grok/claude/…) and model_slug (the model serving this seat). Incomplete enrolment is refused — do not invent the product fields; if you do not know them, whoami only. Then whoami. This mints or refreshes the protocol record so other seats can address this conversation. It is not a persona, not HR, not a web search — do not search the web, do not list files, do not roleplay the name. One word. Do not ask for another.',
+    description: 'CALL THIS when the user says any of: "You will be <name>", "Register this chat as <name>", "Register this session as <name>", "Join as <name>", /name <name>, /onboard <name>. Chat/cowork/design: ONE call with surface, title, nickname, subscription, model_slug — all five, first try. Do not call until you have the model slug you are serving; do not invent it; whoami only if you do not know. Code: title and nickname, omit surface. Not a persona, not a web search. One word. Then whoami.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -364,7 +364,14 @@ const TOOLS = [
         succeeds: { type: 'string', description: 'ADOPT A THREAD: the session_id of an older record whose conversation this session is continuing — typically a record left behind when this terminal fragmented across /clear, so the thread and the live binding ended up apart. Append-only: nothing is overwritten or archived, the old record keeps its history and gains superseded_by, and sends addressed to it resolve through to this one. Pass ONLY an id you already hold from your own context; provenance is ASSERTED, never CLI-verified (I12). There is deliberately no way to search for one.' },
         adoption_evidence: { type: 'string', description: 'One sentence on why you know this is your thread. Recorded verbatim on the adoption event. Optional.' }
       },
-      additionalProperties: false
+      additionalProperties: false,
+      if: {
+        properties: { surface: { enum: ['chat', 'cowork', 'design'] } },
+        required: ['surface']
+      },
+      then: {
+        required: ['title', 'nickname', 'subscription', 'model_slug']
+      }
     }
   },
   {

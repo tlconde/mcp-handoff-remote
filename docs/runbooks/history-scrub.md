@@ -113,7 +113,8 @@ git clone --mirror <origin-url> /tmp/handoff-scrub && cd /tmp/handoff-scrub
 # 1. paths that should never have been committed
 git filter-repo --invert-paths \
   --path mcp-roundtrip-evals/ \
-  --path docs-seed/
+  --path docs-seed/ \
+  --path DEBUG-LOG.md
 
 # 2. id-shaped residue in remaining content and commit messages
 #    (--replace-text takes a file of `regex==>replacement` lines; build it from .scrub-values)

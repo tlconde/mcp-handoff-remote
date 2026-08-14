@@ -37,6 +37,7 @@ AUDIT-*.md
 ENGINEERING-REVIEW.md
 PLAN.md
 test-results.md
+DEBUG-LOG.md
 .cursor/
 # The `data` directory is used for storing data files that are too large to be committed to the repository.
 

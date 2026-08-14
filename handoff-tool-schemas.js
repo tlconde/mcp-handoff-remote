@@ -179,7 +179,7 @@ const TOOLS = [
   },
   {
     name: 'register_remote_session',
-    description: 'CALL THIS when the user says "You will be <name>" or "Register this chat as <name>" on an asserted code seat (Grok). title=<name>. Do not search the web, do not roleplay. Also the remote-device enrol when there is no CLI uuid here. device, session_uuid, subscription, model_slug must already be known — do not invent them. Identity is asserted, not CLI-verified. native_ref stays null until the owning host claims it. Idempotent on (device, title).',
+    description: 'ONLY for a CODE seat on a machine (Grok Build, a laptop). Never grok.com chat, never Claude chat, never "Register this chat as". Those call register_session with surface=chat. device is os.hostname() of that machine — do not invent a host label. title, device, session_uuid, subscription, model_slug required; do not invent them. Identity is asserted, not CLI-verified. native_ref stays null until the owning host claims it. Idempotent on (device, title).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -339,7 +339,7 @@ const TOOLS = [
   },
   {
     name: 'whoami',
-    description: 'Which session am I, and what do I call it? One line. Use after "You will be <name>" (which must first call register_session), or when the user asks what this one is called. If the line contains INCOMPLETE, the enrolment is missing named fields — re-register with those fields; do not invent them. Naming is register_session, not this tool.',
+    description: 'Which session am I, and what do I call it? One line. After naming, call this. If unidentified over the relay: pass session_uuid (this conversation\'s product id) and call again — that is not a reason to call register_remote_session or status. grok.com / Claude chat enrols with register_session surface=chat, not as code. If the line contains INCOMPLETE, re-register with the named fields; do not invent them. Naming is register_session, not this tool.',
     inputSchema: { type: 'object', properties: {
         session_uuid: { type: 'string', description: 'This seat\'s product conversation id (Grok session id, Claude CLI uuid). Required for a non-Claude seat and for any caller over the relay. The store record is sess_<surface>_<this>.' },
         cli_uuid: { type: 'string', description: 'Claude Code CLI uuid — same fact as session_uuid for a Claude seat. Pass one of the two.' },
@@ -347,7 +347,7 @@ const TOOLS = [
   },
   {
     name: 'register_session',
-    description: 'CALL THIS when the user says any of: "You will be <name>", "Register this chat as <name>", "Register this session as <name>", "Join as <name>", /name <name>, /onboard <name>. Chat/cowork/design: ONE call with surface, title, nickname, subscription, model_slug — all five, first try. Do not call until you have the model slug you are serving; do not invent it; whoami only if you do not know. Code: title and nickname, omit surface. Not a persona, not a web search. One word. Then whoami.',
+    description: 'CALL THIS when the user says any of: "You will be <name>", "Register this chat as <name>", "Register this session as <name>", "Join as <name>", /name <name>, /onboard <name>. grok.com and Claude chat use THIS tool, not register_remote_session — even over the relay, even when whoami said unidentified. Chat/cowork/design: ONE call with surface, title, nickname, subscription, model_slug — all five, first try. Do not invent the model slug. Code terminal: title and nickname, omit surface. Not a persona, not a web search. One word. Then whoami.',
     inputSchema: {
       type: 'object',
       properties: {

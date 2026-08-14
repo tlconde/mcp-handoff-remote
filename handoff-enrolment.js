@@ -69,7 +69,22 @@ function wrongEnrolmentDoorRefusal(door) {
     `Nothing was written.`;
 }
 
+/** Old verb names stay callable so a cached tools/list is not a 404. They do not enrol. */
+function legacyEnrolmentRefusal(name) {
+  return `REFUSED: ${name} is no longer an enrolment verb. ` +
+    `Use register_chat_session (grok.com / claude.ai / Claude chat) or register_code_session (a machine). ` +
+    `Then whoami. Nothing was written.`;
+}
+
+function reregisterNote(s) {
+  if (!s) return '';
+  if (s.enrolment_verb === 'register_chat_session' || s.enrolment_verb === 'register_code_session') return '';
+  const tool = (s.surface && s.surface !== 'code') ? 'register_chat_session' : 'register_code_session';
+  return ` RE-REGISTER with ${tool} — first contact. Legacy enrolment will be retired.`;
+}
+
 module.exports = {
   registrationMissing, registrationComplete, incompleteNote,
   canonicalEnrolmentTool, expectedEnrolmentTool, enrolmentDoor, wrongEnrolmentDoorRefusal,
+  legacyEnrolmentRefusal, reregisterNote,
 };

@@ -179,7 +179,7 @@ const TOOLS = [
   },
   {
     name: 'register_remote_session',
-    description: 'Legacy alias for register_code_session. ONLY a machine (Grok Build, a laptop). Never grok.com / claude.ai / Claude chat — those use register_chat_session. device is os.hostname(). title, device, session_uuid, subscription, model_slug required. Do not invent them.',
+    description: 'RETIRED as an enrolment verb. Use register_code_session. This name still exists so a cached tools/list is not a missing-tool 404 — the call is refused in one line.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -386,7 +386,7 @@ const TOOLS = [
   },
   {
     name: 'register_session',
-    description: 'Legacy alias. grok.com / claude.ai / Claude chat → register_chat_session. A machine → register_code_session. Still accepted so cached clients keep working. Chat/cowork/design: surface, title, nickname, subscription, model_slug in one call. Code terminal: title and nickname, omit surface.',
+    description: 'RETIRED as an enrolment verb. Use register_chat_session or register_code_session. This name still exists so a cached tools/list is not a missing-tool 404 — the call is refused in one line.',
     inputSchema: {
       type: 'object',
       properties: {

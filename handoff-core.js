@@ -1973,7 +1973,10 @@ async function handleApi(method, p, query, b) {
         return { code: 400, payload: { error: `INCOMPLETE: missing ${convGaps.join(', ')} — a conversation enrolment must name title, nickname, subscription and model_slug in the same call. Do not invent them. Nothing was written.` } };
       }
       s.last_registered = now();
-      ops('conversation_registered', { session: s.id, surface, title: b.title, minted, has_account: !!acct, nickname: s.nickname || null });
+      if (b.enrolment_verb === 'register_chat_session' || b.enrolment_verb === 'register_code_session') {
+        s.enrolment_verb = b.enrolment_verb;
+      }
+      ops('conversation_registered', { session: s.id, surface, title: b.title, minted, has_account: !!acct, nickname: s.nickname || null, enrolment_verb: s.enrolment_verb || null });
       save(db);
       return { code: minted ? 201 : 200, payload: { session: s, minted } };
     }
@@ -2063,11 +2066,15 @@ async function handleApi(method, p, query, b) {
         }
         ops('record_adopted', { successor: s.id, predecessor: pred.id, predecessor_title: pred.title, provenance: 'asserted' });
       }
+      if (b.enrolment_verb === 'register_chat_session' || b.enrolment_verb === 'register_code_session') {
+        s.enrolment_verb = b.enrolment_verb;
+      }
       ops('remote_session_registered', {
         session: s.id, host, title: b.title, minted,
         minted_by: s.remote.minted_by, device_provenance: s.remote.device_provenance,
         subscription: s.subscription || null, model_slug: s.model_slug || null,
         previous_model_slug: (!minted && prod.previous_model_slug !== s.model_slug) ? prod.previous_model_slug : undefined,
+        enrolment_verb: s.enrolment_verb || null,
       });
       save(db);
       return { code: minted ? 201 : 200, payload: { session: s, minted, adopted } };

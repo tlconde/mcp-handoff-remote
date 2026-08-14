@@ -153,7 +153,7 @@ function deliveryNoteFor(woke, dest, windowName) {
  * Returns 'process' | 'none' | 'stale-binding' when a live agent has spoken, and 'unknown' when
  * nobody has. 'unknown' means NOBODY HAS LOOKED — never "unreachable". */
 const reach = require('./handoff-reachability');
-const { registrationMissing, incompleteNote, enrolmentDoor, wrongEnrolmentDoorRefusal } = require('./handoff-enrolment');
+const { registrationMissing, incompleteNote, enrolmentDoor, wrongEnrolmentDoorRefusal, legacyEnrolmentRefusal, reregisterNote } = require('./handoff-enrolment');
 const HEARTBEAT_STALE_MS = reach.HEARTBEAT_STALE_MS;
 function agentVerdictFor(host, recordId, st) {
   return reach.agentVerdict(host, recordId, st);
@@ -449,7 +449,7 @@ async function buildStatusReport(args, ctx, core) {
     ? ` ⚠ SHARED SESSION: ${rivals.map(r => `pid ${r.pid}${r.name ? ` ("${r.name}")` : ''}`).join(', ')} also live on this session id — renames are refused while that is true. Give one of them its own session: exit and start plain \`claude\` (not --continue, which resumes the most recent session in this DIRECTORY, and not --resume of the same id).`
     : '';
   lines[whoLine] = boundRecord
-    ? `You are: ${boundRecord.title}${nameSplit}${seatProductLabel(boundRecord) ? ` · ${seatProductLabel(boundRecord)}` : ''}${boundRecord.role ? ` (@${boundRecord.role}` : ' ('}${boundRecord.role ? ' · ' : ''}${boundRecord.surface}${workspace ? ` · ${workspace}` : ''})${incompleteNote(boundRecord)}${contestNote}`
+    ? `You are: ${boundRecord.title}${nameSplit}${seatProductLabel(boundRecord) ? ` · ${seatProductLabel(boundRecord)}` : ''}${boundRecord.role ? ` (@${boundRecord.role}` : ' ('}${boundRecord.role ? ' · ' : ''}${boundRecord.surface}${workspace ? ` · ${workspace}` : ''})${incompleteNote(boundRecord)}${reregisterNote(boundRecord)}${contestNote}`
     : nativeId
       ? `You are: this terminal has no name yet${workspace ? ` (${workspace})` : ''} — name it with /name <one word>, e.g. /name build${contestNote}`
       : ((ctx && ctx.remote && ctx.surface_class && (ctx.surface_class === 'grok-app' || ctx.surface_class === 'claude-app'))
@@ -1919,7 +1919,11 @@ async function callTool(name, args, ctx, core) {
    * minted_by records WHO wrote it. A first record created from another machine on the device's
    * behalf is legitimate while that device has no credential yet, but it must never later be
    * mistaken for one the device's own agent wrote. */
-  if (name === 'register_chat_session' || name === 'register_code_session' || name === 'register_session' || name === 'register_remote_session') {
+  if (name === 'register_session' || name === 'register_remote_session') {
+    try { core.ops('enrol_legacy_verb', { used: name, expected: name === 'register_session' ? 'register_chat_session or register_code_session' : 'register_code_session' }); } catch (_) { /* log must not fail the refuse */ }
+    return legacyEnrolmentRefusal(name);
+  }
+  if (name === 'register_chat_session' || name === 'register_code_session') {
     const door = enrolmentDoor(name, ctx, args);
     if (door.wrong) {
       try { core.ops('enrol_wrong_tool', { used: door.used, expected: door.expected, reason: door.reason, surface_class: door.surface_class }); } catch (_) { /* log must not fail the refuse */ }
@@ -1927,12 +1931,12 @@ async function callTool(name, args, ctx, core) {
     }
     if (name === 'register_chat_session') {
       args = Object.assign({}, args || {}, { surface: (args && args.surface) || 'chat' });
-      name = 'register_session';
-    } else if (name === 'register_code_session') {
-      name = 'register_remote_session';
+      name = 'enrol_chat';
+    } else {
+      name = 'enrol_code';
     }
   }
-  if (name === 'register_remote_session') {
+  if (name === 'enrol_code') {
     if (!args || !args.title) return 'REFUSED: title required — the record exists so a human can address it by name.';
     if (!args.device) return 'REFUSED: device required — name the machine this session runs on (e.g. "windows-laptop"). Without it the record cannot be deduplicated on reconnect, and reachability has no host to ask.';
     if (!args.subscription || !args.model_slug) {
@@ -1955,6 +1959,7 @@ async function callTool(name, args, ctx, core) {
       account_sub: (ctx && ctx.account_sub) || null,
       minted_by: mintedBy,
       cli_uuid: args.session_uuid || args.cli_uuid,
+      enrolment_verb: 'register_code_session',
     });
     if (r && r.error) return `REFUSED: ${r.error}`;
     if (!r || !r.session) return 'REFUSED: the store did not return a record.';
@@ -2170,7 +2175,7 @@ async function callTool(name, args, ctx, core) {
   // sole writer of both, the caller applies what comes back. Without this a pure forwarder
   // could register but never learn its own record id, and its status would say "not yet
   // registered" immediately after registering.
-  if (name === 'register_session') {
+  if (name === 'enrol_chat') {
     /* ONE CEREMONY, DIFFERENT EVIDENCE (ADR-0003). A code seat proves itself with a CLI uuid; a
      * chat has none and never will, so it enrols on (account, surface, title) and its identity is
      * the id the store MINTS for it. Same verb, because the ruling is that enrolment is uniform —
@@ -2192,6 +2197,7 @@ async function callTool(name, args, ctx, core) {
         surface: convSurface, title, nickname: args.nickname, role: args.role,
         subscription: args.subscription, model_slug: args.model_slug,
         account_key: (ctx && ctx.account_sub) || null,
+        enrolment_verb: 'register_chat_session',
       });
       if (r && r.error) return `REFUSED: ${r.error}`;
       if (!r || !r.session) return 'REFUSED: the store did not return a record.';

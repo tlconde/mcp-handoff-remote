@@ -76,10 +76,13 @@ function legacyEnrolmentRefusal(name) {
     `Then whoami. Nothing was written.`;
 }
 
-function reregisterNote(s) {
+function reregisterNote(s, ctx) {
   if (!s) return '';
   if (s.enrolment_verb === 'register_chat_session' || s.enrolment_verb === 'register_code_session') return '';
-  const tool = (s.surface && s.surface !== 'code') ? 'register_chat_session' : 'register_code_session';
+  const cls = ctx && ctx.surface_class;
+  const tool = (cls && CHAT_APP_CLASS[cls])
+    ? 'register_chat_session'
+    : ((s.surface && s.surface !== 'code') ? 'register_chat_session' : 'register_code_session');
   return ` RE-REGISTER with ${tool} — first contact. Legacy enrolment will be retired.`;
 }
 

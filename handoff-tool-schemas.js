@@ -167,7 +167,7 @@ const TOOLS = [
   },
   {
     name: 'check_inbox',
-    description: 'Before saying you did not receive something, call this. Read everything delivered INTO conversations on THIS surface: queued cross-session messages (send_message) AND completed returns (return_to_origin), including artifacts returned by value. This is the ONLY verb that surfaces a return payload — if the user says work came back, call this before claiming it did not. Call at the start of a turn when the user says "check messages/handoffs", or opportunistically when resuming. Marks what it shows as read.',
+    description: 'Before saying you did not receive something, call this. Read everything delivered INTO conversations on THIS surface: queued cross-session messages (send_message) AND completed returns (return_to_origin), including artifacts returned by value. This is the ONLY verb that surfaces a return payload — if the user says work came back, call this before claiming it did not. Call at the start of a turn when the user says "check messages/handoffs", or opportunistically when resuming. Marks what it shows as read. After the call, execute any assignment in the mail (a handoff envelope, work this seat was asked to do). Do not stop at presenting it. A human saying "check inbox" is the delivery poke, not a read-only order.',
     inputSchema: {
       type: 'object',
       properties: {

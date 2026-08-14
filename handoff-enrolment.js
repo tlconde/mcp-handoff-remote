@@ -29,4 +29,47 @@ function incompleteNote(s) {
   return ` — INCOMPLETE: missing ${gaps.join(', ')}. Re-register with those fields. Do not invent them.`;
 }
 
-module.exports = { registrationMissing, registrationComplete, incompleteNote };
+/** Chat apps (grok.com, claude.ai) vs a machine. surface_class is a UA claim — used to
+ *  name the advertised verb and to log a miss, never written on the session record. */
+const CHAT_APP_CLASS = { 'grok-app': true, 'claude-app': true };
+
+function canonicalEnrolmentTool(name, args) {
+  if (name === 'register_chat_session') return 'register_chat_session';
+  if (name === 'register_code_session' || name === 'register_remote_session') return 'register_code_session';
+  if (name === 'register_session') {
+    const surface = args && args.surface ? String(args.surface).trim() : '';
+    if (surface && surface !== 'code') return 'register_chat_session';
+    return 'register_code_session';
+  }
+  return null;
+}
+
+function expectedEnrolmentTool(ctx, args) {
+  const surface = args && args.surface ? String(args.surface).trim() : '';
+  if (surface && surface !== 'code') return 'register_chat_session';
+  const cls = ctx && ctx.surface_class;
+  if (cls && CHAT_APP_CLASS[cls]) return 'register_chat_session';
+  return 'register_code_session';
+}
+
+/** Use before a register_* write. wrong means this caller should have used the other door. */
+function enrolmentDoor(name, ctx, args) {
+  const used = canonicalEnrolmentTool(name, args);
+  if (!used) return { used: name, expected: null, wrong: false, reason: null };
+  const expected = expectedEnrolmentTool(ctx, args);
+  const cls = (ctx && ctx.surface_class) || null;
+  if (used === expected) return { used, expected, wrong: false, reason: null, surface_class: cls };
+  const reason = (cls && CHAT_APP_CLASS[cls]) ? 'chat_app_used_code_door' : 'code_seat_used_chat_door';
+  return { used, expected, wrong: true, reason, surface_class: cls };
+}
+
+function wrongEnrolmentDoorRefusal(door) {
+  return `REFUSED: wrong enrolment door. Use ${door.expected}, not ${door.used}. ` +
+    `grok.com / claude.ai / Claude chat → register_chat_session. A machine (Grok Build, Claude Code) → register_code_session. ` +
+    `Nothing was written.`;
+}
+
+module.exports = {
+  registrationMissing, registrationComplete, incompleteNote,
+  canonicalEnrolmentTool, expectedEnrolmentTool, enrolmentDoor, wrongEnrolmentDoorRefusal,
+};

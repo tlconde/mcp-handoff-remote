@@ -153,7 +153,7 @@ function deliveryNoteFor(woke, dest, windowName) {
  * Returns 'process' | 'none' | 'stale-binding' when a live agent has spoken, and 'unknown' when
  * nobody has. 'unknown' means NOBODY HAS LOOKED — never "unreachable". */
 const reach = require('./handoff-reachability');
-const { registrationMissing, incompleteNote } = require('./handoff-enrolment');
+const { registrationMissing, incompleteNote, enrolmentDoor, wrongEnrolmentDoorRefusal } = require('./handoff-enrolment');
 const HEARTBEAT_STALE_MS = reach.HEARTBEAT_STALE_MS;
 function agentVerdictFor(host, recordId, st) {
   return reach.agentVerdict(host, recordId, st);
@@ -452,7 +452,9 @@ async function buildStatusReport(args, ctx, core) {
     ? `You are: ${boundRecord.title}${nameSplit}${seatProductLabel(boundRecord) ? ` · ${seatProductLabel(boundRecord)}` : ''}${boundRecord.role ? ` (@${boundRecord.role}` : ' ('}${boundRecord.role ? ' · ' : ''}${boundRecord.surface}${workspace ? ` · ${workspace}` : ''})${incompleteNote(boundRecord)}${contestNote}`
     : nativeId
       ? `You are: this terminal has no name yet${workspace ? ` (${workspace})` : ''} — name it with /name <one word>, e.g. /name build${contestNote}`
-      : 'You are: unidentified (no session uuid in this environment — pass session_uuid, the product conversation id)';
+      : ((ctx && ctx.remote && ctx.surface_class && (ctx.surface_class === 'grok-app' || ctx.surface_class === 'claude-app'))
+        ? 'You are: unidentified (no session uuid in this environment — pass session_uuid if whoami needs it, then register_chat_session: surface, title, nickname, subscription, model_slug. Do not call register_remote_session or register_code_session. Do not call status to enrol.)'
+        : 'You are: unidentified (no session uuid in this environment — pass session_uuid, the product conversation id)');
   lines[identityLine] = `Identity: ${boundRecord
     ? `${boundRecord.id} — "${boundRecord.title}"${nameSplit} (${nativeId ? `CLI ${nativeId.slice(0, 8)}…` : boundRecord.id})`
     : (identityId || (nativeId
@@ -605,7 +607,7 @@ const MIGRATED = new Set([
   'pick_up', 'continue_from', 'return_to_origin',
   'resolve_conversation', 'send_message', 'send_to', 'send_to_surface', 'status', 'whoami',
   'send_to_worker', 'list_conversations', 'resume_code_session', 'open_conversation',
-  'check_inbox', 'peek_inbox', 'register_remote_session', 'agent_heartbeat', 'withdraw_handoff', 'decline_handoff', 'list_workers',
+  'check_inbox', 'peek_inbox', 'register_remote_session', 'register_chat_session', 'register_code_session', 'agent_heartbeat', 'withdraw_handoff', 'decline_handoff', 'list_workers',
 ]);
 
 /** Run a migrated tool against `core` with the caller's per-request `ctx`. */
@@ -666,7 +668,7 @@ async function callTool(name, args, ctx, core) {
    * These three verbs need it because they are ABOUT the caller's own identity and can do nothing
    * else with it. Every other verb keeps the old behaviour: a remote caller has no cli_uuid, which
    * is true. */
-  const IDENTITY_VERBS = new Set(['register_session', 'whoami', 'status']);
+  const IDENTITY_VERBS = new Set(['register_session', 'register_chat_session', 'register_code_session', 'whoami', 'status']);
   const remoteClaimedUuid = (ctx && ctx.remote && IDENTITY_VERBS.has(name) && args && args.cli_uuid)
     ? String(args.cli_uuid) : null;
   if (remoteClaimedUuid) {
@@ -1917,6 +1919,19 @@ async function callTool(name, args, ctx, core) {
    * minted_by records WHO wrote it. A first record created from another machine on the device's
    * behalf is legitimate while that device has no credential yet, but it must never later be
    * mistaken for one the device's own agent wrote. */
+  if (name === 'register_chat_session' || name === 'register_code_session' || name === 'register_session' || name === 'register_remote_session') {
+    const door = enrolmentDoor(name, ctx, args);
+    if (door.wrong) {
+      try { core.ops('enrol_wrong_tool', { used: door.used, expected: door.expected, reason: door.reason, surface_class: door.surface_class }); } catch (_) { /* log must not fail the refuse */ }
+      return wrongEnrolmentDoorRefusal(door);
+    }
+    if (name === 'register_chat_session') {
+      args = Object.assign({}, args || {}, { surface: (args && args.surface) || 'chat' });
+      name = 'register_session';
+    } else if (name === 'register_code_session') {
+      name = 'register_remote_session';
+    }
+  }
   if (name === 'register_remote_session') {
     if (!args || !args.title) return 'REFUSED: title required — the record exists so a human can address it by name.';
     if (!args.device) return 'REFUSED: device required — name the machine this session runs on (e.g. "windows-laptop"). Without it the record cannot be deduplicated on reconnect, and reachability has no host to ask.';
@@ -2812,7 +2827,7 @@ function formatSessionCandidates(sessions, st) {
 module.exports = {
   namedOrPinned, callTool, MIGRATED,
   isTargetable,   // exported for the retirement suite: the one chokepoint every by-name path uses
-  deliveryNoteFor, seatProductLabel, registrationMissing, incompleteNote,
+  deliveryNoteFor, seatProductLabel, registrationMissing, incompleteNote, enrolmentDoor,
   targetNames, matchesName, matchesNameExact, filterByName,
   age, clipText, settledDestIds, offerIsPending, offerStateOf, resolveLiveNativeId, setTerminalTitle,
   sessionRecap, sessionCarrierNote, sessionLinkNote, formatSessionCandidates,

@@ -179,7 +179,7 @@ const TOOLS = [
   },
   {
     name: 'register_remote_session',
-    description: 'ONLY for a CODE seat on a machine (Grok Build, a laptop). Never grok.com chat, never Claude chat, never "Register this chat as". Those call register_session with surface=chat. device is os.hostname() of that machine — do not invent a host label. title, device, session_uuid, subscription, model_slug required; do not invent them. Identity is asserted, not CLI-verified. native_ref stays null until the owning host claims it. Idempotent on (device, title).',
+    description: 'Legacy alias for register_code_session. ONLY a machine (Grok Build, a laptop). Never grok.com / claude.ai / Claude chat — those use register_chat_session. device is os.hostname(). title, device, session_uuid, subscription, model_slug required. Do not invent them.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -192,6 +192,45 @@ const TOOLS = [
         succeeds: { type: 'string', description: 'Optional. Adopt an older record id this seat is continuing (e.g. a store-minted sess_code_ULID). Append-only; the old id walks forward.' },
         adoption_evidence: { type: 'string', description: 'One sentence on why this is the same seat. Optional.' },
         role: { type: 'string', description: 'Optional role/lane label discriminating sessions on one device ("build", "ux"). Not the product — that is subscription.' }
+      },
+      required: ['title', 'device', 'session_uuid', 'subscription', 'model_slug'],
+      additionalProperties: false
+    }
+  },
+  {
+    name: 'register_chat_session',
+    description: 'Enrol THIS conversation on grok.com, claude.ai, Claude chat, cowork, or design. CALL THIS when the user says "You will be <name>", "Register this chat as <name>", "Register this session as <name>", /name, /onboard. ONE call: surface, title, nickname, subscription, model_slug. Never register_code_session — a chat has no host. Do not invent the model slug. Then whoami.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        surface: { type: 'string', enum: ['chat', 'cowork', 'design'], description: 'Where this conversation runs. grok.com and claude.ai are chat.' },
+        title: { type: 'string', description: 'The one word the user said.' },
+        nickname: { type: 'string', description: 'Same word as title. One word.' },
+        subscription: { type: 'string', description: 'Product account (grok, claude). One word. Do not invent.' },
+        model_slug: { type: 'string', description: 'Model serving this seat (grok-4.5). Do not invent. Spaces refused.' },
+        role: { type: 'string', description: 'Optional lane. Not the product.' },
+        succeeds: { type: 'string', description: 'Optional older record id this conversation continues.' },
+        adoption_evidence: { type: 'string', description: 'Why this is the same seat. Optional.' }
+      },
+      required: ['surface', 'title', 'nickname', 'subscription', 'model_slug'],
+      additionalProperties: false
+    }
+  },
+  {
+    name: 'register_code_session',
+    description: 'Enrol THIS seat on a machine (Grok Build, Claude Code, a laptop). Never grok.com, never claude.ai, never Claude chat. device is os.hostname() of this machine. title, device, session_uuid, subscription, model_slug required. Do not invent them.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'The one word the user said.' },
+        device: { type: 'string', description: 'os.hostname() of this machine. Do not invent a host label.' },
+        session_uuid: { type: 'string', description: 'This product conversation id. Record becomes sess_code_<this>.' },
+        subscription: { type: 'string', description: 'Product account (grok, claude). One word.' },
+        model_slug: { type: 'string', description: 'Model serving this seat. Do not invent.' },
+        install_id: { type: 'string', description: 'Optional product install id. Logs only.' },
+        role: { type: 'string', description: 'Optional lane.' },
+        succeeds: { type: 'string', description: 'Optional older record id this seat continues.' },
+        adoption_evidence: { type: 'string', description: 'Why this is the same seat. Optional.' }
       },
       required: ['title', 'device', 'session_uuid', 'subscription', 'model_slug'],
       additionalProperties: false
@@ -339,7 +378,7 @@ const TOOLS = [
   },
   {
     name: 'whoami',
-    description: 'Which session am I, and what do I call it? One line. After naming, call this. If unidentified over the relay: pass session_uuid (this conversation\'s product id) and call again — that is not a reason to call register_remote_session or status. grok.com / Claude chat enrols with register_session surface=chat, not as code. If the line contains INCOMPLETE, re-register with the named fields; do not invent them. Naming is register_session, not this tool.',
+    description: 'Which session am I, and what do I call it? One line. After naming, call this. grok.com / claude.ai / Claude chat: if unidentified, register_chat_session (not register_code_session, not status). A machine: register_code_session. If the line contains INCOMPLETE, re-register with the named fields; do not invent them.',
     inputSchema: { type: 'object', properties: {
         session_uuid: { type: 'string', description: 'This seat\'s product conversation id (Grok session id, Claude CLI uuid). Required for a non-Claude seat and for any caller over the relay. The store record is sess_<surface>_<this>.' },
         cli_uuid: { type: 'string', description: 'Claude Code CLI uuid — same fact as session_uuid for a Claude seat. Pass one of the two.' },
@@ -347,7 +386,7 @@ const TOOLS = [
   },
   {
     name: 'register_session',
-    description: 'CALL THIS when the user says any of: "You will be <name>", "Register this chat as <name>", "Register this session as <name>", "Join as <name>", /name <name>, /onboard <name>. grok.com and Claude chat use THIS tool, not register_remote_session — even over the relay, even when whoami said unidentified. Chat/cowork/design: ONE call with surface, title, nickname, subscription, model_slug — all five, first try. Do not invent the model slug. Code terminal: title and nickname, omit surface. Not a persona, not a web search. One word. Then whoami.',
+    description: 'Legacy alias. grok.com / claude.ai / Claude chat → register_chat_session. A machine → register_code_session. Still accepted so cached clients keep working. Chat/cowork/design: surface, title, nickname, subscription, model_slug in one call. Code terminal: title and nickname, omit surface.',
     inputSchema: {
       type: 'object',
       properties: {

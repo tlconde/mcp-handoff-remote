@@ -61,7 +61,7 @@ That is the whole install. The store is created at `~/.claude-handoff/` on first
 You will be Chad
 ```
 
-or `Register this chat as Chad`. One word. The seat calls `register_session` with that name plus the product (`subscription`) and serving model (`model_slug`). `/name` and `/onboard` do the same. A seat that omits those fields is refused, not half-enrolled.
+or `Register this chat as Chad`. One word. A chat seat calls `register_chat_session` with that name plus the product (`subscription`) and serving model (`model_slug`). A machine calls `register_code_session`. `/name` and `/onboard` do the same. A seat that omits those fields is refused, not half-enrolled.
 
 
 **Optional — the background daemon.** One process serving every terminal, so sessions can

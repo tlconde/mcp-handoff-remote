@@ -208,9 +208,9 @@ function sessionUuidDoor(tools, name) {
   const schema = t.inputSchema || t.input_schema || {};
   const props = schema.properties || {};
   if (!props.session_uuid) return { ok: false, detail: `${name} has no session_uuid property` };
-  if (name === 'register_remote_session') {
+  if (name === 'register_code_session') {
     const req = schema.required || [];
-    if (!req.includes('session_uuid')) return { ok: false, detail: `${name}.session_uuid is optional — required for the 0.1.3 door` };
+    if (!req.includes('session_uuid')) return { ok: false, detail: `${name}.session_uuid is optional — required on the code door` };
   }
   return { ok: true, detail: `${name}.session_uuid listed` };
 }
@@ -235,7 +235,7 @@ if (!doors.length) {
       console.log(`    ✗ ${listed.error}`);
       continue;
     }
-    for (const name of ['whoami', 'register_remote_session']) {
+    for (const name of ['whoami', 'register_code_session']) {
       const gate = sessionUuidDoor(listed.tools, name);
       if (gate.ok) console.log(`    ✓ ${gate.detail}`);
       else {

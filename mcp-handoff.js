@@ -84,7 +84,7 @@ function refreshCore() {
          * re-asserts (anthropics/claude-code#56933), and the installed .md said elsewhere that
          * it sets the NATIVE display name, which register_session cannot do: it only reads
          * native's registry and adopts the name. Both promises are gone. */
-        `The user said "You will be $ARGUMENTS" or /name. Call register_session with title: $ARGUMENTS, nickname: $ARGUMENTS. Chat/cowork/design: also pass surface, subscription and model_slug — incomplete enrolment is refused; do not invent those fields. Not a web search. PROTOCOL title only — it does NOT set Claude Code's native display name or the terminal tab. If the two names differ, say both. Empty → whoami.\n`,
+        `The user said "You will be $ARGUMENTS" or /name. Chat/cowork/design: register_chat_session (surface, title, nickname, subscription, model_slug). A machine: register_code_session (title, device=os.hostname(), session_uuid, subscription, model_slug). Do not invent product fields. Do not call register_session. PROTOCOL title only — not the native tab. Empty → whoami.\n`,
       'whoami.md':
         `---\ndescription: Which session is this, and what is it called?\n---\n${MARK}\n` +
         `Call whoami and relay the single line verbatim. If it says the terminal has no name yet, offer: /name <one word>. If it says INCOMPLETE, re-register with the named fields; do not invent them.\n`,

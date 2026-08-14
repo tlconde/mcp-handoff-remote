@@ -179,21 +179,10 @@ const TOOLS = [
   },
   {
     name: 'register_remote_session',
-    description: 'RETIRED as an enrolment verb. Use register_code_session. This name still exists so a cached tools/list is not a missing-tool 404 — the call is refused in one line.',
+    description: 'RETIRED. Use register_code_session. Cached clients still see this name so tools/list is not a 404. Any call is refused in one line. Do not fill arguments.',
     inputSchema: {
       type: 'object',
-      properties: {
-        title: { type: 'string', description: 'The name a human will address it by, one word if possible ("build").' },
-        device: { type: 'string', description: 'The machine it runs on ("second-laptop"). Required: it is the dedup key on reconnect and the host whose agent answers for reachability.' },
-        session_uuid: { type: 'string', description: 'REQUIRED. The client product\'s own conversation id (Grok session id, Claude CLI uuid, Gemini session id). The store record id becomes sess_code_<this>. Pass the product id or the full sess_code_<id>. Do not invent a ULID.' },
-        subscription: { type: 'string', description: 'REQUIRED. Product account this seat is running as — one word (grok, cursor, claude, copilot, chatgpt, gemini, codex). Not the title, not the lane, not a credential. Asserted: the store does not verify billing. Cursor-on-Claude is subscription "cursor" with a Claude model_slug.' },
-        model_slug: { type: 'string', description: 'REQUIRED. Model serving this seat right now (grok-4.6, claude-opus-4-6). Letters, digits, dot, hyphen, underscore. Spaces refused. Refreshable: re-register updates the slug, does not mint a second record.' },
-        install_id: { type: 'string', description: 'Optional product install id (Grok ~/.grok/agent_id). Shared by every seat on that install. Logs only — never a session uuid, never a drain key.' },
-        succeeds: { type: 'string', description: 'Optional. Adopt an older record id this seat is continuing (e.g. a store-minted sess_code_ULID). Append-only; the old id walks forward.' },
-        adoption_evidence: { type: 'string', description: 'One sentence on why this is the same seat. Optional.' },
-        role: { type: 'string', description: 'Optional role/lane label discriminating sessions on one device ("build", "ux"). Not the product — that is subscription.' }
-      },
-      required: ['title', 'device', 'session_uuid', 'subscription', 'model_slug'],
+      properties: {},
       additionalProperties: false
     }
   },
@@ -386,31 +375,11 @@ const TOOLS = [
   },
   {
     name: 'register_session',
-    description: 'RETIRED as an enrolment verb. Use register_chat_session or register_code_session. This name still exists so a cached tools/list is not a missing-tool 404 — the call is refused in one line.',
+    description: 'RETIRED. Use register_chat_session (grok.com / claude.ai / Claude chat) or register_code_session (a machine). Cached clients still see this name so tools/list is not a 404. Any call is refused in one line. Do not fill arguments.',
     inputSchema: {
       type: 'object',
-      properties: {
-        cli_uuid: { type: 'string', description: 'REQUIRED when calling over the relay from another machine, and meaningless locally. This tool runs on the STORE HOST, so it cannot see your CLAUDE_CODE_SESSION_ID however correctly it is set — pass it and the record is keyed to your seat instead of being refused. The claim is ASSERTED, recorded as evidence_class "cli-uuid-asserted-by-peer-mount": your process verified it, this store did not watch it happen, and I2 keeps those apart. Without it a remote caller is refused rather than given an anonymous record.' },
-        cli_pid: { type: 'number', description: 'Optional, alongside cli_uuid: your process id, so a contested uuid can be resolved by fact rather than by preference.' },
-        cwd: { type: 'string', description: 'Optional, alongside cli_uuid: your working directory, for the record\'s display and for the cwd-mismatch check.' },
-        host: { type: 'string', description: 'Optional, alongside cli_uuid: your machine\'s os.hostname(), so the record declares the device that owns it.' },
-        surface: { type: 'string', enum: ['chat', 'cowork', 'design'], description: 'Required when THIS seat is chat, cowork, or design. Omit on a code terminal. Enrols on (account, surface, title). Same title refreshes. Reply session_id IS this conversation.' },
-        title: { type: 'string', description: 'Human title for this session\'s record. Optional for a terminal; REQUIRED when `surface` is given, where it is the conversation\'s own title and half of the dedup key.' },
-        role: { type: 'string', description: 'Role/lane label discriminating same-repo sessions: "build", "flow tests", "ux", free text. Optional; empty string clears it.' },
-        subscription: { type: 'string', description: 'Product account (grok, cursor, claude). One word. REQUIRED with nickname and model_slug when surface is chat/cowork/design — incomplete enrolment is refused. Optional on a local code seat so it may omit rather than invent. Empty string clears. Asserted, never a drain key.' },
-        model_slug: { type: 'string', description: 'Serving-model slug (grok-4.6). REQUIRED with subscription when surface is chat/cowork/design. Optional on a local code seat. Refreshable. Empty string clears. Spaces refused.' },
-        nickname: { type: 'string', description: 'ONE WORD a human can type from memory to address this record — the recovery path for the first call after context is lost, when the model no longer knows which session it is. Unique per surface and REFUSED AT SET TIME if another live record on this surface holds it, because a collision found at use time is found by someone who has already lost their identity. A refusal names the holder and leaves your registration intact. Empty string clears it. Letters, digits, hyphen, underscore only: a name that needs quoting is not one you type under pressure.' },
-        succeeds: { type: 'string', description: 'ADOPT A THREAD: the session_id of an older record whose conversation this session is continuing — typically a record left behind when this terminal fragmented across /clear, so the thread and the live binding ended up apart. Append-only: nothing is overwritten or archived, the old record keeps its history and gains superseded_by, and sends addressed to it resolve through to this one. Pass ONLY an id you already hold from your own context; provenance is ASSERTED, never CLI-verified (I12). There is deliberately no way to search for one.' },
-        adoption_evidence: { type: 'string', description: 'One sentence on why you know this is your thread. Recorded verbatim on the adoption event. Optional.' }
-      },
-      additionalProperties: false,
-      if: {
-        properties: { surface: { enum: ['chat', 'cowork', 'design'] } },
-        required: ['surface']
-      },
-      then: {
-        required: ['title', 'nickname', 'subscription', 'model_slug']
-      }
+      properties: {},
+      additionalProperties: false
     }
   },
   {

@@ -141,6 +141,10 @@ git log --all -p \
 
 git rev-list --all -- mcp-roundtrip-evals/ | wc -l                          # must be 0
 git rev-list --all -- docs-seed/ | wc -l                                    # must be 0
+git rev-list --all -- DEBUG-LOG.md | wc -l                                  # must be 0
+
+# 4. GITHUB REMOTE REFS CHECK — verify no hidden pull request heads retain old objects
+git ls-remote origin 'refs/pull/*'                                          # must be EMPTY
 ```
 
 **Why the exclusion exists, and why it is not a loophole.** The gate's purpose is *no real record
@@ -155,6 +159,23 @@ able to fail: any *other* id-shaped string still trips it.
 An empty result is the only acceptable outcome. A count that merely went down means the operation
 half-worked, which is worse than not having run it, because the gate will read as passed.
 
+## The GitHub pull-ref and cached-object trap
+
+**Measured 2026-08-14:** Even after force-pushing rewritten branches and deleting leftover remote
+branch heads, GitHub retains pre-rewrite commits under `refs/pull/*/head` and serves loose objects
+by pre-rewrite commit SHA. `refs/pull/*` refs are read-only to git clients (`deny updating a hidden
+ref`, HTTP 422), so a client-side force-push cannot clear them.
+
+A default clone checks out only heads and tags, so local greps appear 100% clean while fetching
+`refs/pull/*` from origin restores the pre-scrub commits and leaks.
+
+**Closure requires one of two paths:**
+
+1. **GitHub Support purge**: Request GitHub Support to purge unreachable cached objects and
+   remove `refs/pull/{1,2,3}/head` on the repository.
+2. **Fresh publishable repository**: Push only rewritten `main` and release tags to a brand new
+   repository that never had those PRs, update URLs in `plugin.json`, and archive the original repo.
+
 ## After
 
 - Force-push the rewritten history, then have every clone re-clone. A `git pull` onto rewritten
@@ -162,7 +183,8 @@ half-worked, which is worse than not having run it, because the gate will read a
 - Every commit sha changes. Anything that cites a sha — ADRs, `AGENTS.md`, board events, commit
   messages quoting other commits — now points at nothing. Budget for that: it is documentation
   work, not a side effect that resolves itself.
-- Re-run the gate greps once more on a clone taken after the force-push.
+- Re-run the gate greps once more on a clone taken after the force-push, including the
+  `git ls-remote origin 'refs/pull/*'` check.
 
 ## The alternative that avoids all of this
 

@@ -112,6 +112,9 @@ check runs:
 ```bash
 git clone <repo> /tmp/pubcheck && cd /tmp/pubcheck
 git log --all -p | grep -nE "sess_[a-z]*_?[0-9A-HJKMNP-TV-Z]{20,}" | head   # must be empty
+
+# Remote refs check: verify no read-only pull refs advertise pre-rewrite objects
+git ls-remote origin 'refs/pull/*'                                         # must be empty
 ```
 
 Notebook path parameterized — the doc carries no private repo names; the values live in
@@ -121,13 +124,19 @@ A repo that is clean at HEAD and dirty in history is not clean. This paragraph e
 tracked-file breach was found by a commissioned sweep, not by the check — a `.gitignore` entry is a
 promise about tomorrow and says nothing about what already shipped.
 
+**The pull-ref and cached-object trap (measured 2026-08-14):** Even after a successful history scrub
+and force-push of rewritten heads, GitHub continues to serve pre-rewrite commits under
+`refs/pull/*/head` and by commit SHA. Those refs are read-only to git clients (`deny updating a hidden ref`,
+HTTP 422). A fresh default clone appears clean while fetching `refs/pull/*` resurrects the leaks.
+Closing the gate fully requires either a GitHub Support purge of cached objects and pull refs, or
+publishing from a fresh repository.
+
 **The gate is not theoretical, and the residue has a number.** Measured 2026-08-10 at `9a73a84`:
 `mcp-roundtrip-evals/` appears in **5** commits, `docs-seed/` in **5**, and the `sess_`-class
-pattern matches **25** times across `git log --all -p`. Two untracking commits have now moved the
-tip without moving any of that. The procedure — preconditions, the `git-filter-repo` commands,
-and the fresh-clone verification that must come back EMPTY rather than merely smaller — is written
-out in [`docs/runbooks/history-scrub.md`](docs/runbooks/history-scrub.md). It is prepared and
-deliberately NOT performed: the decision and the command are the operator's.
+pattern matches **25** times across `git log --all -p`. Two untracking commits moved the tip without
+moving any of that. The procedure — preconditions, the `git-filter-repo` commands, and the
+verification that must come back EMPTY rather than merely smaller — is written out in
+[`docs/runbooks/history-scrub.md`](docs/runbooks/history-scrub.md).
 
 ## Delivery symptoms: read the delta series BEFORE theorising
 

@@ -10,50 +10,51 @@ Requirements: Node 18+, macOS or Linux. Zero npm dependencies — the whole thin
 
 ## Tier 1 — local only (start here)
 
-No tunnel, no cloud account, no third party, no network surface at all. Claude Code talks to
-the server over stdio on your own machine.
+No tunnel, no cloud account, no third party, no network surface at all. The **MCP host**
+(Grok Build, Cursor, Claude Code, a Cloud Agent) spawns `node mcp-handoff.js` over **stdio**
+per connection. There is no `start` service.
 
-**Install it as a plugin — this is the supported route:**
+**The contract** is `mcp.json`: `command` `node`, `args` `[mcp-handoff.js]`. Point your host
+at that. One mount per seat. On the machine that *hosts* the store, do not also add the
+HTTP relay — that is three copies of the same 27 tools.
+
+```bash
+git clone https://github.com/<owner>/handoff-remote.git
+cd handoff-remote
+# then add a stdio MCP in your host, equivalent to:
+#   node /absolute/path/to/mcp-handoff.js
+```
+
+Examples (same process, different host UI):
+
+| Host | How you add the stdio server |
+|---|---|
+| Grok Build | `/mcps` → add, or `~/.grok/config.toml` `[mcp_servers.handoff]` `command` / `args` |
+| Cursor (desktop or Cloud Agent) | MCP settings / `.cursor/mcp.json`: `command` `node`, `args` `[…/mcp-handoff.js]` |
+| Claude Code | `claude mcp add --scope user handoff -- node "$PWD/mcp-handoff.js"` |
+
+Cloud Agents are **code** seats (`register_code_session`). They are clients, not a second
+store: scratch `HANDOFF_HOME`, or `HANDOFF_ROLE=client` plus the home URL. `device` is
+`os.hostname()` of that VM — do not invent a product name as a host.
+
+**Claude Code plugin** (optional packaging for that host only — hook + wake agent as one
+versioned unit):
 
 ```bash
 claude plugin marketplace add <owner>/handoff-remote
 claude plugin install handoff@handoff
 ```
 
-That is the whole install. It brings the MCP server, the session-start hook and the wake agent
-together as one versioned unit, and `claude plugin update handoff@handoff` is how you get
-changes afterwards.
+`node bin/build-plugin-manifests.js` only regenerates `.claude-plugin/*`. Other hosts do not
+need it to run the bridge.
 
-> **While this repo is private**, both commands need a git that can already authenticate to it —
-> the plugin CLI shells out to `git clone`, so it inherits your credential helper and nothing
-> else. Measured 2026-08-10: with credentials present the two commands succeed and the plugin
-> reports `0.1.1, enabled`; from an environment with no credential helper the clone fails with
-> *"Could not read from remote repository"* before the marketplace is ever read. **If you are not
-> a collaborator on a private copy, use the manual path below until the repo is public.**
+> **While this repo is private**, clone/plugin commands need a git that can already
+> authenticate. Measured 2026-08-10: with credentials the Claude plugin install reports
+> `0.1.1, enabled`; without a helper the clone fails before the marketplace is read.
 
-<details>
-<summary><b>Manual install</b> — the same thing by hand, for development or when the plugin route is unavailable</summary>
-
-```bash
-git clone https://github.com/<owner>/handoff-remote.git
-cd handoff-remote
-claude mcp add --scope user handoff -- node "$PWD/mcp-handoff.js"
-```
-
-This wires the MCP server only. The session-start hook and the wake agent are yours to run
-directly (`node bin/handoff-wake-agent.js`), which the plugin would otherwise manage for you.
-
-</details>
-
-Check it:
-
-```bash
-claude
-# then, in the session:
-/mcp        # handoff should be listed and connected
-```
-
-That is the whole install. The store is created at `~/.claude-handoff/` on first use.
+Check it: your host lists a connected `handoff` server; `tools/list` is 27 tools. The store
+is created at `~/.claude-handoff/` on first **host** use (a client with `HANDOFF_HOME` or
+`HANDOFF_ROLE=client` does not create one here).
 
 **Name any seat** by typing this in that conversation:
 
@@ -61,7 +62,10 @@ That is the whole install. The store is created at `~/.claude-handoff/` on first
 You will be Chad
 ```
 
-or `Register this chat as Chad`. One word. A chat seat calls `register_chat_session` with that name plus the product (`subscription`) and serving model (`model_slug`). A machine calls `register_code_session`. `/name` and `/onboard` do the same. A seat that omits those fields is refused, not half-enrolled.
+or `Register this chat as Chad`. One word. grok.com / claude.ai / Claude chat call
+`register_chat_session`. A machine (this laptop, a Cloud Agent) calls
+`register_code_session`. `/name` and `/onboard` do the same. A seat that omits required
+fields is refused, not half-enrolled.
 
 
 **Optional — the background daemon.** One process serving every terminal, so sessions can
@@ -120,10 +124,10 @@ And one you choose:
 
 | value | environment variable |
 |---|---|
-| Your MCP URL, **exactly as you will type it into Claude** | `HANDOFF_RELAY_RESOURCE` |
+| Your MCP URL, **exactly as you will type it into the MCP host** | `HANDOFF_RELAY_RESOURCE` |
 
 > **`HANDOFF_RELAY_RESOURCE` must match character for character, path included.** If you type
-> `https://mcp.example.com/mcp` into Claude, this must be `https://mcp.example.com/mcp` — not
+> `https://mcp.example.com/mcp` into the host, this must be `https://mcp.example.com/mcp` — not
 > the bare origin. A mismatch does not fail where you made it; it surfaces later as "Couldn't
 > reach the MCP server" with your identity provider seeing no traffic at all. The relay warns
 > at startup if this looks wrong.
@@ -131,9 +135,10 @@ And one you choose:
 **Redirect URIs to allow:**
 
 ```
-https://claude.ai/api/mcp/auth_callback     # Claude.ai web, Desktop, mobile
-http://localhost/callback                    # Claude Code (port must be ignored)
-http://127.0.0.1/callback                    # Claude Code (RFC 8252)
+https://claude.ai/api/mcp/auth_callback              # Claude.ai web, Desktop, mobile
+http://localhost/callback                             # Claude Code (port must be ignored)
+http://127.0.0.1/callback                             # Claude Code (RFC 8252)
+https://grok.com/connectors-oauth-exchange-code/      # grok.com connector
 ```
 
 Claude Code binds a random port per session, so your provider must match those two loopback
@@ -175,8 +180,9 @@ POST https://mcp.example.com/mcp       → 401 with a WWW-Authenticate header
 **If `/mcp` ever answers `200` without a token, stop and take the tunnel down.** That is the
 one result that means something is wrong.
 
-### 5. Connect Claude
+### 5. Connect a remote host
 
+- **grok.com:** add the connector at the same MCP URL. Keep the grok.com redirect URI above.
 - **claude.ai / Desktop / mobile:** Settings → Connectors → Add custom connector → your MCP
   URL. Leave the OAuth fields blank if your provider supports dynamic client registration.
 - **Claude Code, on another machine:**
@@ -184,6 +190,8 @@ one result that means something is wrong.
   claude mcp add --transport http --scope user handoff-remote https://mcp.example.com/mcp
   ```
   Then `/mcp` in a session to authenticate.
+- **Grok Build / Cursor on another machine:** add an HTTP MCP at the same URL (not a second
+  stdio copy of the home store).
 
 > On the machine that *hosts* the store, keep using the tier-1 stdio server. It is a unix
 > socket instead of a round trip through the internet — faster, and it works offline. And give
@@ -203,7 +211,7 @@ owner who could offer it safely, not as something this project will ship.
 ## Uninstall
 
 ```bash
-claude mcp remove handoff
+# remove the stdio (or HTTP) server in your MCP host — name may be handoff / handoff-store / handoff-remote
 deploy/install.sh --uninstall     # if you installed the daemon
 rm -rf ~/.claude-handoff          # deletes your store — this is your data, so read it first
 ```

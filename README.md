@@ -1,6 +1,6 @@
 # handoff-remote
 
-Move a conversation between Claude surfaces without losing what it knew.
+Move work between seats — chat or code, Claude or Grok — without losing what it knew.
 
 You are deep in a chat, and the work needs a terminal. Today you paste a summary and hope. The
 next session starts cold, re-asks what you already decided, and quietly drops the constraint
@@ -15,16 +15,9 @@ which hops are trusted.
 
 ## Install
 
-Start at tier 1 — no network surface at all:
-
-```bash
-claude plugin marketplace add <owner>/handoff-remote
-claude plugin install handoff@handoff
-```
-
-That is the whole install: MCP server, session-start hook and wake agent as one versioned unit.
-While this repo is private the commands need a git that can already authenticate to it — see
-[INSTALL.md](INSTALL.md) for the manual path and the details.
+Start at tier 1 — no network surface at all. Clone the repo and add a **stdio** MCP in your
+host (`node …/mcp-handoff.js`). That is the contract. Claude Code can also install it as a
+plugin; Cursor and Grok Build mount the same file. See [INSTALL.md](INSTALL.md).
 
 Full guide, including remote access from your phone or a second laptop: [INSTALL.md](INSTALL.md).
 

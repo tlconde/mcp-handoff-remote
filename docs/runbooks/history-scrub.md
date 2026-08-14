@@ -1,8 +1,13 @@
 # Runbook — history scrub before publication
 
-**Status:** prepared, NOT performed. Performing it is the operator's decision and the operator's
-command. This document exists so that decision costs one command rather than an afternoon of
-research.
+**Status:** operator performed the rewrite and public flip on 2026-08-14. A default
+`git clone` of origin (heads + tags only) now passes the path and `sess_` greps
+below. That is not the whole gate. GitHub still advertises `refs/pull/*/head`
+from PRs opened against the pre-rewrite DAG, those refs are client-undeletable,
+and fetching them — or fetching a pre-rewrite commit by SHA — still serves
+`mcp-roundtrip-evals/`, `docs-seed/`, `DEBUG-LOG.md`, and real record ids.
+Closing that residue is GitHub Support (purge cached objects and pull refs) or
+publishing from a new repository that never had those PRs. See **After**.
 
 ## Why this exists
 
@@ -101,8 +106,26 @@ shape.
 history of this very runbook, which survives the scrub by design. The 8 `REDACTED` markers are
 where they were.
 
-**What is still NOT proven:** the force-push, the re-clone by every machine, and the post-push
-re-verification. Those touch the real remote and are the operator's to run.
+**What the 2026-08-14 origin check proved, and what it did not.** Re-measured
+independently on a fresh clone of GitHub origin after the force-push and the
+visibility flip:
+
+| check | required | default clone | after `git fetch origin refs/pull/*/head` |
+|---|---|---|---|
+| `mcp-roundtrip-evals/` commits | 0 | **0** | **5** |
+| `docs-seed/` commits | 0 | **0** | **5** |
+| `DEBUG-LOG.md` commits | 0 | **0** | **16** |
+| real `sess_` lines (fixture excluded) | empty | **empty** | **non-empty** |
+| `REDACTED-SESSION-ID` | > 0 | **10** | (not the question) |
+| all-zeros fixture | preserved | **9** | (not the question) |
+
+The default-clone column is what this runbook's verification block used to
+measure, and it is why a PASS table can be true and still leave the leak
+fetchable. `git ls-remote origin 'refs/pull/*'` still listed three pull heads;
+`git push origin --delete refs/pull/N/head` is rejected (`deny updating a hidden
+ref`); `DELETE /git/refs/pull/N/head` returns `422 refs/pull/* is read-only`.
+GitHub's commit and contents APIs still resolve pre-rewrite SHAs, including a
+tree that lists `mcp-roundtrip-evals/`. Do not paste those SHAs here.
 
 ## The operation
 
@@ -163,9 +186,28 @@ half-worked, which is worse than not having run it, because the gate will read a
   messages quoting other commits — now points at nothing. Budget for that: it is documentation
   work, not a side effect that resolves itself.
 - Re-run the gate greps once more on a clone taken after the force-push.
+- **Also fetch what GitHub still advertises besides `main`.** A default clone
+  does not take `refs/pull/*`, so `git log --all` on that clone is silent about
+  pull-request heads. Measure them:
+
+  ```bash
+  git ls-remote origin 'refs/pull/*' 'refs/heads/*' 'refs/tags/*'
+  # if any pull heads exist, fetch them into a throwaway clone and re-run the
+  # path and sess_ greps against --all. Required: still 0 / 0 / empty.
+  ```
+
+  Deleting leftover *branch* heads (`refs/heads/cursor/…`) is necessary and not
+  sufficient. GitHub keeps `refs/pull/N/head` after the branch is deleted, and
+  the client cannot delete those refs. GitHub Support has to purge them — the
+  same ticket that asks for a cache purge after a public history rewrite. Until
+  that ticket lands, or until the public artifact is a new repository that never
+  had those PRs, anyone who fetches a pull head or a pre-rewrite SHA still gets
+  the old DAG.
 
 ## The alternative that avoids all of this
 
 Generating a public repo from this one (ADR-0002, rejected alternative 3) produces a tree with no
 history to scrub. If that model is chosen, this runbook is not executed — it is deleted, and the
-gate closes by construction rather than by operation.
+gate closes by construction rather than by operation. After a rewrite of a repo that already had
+PRs, it is also the remaining operator-controlled close for `refs/pull/*` residue: a new
+repository never advertises those heads.

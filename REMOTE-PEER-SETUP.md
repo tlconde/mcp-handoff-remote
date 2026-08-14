@@ -23,7 +23,7 @@ it. A remote peer never needs `deploy/install.sh`: there is no store on it to se
 > step, or when something misbehaves and you want to see where. Its value is that every expected
 > output below was captured from a real run rather than written from memory.
 >
-> **Plugin packaging has LANDED — version 0.1.1, and the one-liner is the shipped route:**
+> **Plugin packaging has LANDED, and the one-liner is the shipped route:**
 >
 > ```powershell
 > claude plugin marketplace add <owner>/handoff-remote
@@ -128,7 +128,7 @@ to `git clone` and inherits exactly these credentials:
 ```powershell
 claude plugin marketplace add <owner>/handoff-remote
 claude plugin install handoff@handoff
-claude plugin list                      # expect: handoff@handoff  0.1.26  enabled
+claude plugin list                      # expect: handoff@handoff  enabled  (version is plugin.json)
 ```
 
 Measured on macOS: with credentials present both commands succeed; from an environment with no

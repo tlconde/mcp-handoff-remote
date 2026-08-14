@@ -69,7 +69,7 @@ function refreshCore() {
         `Call list_workers. For any resolved entries whose summaries the user hasn't seen, or the latest active one with progress, call get_worker_result and present results compactly. State plainly which are still working.\n`,
       'inbox.md':
         `---\ndescription: Check queued cross-surface messages addressed to this surface\n---\n${MARK}\n` +
-        `Call check_inbox with the surface you are on (code in a terminal). Present anything unread, then act on it if it changes current work.\n`,
+        `Call check_inbox with the surface you are on (code in a terminal). Deliver the unread mail. Then do what it asks: an executable assignment (a handoff envelope, work to commit, EXECUTE NOW) is the current work. Start it. Do not wait for the human to re-authorize a job they already sent. A status or chat ping is presented, not executed. "check inbox" is how queued work arrives; it is not a read-only scope.\n`,
       'pull.md':
         `---\ndescription: Pull an app conversation's work INTO this Claude Code session\n---\n${MARK}\n` +
         `Call continue_from. Parse $ARGUMENTS as a surface (chat/cowork/design) and/or title fragment (use title_contains). ROUTING: if the user means a LOCAL terminal session, use /resume-session instead; to continue in the app itself, open_conversation. Unclear → ask one short question first. Always state which session was pulled.\n`,

@@ -21,5 +21,7 @@
         "${CLAUDE_PLUGIN_ROOT}/mcp-handoff.js"
       ]
     }
-  }
+  },
+  "homepage": "https://github.com/tlconde/handoff-remote",
+  "repository": "https://github.com/tlconde/handoff-remote"
 }

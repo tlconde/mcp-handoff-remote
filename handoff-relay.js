@@ -69,13 +69,13 @@ const AUDIENCE = process.env.HANDOFF_RELAY_AUDIENCE || null;
  * one, which is precisely how a confused-deputy attack gets in. */
 function protectedResourceMetadata() {
   /* resource_documentation is a public address, same class as plugin.json homepage
-   * and repository: omitted while the repo is private so a GitHub handle never ships
-   * in runtime. Add it in the same publication edit as those fields. */
+   * and repository — keep the three in lockstep. */
   return {
     resource: RESOURCE,
     authorization_servers: AS_ISSUER ? [AS_ISSUER] : [],
     bearer_methods_supported: ['header'],
-    scopes_supported: ['handoff.read', 'handoff.write']
+    scopes_supported: ['handoff.read', 'handoff.write'],
+    resource_documentation: 'https://github.com/tlconde/handoff-remote'
   };
 }
 

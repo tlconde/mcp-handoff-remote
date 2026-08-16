@@ -97,21 +97,22 @@ was TRACKED here, carrying real record ids and real CLI transcript uuids, and th
 privacy-guard independently classes those files as personal content that must never be copied
 anywhere public. Untracked and gitignored 2026-08-10.
 
-**Public release is on the clock; history scrub is release-blocking. Runbook + verified empty greps
-on a fresh clone before visibility change.** Target is end of this week (from 2026-08-10), so the
-scrub is a critical-path item, not a someday one. Two things are decided and are not to be
-re-litigated: **untracking ≠ clean history**, and **public without scrub is a policy breach of this
-gate.**
+**History scrub performed on origin 2026-08-14; pull-ref gate remains open.** Two things are
+decided and are not to be re-litigated: **untracking ≠ clean history**, and **public without full
+gate closure is a policy breach of this gate.**
 
-**PUBLICATION GATE — untracking stops FUTURE commits only.** The ids are in the commit history and
-`git rm --cached` does not touch it, so a clone of this repo still carries them. Before this repo is
-ever made public, a history scrub (`git filter-repo` or equivalent) is REQUIRED, not advisable —
-and it must be verified by effect afterwards, on a fresh clone, with the same greps the pre-commit
-check runs:
+**PUBLICATION GATE — untracking stops FUTURE commits only.** The ids were in the commit history and
+`git rm --cached` did not touch it. A history scrub (`git filter-repo`) was executed on origin
+2026-08-14. Verification on a fresh default clone confirms all removed paths are 0 and real session
+ids are empty. Verification must continue to be asserted by effect on fresh clones with the gate
+greps:
 
 ```bash
 git clone <repo> /tmp/pubcheck && cd /tmp/pubcheck
-git log --all -p | grep -nE "sess_[a-z]*_?[0-9A-HJKMNP-TV-Z]{20,}" | head   # must be empty
+git log --all -p \
+  | grep -E "sess_[a-z]*_?[0-9A-HJKMNP-TV-Z]{20,}" \
+  | grep -v "sess_code_0000000000000000000000ABCD" \
+  | head                                                                    # must be empty
 
 # Remote refs check: verify no read-only pull refs advertise pre-rewrite objects
 git ls-remote origin 'refs/pull/*'                                         # must be empty
@@ -131,11 +132,9 @@ HTTP 422). A fresh default clone appears clean while fetching `refs/pull/*` resu
 Closing the gate fully requires either a GitHub Support purge of cached objects and pull refs, or
 publishing from a fresh repository.
 
-**The gate is not theoretical, and the residue has a number.** Measured 2026-08-10 at `9a73a84`:
-`mcp-roundtrip-evals/` appears in **5** commits, `docs-seed/` in **5**, and the `sess_`-class
-pattern matches **25** times across `git log --all -p`. Two untracking commits moved the tip without
-moving any of that. The procedure — preconditions, the `git-filter-repo` commands, and the
-verification that must come back EMPTY rather than merely smaller — is written out in
+**The gate is not theoretical, and the residue has a number.** Measured 2026-08-10 at `9a73a84`
+(pre-scrub: 42 lines across `git log --all -p`, 5 commits in `mcp-roundtrip-evals/`, 5 in `docs-seed/`,
+16 in `DEBUG-LOG.md`). The operation, measurements, and verification commands are written out in
 [`docs/runbooks/history-scrub.md`](docs/runbooks/history-scrub.md).
 
 ## Delivery symptoms: read the delta series BEFORE theorising

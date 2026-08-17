@@ -38,12 +38,34 @@ Examples (same process, different host UI):
 | Host | How you add the stdio server |
 |---|---|
 | Grok Build | `/mcps` → add, or `~/.grok/config.toml` `[mcp_servers.handoff]` `command` / `args` |
-| Cursor (desktop or Cloud Agent) | MCP settings / `.cursor/mcp.json`: `command` `node`, `args` `[…/mcp-handoff.js]` |
+| Cursor (desktop) | `~/.cursor/mcp.json` (all projects) or `.cursor/mcp.json` (one project) — snippet below |
 | Claude Code | `claude mcp add --scope user handoff -- node "$PWD/mcp-handoff.js"` |
+
+**Cursor, the exact file** (Cursor also exposes this as Settings → MCP, which writes the same
+JSON). Use an **absolute path to node** — a GUI app does not inherit your shell's PATH, and
+`command: "node"` failing to resolve looks like a dead server, not a path problem:
+
+```json
+{
+  "mcpServers": {
+    "handoff": {
+      "command": "/opt/homebrew/bin/node",
+      "args": ["/absolute/path/to/handoff-remote/mcp-handoff.js"]
+    }
+  }
+}
+```
 
 Cloud Agents are **code** seats (`register_code_session`). They are clients, not a second
 store: scratch `HANDOFF_HOME`, or `HANDOFF_ROLE=client` plus the home URL. `device` is
 `os.hostname()` of that VM — do not invent a product name as a host.
+
+**Cursor Cloud Agent** is the one Cursor case the stdio snippet above does NOT cover: the
+agent runs on a VM that cannot see your home store's filesystem, so it takes **Door B** — add
+the remote MCP URL (tier 2) in the dashboard's MCP settings and authenticate through your
+identity provider. A sandboxed **Door A** on that VM (clone + stdio + scratch `HANDOFF_HOME`)
+is also legitimate, but that is a second, empty store for experiments — it is a stand-in for
+a new laptop, not a window onto your conversations.
 
 **Claude Code plugin** (optional packaging for that host only — hook + wake agent as one
 versioned unit):

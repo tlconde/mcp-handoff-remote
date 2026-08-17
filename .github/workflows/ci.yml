@@ -1,0 +1,50 @@
+# CI runs exactly the surface this repo SHIPS — nothing imported from the lab lane.
+# ADR-0002: proofs live in the notebook; the four platform-sensitive smokes are the
+# exception that ships, so they are the tests that run here. The repo's own history is
+# the reason this file exists: four source-level assertions stayed green for a day while
+# the stale-exit guard was inert, and no automated run existed to notice.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  shipped-surface:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+      # Syntax sweep: every shipped JS file must parse. Cheapest possible tripwire.
+      - name: syntax sweep
+        shell: bash
+        run: |
+          set -e
+          for f in $(git ls-files '*.js'); do node --check "$f"; done
+      # Generated manifests must match their source — hand edits fail here, not at install.
+      - name: manifests match source
+        run: node bin/build-plugin-manifests.js --check
+      # Every documented setting is read, and read after the loader runs.
+      - name: settings drift
+        run: node bin/settings-drift-check.js
+      # The four platform-sensitive smokes (ADR-0002 amendment): wake, notify,
+      # capability-probe, role. They self-isolate via HANDOFF_HOME and injected seams,
+      # which is what lets the SAME suite answer differently per OS — the reason the
+      # matrix above has three rows.
+      - name: capability-probe smoke
+        run: node capability-probe-smoke.js
+      - name: role smoke
+        run: node role-smoke.js
+      - name: notify smoke
+        run: node notify-smoke.js
+      - name: wake smoke
+        run: node wake-smoke.js
+      # Both OS profiles of the wake tier, run through injected seams regardless of the
+      # runner's own OS — plus the declaration check that every shipped suite names its needs.
+      - name: platform parity
+        run: node bin/platform-parity-check.js

@@ -2013,9 +2013,19 @@ async function handleApi(method, p, query, b) {
        * ULID in place and never mint sess_<surface>_<client-uuid> — the live Falcon/Luke defect. */
       /* Retired records are excluded here for the same reason as the claude-code arm below:
        * refreshing one is resurrection. If the retired record still holds the uuid-derived id,
-       * the fresh mint takes a ULID id rather than erasing an ended record's history. */
+       * the fresh mint takes a ULID id rather than erasing an ended record's history.
+       *
+       * THE BINDING IS SEARCHED BEFORE THE ID. After a pid-heal, a thread record's id keeps
+       * the uuid it was born under while its BINDING carries the current one — so naming a
+       * seat by its current uuid found no record by id and MINTED A PARALLEL, bindingless
+       * namesake that then shadowed the live thread in resolution (measured 2026-08-17,
+       * 20:28:55: a named seat's send fell to "stored, no agent claimed" while the live
+       * thread sat one lookup away). The binding is inspectable-here truth; the id is
+       * history. Same match rule the tools layer has always used (native_ref.session_id). */
       let s = parsed
-        ? Object.values(db.sessions).find(x => !x.archived && !x.retired && x.id === parsed.id)
+        ? (Object.values(db.sessions).find(x => !x.archived && !x.retired &&
+            x.native_ref && x.native_ref.kind === 'claude-code' && x.native_ref.session_id === parsed.part) ||
+           Object.values(db.sessions).find(x => !x.archived && !x.retired && x.id === parsed.id))
         : Object.values(db.sessions).find(x =>
           !x.archived && !x.retired && x.remote && x.remote.host === host && x.title === b.title);
       const minted = !s;

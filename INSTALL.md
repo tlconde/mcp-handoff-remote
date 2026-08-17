@@ -65,11 +65,8 @@ conversation id (no Claude resume/pid heal), no inbox drain, no invented title. 
 seat afterwards with `You will be <word>` / `/onboard`. Skipped on
 `cursor agent --resume`; not available on cloud agents.
 
-> **While this repo is private**, clone/plugin commands need a git that can already
-> authenticate. Measured 2026-08-10: with credentials the Claude plugin install reports
-> `0.1.1, enabled`; without a helper the clone fails before the marketplace is read.
-
-Check it: your host lists a connected `handoff` server; `tools/list` is 27 tools. The store
+Check it: your host lists a connected `handoff` server; `tools/list` is 27 tools. The
+installed plugin version should match the `version` field in [`plugin.json`](plugin.json). The store
 is created at `~/.claude-handoff/` on first **host** use (a client with `HANDOFF_HOME` or
 `HANDOFF_ROLE=client` does not create one here).
 

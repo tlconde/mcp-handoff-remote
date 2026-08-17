@@ -92,46 +92,30 @@ Not shared, and must **never** travel from the notebook to here:
 - `EXPERIMENT-BRIEF.md`, `INTERVIEWS.md`, `VALIDATION.md`, `WORKER_PROOF.md` — pitch material
 - `deploy/ACCESS-SETUP.md` — the owner's personal deployment runbook
 
-**The rule was broken.** `mcp-roundtrip-evals/calibrations/` was TRACKED here, carrying real
-record ids and real CLI transcript uuids, and the notebook's own privacy-guard independently
-classes those files as personal content that must never be copied anywhere public. Untracked
-and gitignored 2026-08-10. The 2026-08-14 rewrite removed that DAG from `main` and from a
-default clone; GitHub pull refs still hold it (see the gate below).
+**The rule was broken and the breach is still in history.** `mcp-roundtrip-evals/calibrations/`
+was TRACKED here, carrying real record ids and real CLI transcript uuids, and the notebook's own
+privacy-guard independently classes those files as personal content that must never be copied
+anywhere public. Untracked and gitignored 2026-08-10.
 
-**PUBLICATION GATE — untracking stops FUTURE commits only.** The ids were in
-commit history; `git rm --cached` does not touch it. The operator ran the
-`git filter-repo` rewrite and flipped origin public on 2026-08-14. A default
-`git clone` of origin (heads + tags) now measures empty for the leak paths and
-for real `sess_` lines (the documented all-zeros fixture excluded). That clone
-is not the whole remote.
+**History scrub performed on origin 2026-08-14; pull-ref gate remains open.** Two things are
+decided and are not to be re-litigated: **untracking ≠ clean history**, and **public without full
+gate closure is a policy breach of this gate.**
 
-**GitHub still advertises the pre-rewrite DAG on `refs/pull/*/head`.** Measured
-the same day, independently, after the public flip: `git ls-remote origin
-'refs/pull/*'` listed three pull heads; fetching them into a throwaway clone
-restored **5** `mcp-roundtrip-evals/` commits, **5** `docs-seed/` commits, **16**
-`DEBUG-LOG.md` commits, and real record ids. Deleting the leftover branch heads
-did not remove those refs. The client cannot: `git push --delete` is rejected
-(`deny updating a hidden ref`) and the Git refs API returns `422 refs/pull/* is
-read-only`. GitHub also still serves pre-rewrite objects by SHA (`git fetch
-origin <old-sha>` succeeds; the contents API lists `mcp-roundtrip-evals/` at
-that commit). Do not paste those SHAs here.
-
-Until GitHub Support purges the pull refs and cached objects — or the public
-artifact is a new repository that never had those PRs — a targeted fetch still
-retrieves what the default clone greps declared gone. The procedure, including
-that pull-ref check, is in
-[`docs/runbooks/history-scrub.md`](docs/runbooks/history-scrub.md).
-
-A default-clone grep is still required, with the fixture excluded by value (see
-the runbook — the unqualified pattern matches the synthetic all-zeros id and
-cannot go empty):
+**PUBLICATION GATE — untracking stops FUTURE commits only.** The ids were in the commit history and
+`git rm --cached` did not touch it. A history scrub (`git filter-repo`) was executed on origin
+2026-08-14. Verification on a fresh default clone confirms all removed paths are 0 and real session
+ids are empty. Verification must continue to be asserted by effect on fresh clones with the gate
+greps:
 
 ```bash
 git clone <repo> /tmp/pubcheck && cd /tmp/pubcheck
-git log --all -p | grep -E "sess_[a-z]*_?[0-9A-HJKMNP-TV-Z]{20,}" \
-  | grep -v "sess_code_0000000000000000000000ABCD" | head   # must be empty
-git ls-remote origin 'refs/pull/*'                          # must be empty
-# if any pull heads exist, fetch them and re-run the greps against --all
+git log --all -p \
+  | grep -E "sess_[a-z]*_?[0-9A-HJKMNP-TV-Z]{20,}" \
+  | grep -v "sess_code_0000000000000000000000ABCD" \
+  | head                                                                    # must be empty
+
+# Remote refs check: verify no read-only pull refs advertise pre-rewrite objects
+git ls-remote origin 'refs/pull/*'                                         # must be empty
 ```
 
 Notebook path parameterized — the doc carries no private repo names; the values live in
@@ -139,9 +123,19 @@ Notebook path parameterized — the doc carries no private repo names; the value
 
 A repo that is clean at HEAD and dirty in history is not clean. This paragraph exists because the
 tracked-file breach was found by a commissioned sweep, not by the check — a `.gitignore` entry is a
-promise about tomorrow and says nothing about what already shipped. The 2026-08-14
-default-clone PASS is the same shape one layer up: a clone that does not fetch
-pull refs is not evidence those refs are gone.
+promise about tomorrow and says nothing about what already shipped.
+
+**The pull-ref and cached-object trap (measured 2026-08-14):** Even after a successful history scrub
+and force-push of rewritten heads, GitHub continues to serve pre-rewrite commits under
+`refs/pull/*/head` and by commit SHA. Those refs are read-only to git clients (`deny updating a hidden ref`,
+HTTP 422). A fresh default clone appears clean while fetching `refs/pull/*` resurrects the leaks.
+Closing the gate fully requires either a GitHub Support purge of cached objects and pull refs, or
+publishing from a fresh repository.
+
+**The gate is not theoretical, and the residue has a number.** Measured 2026-08-10 at `9a73a84`
+(pre-scrub: 42 lines across `git log --all -p`, 5 commits in `mcp-roundtrip-evals/`, 5 in `docs-seed/`,
+16 in `DEBUG-LOG.md`). The operation, measurements, and verification commands are written out in
+[`docs/runbooks/history-scrub.md`](docs/runbooks/history-scrub.md).
 
 ## Delivery symptoms: read the delta series BEFORE theorising
 

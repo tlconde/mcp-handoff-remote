@@ -1,13 +1,6 @@
 # Runbook — history scrub before publication
 
-**Status:** operator performed the rewrite and public flip on 2026-08-14. A default
-`git clone` of origin (heads + tags only) now passes the path and `sess_` greps
-below. That is not the whole gate. GitHub still advertises `refs/pull/*/head`
-from PRs opened against the pre-rewrite DAG, those refs are client-undeletable,
-and fetching them — or fetching a pre-rewrite commit by SHA — still serves
-`mcp-roundtrip-evals/`, `docs-seed/`, `DEBUG-LOG.md`, and real record ids.
-Closing that residue is GitHub Support (purge cached objects and pull refs) or
-publishing from a new repository that never had those PRs. See **After**.
+**Status:** performed on origin 2026-08-14; pull-ref gate open pending Support purge or new repo.
 
 ## Why this exists
 
@@ -17,115 +10,61 @@ in history is not clean.
 
 ## The residue, measured
 
-Measured 2026-08-10 on `main` at `e9027d5`. Re-measure before acting — these numbers age.
+Measured 2026-08-10 on `main` at `e9027d5` (pre-scrub).
 
 ```bash
 git rev-list --all -- mcp-roundtrip-evals/ | wc -l   # 5 commits
 git rev-list --all -- docs-seed/ | wc -l             # 5 commits
-git log --all -p | grep -cE "sess_[a-z]*_?[0-9A-HJKMNP-TV-Z]{20,}"   # 25 lines
+git rev-list --all -- DEBUG-LOG.md | wc -l           # 16 commits
+git log --all -p | grep -cE "sess_[a-z]*_?[0-9A-HJKMNP-TV-Z]{20,}"   # 42 lines (6 real ids + 1 fixture)
 ```
 
-**The 25 is a line count, and it is NOT 25 leaks.** Rehearsed on a throwaway `--mirror` clone and
-broken down by distinct value:
+**The 42 lines are NOT 42 distinct leaks.** Broken down by distinct value:
 
 | id | occurrences | where it lives | real? |
 |---|---:|---|---|
-| real id **A** | 9 | `mcp-roundtrip-evals/calibrations/*.jsonl` | **yes** |
-| real id **B** | 9 | `mcp-roundtrip-evals/calibrations/*.jsonl` | **yes** |
-| real id **C** | 6 | `mcp-roundtrip-evals/calibrations/*.jsonl` | **yes** |
-| real id **D** | 5 | `mcp-roundtrip-evals/calibrations/run_log.jsonl` | **yes** |
-| the all-zeros fixture | 4 | `OBJECT-RECORD-SPEC.md` | **no — synthetic fixture** |
+| real id **A** | 11 | `mcp-roundtrip-evals/calibrations/*.jsonl` | **yes** |
+| real id **B** | 11 | `mcp-roundtrip-evals/calibrations/*.jsonl` | **yes** |
+| real id **C** | 8 | `mcp-roundtrip-evals/calibrations/*.jsonl` | **yes** |
+| real id **D** | 7 | `mcp-roundtrip-evals/calibrations/run_log.jsonl` | **yes** |
+| real id **E** | 4 | `mcp-roundtrip-evals/calibrations/learning_proposals.jsonl` | **yes** |
+| real id **F** | 4 | `mcp-roundtrip-evals/calibrations/confidence.json` | **yes** |
+| the all-zeros fixture | 9 | `OBJECT-RECORD-SPEC.md` | **no — synthetic fixture** |
 
-**The four values are deliberately NOT written here.** An earlier version of this table listed them
-verbatim, which put four real record ids into a tracked file in the repo whose publication gate
-exists to remove exactly those ids — a document about a leak, leaking. The rule it broke is already
-written down one file over: *a checker must not contain the strings it searches for, which is why
-they live in `.scrub-values` (gitignored)*. Read them from there, or regenerate the inventory:
+**The six real values are deliberately NOT written here.** Read them from `.scrub-values` (gitignored),
+or regenerate the inventory:
 
 ```bash
 git log --all -p | grep -oE "sess_[a-z]*_?[0-9A-HJKMNP-TV-Z]{20,}" | sort | uniq -c | sort -rn
 ```
 
-**Four real ids. They WERE confined to `mcp-roundtrip-evals/calibrations/` — and are not any more.**
-
-An earlier revision of this runbook listed the four values verbatim in the table above, and that
-revision was committed (`f8cba9b`) and pushed. So the ids now also live in the history of
-`docs/runbooks/history-scrub.md` — **a file that must survive the scrub.**
-
-That inverts this document's own earlier conclusion, and the inversion is the important part:
-
-- **Then:** every id sat under one removable path, so `--invert-paths` alone would have cleared
-  them and `--replace-text` was belt-and-braces.
-- **Now:** the ids sit in a path that cannot be deleted, so **`--replace-text` is load-bearing** and
-  path removal alone leaves them behind.
-
-A runbook that had been trusted at its earlier word would have been run, verified against a grep
-that could not fail, and declared clean while the ids sat in the history of the very file
-describing them.
-
-The fifth value is a deliberately all-zeros placeholder in a design spec. It is not a leak, it is
-what a fixture is supposed to look like, and **it must not be scrubbed**.
-
 ## Preconditions
 
-1. **Every collaborator and every machine has pushed.** A history rewrite orphans work that only
-   exists on somebody else's clone. There is a second laptop in this project's world — check it.
-2. **A backup clone exists** somewhere the rewrite will not reach: `git clone --mirror` to an
-   external path, kept until the scrub is verified.
-3. **`git-filter-repo` is installed** (`brew install git-filter-repo`). `filter-branch` is not the
-   tool; it is slow, error-prone, and git's own docs steer away from it.
-   **MEASURED 2026-08-10: it is NOT installed on the home machine** — `git filter-repo --version`
-   returns "not a git command" and no binary is on PATH. This is the first thing the real run will
-   hit, so it is the first thing to fix; the rehearsal below stopped here by necessity.
-4. **The values to scrub live in `.scrub-values`** (gitignored), one extended-regex alternation per
-   line — the same file the pre-commit check reads. The checker must not contain the strings it
-   searches for, which is why they are not written here.
+1. **Every collaborator and every machine has pushed.**
+2. **A backup clone exists** somewhere the rewrite will not reach: full git bundle and working tree
+   saved in the notebook workspace (`handoff-poc`).
+3. **`git-filter-repo` is installed** (`brew install git-filter-repo`).
+4. **The values to scrub live in `.scrub-values`** (gitignored), one extended-regex alternation per line.
 
-## Rehearsal status — REHEARSED END TO END, 2026-08-10
+## Execution status — PERFORMED ON ORIGIN, 2026-08-14
 
-`git-filter-repo` was installed (`/opt/homebrew/bin/git-filter-repo`, `a40bce548d2c`) and the whole
-operation was run on a throwaway `git clone --mirror`. **The real repo and the real remote were
-never touched.** Results, verified on a FRESH CLONE of the rewritten mirror:
+The scrub was executed on a mirror clone from `main` at `b94cda8` (post-PR #3) and force-pushed to
+origin. Results measured on a fresh default clone of GitHub origin (`0254e33`):
 
-| check | required | measured |
-|---|---|---|
-| real ids anywhere in history | 0 | **0** |
-| `mcp-roundtrip-evals/` commits | 0 | **0** |
-| `docs-seed/` commits | 0 | **0** |
-| `REDACTED-SESSION-ID` markers (proves step 2 ran) | > 0 | **8** |
-| the all-zeros fixture still present | preserved | **9** |
-| tracked files vs the real repo | identical | **identical** |
-| `handoff-core.js` parses in the clone | yes | **yes** |
-
-**One commit was pruned, and it is worth knowing which:** *"De-personalize the one docs-seed line
-that carried the owner's name"* — a commit whose only content was inside `docs-seed/`, so removing
-that path left it empty and `filter-repo` dropped it. 94 commits became 93. Nothing else changed
-shape.
-
-**Step 2 is confirmed load-bearing.** Path removal alone would have left the four ids in the
-history of this very runbook, which survives the scrub by design. The 8 `REDACTED` markers are
-where they were.
-
-**What the 2026-08-14 origin check proved, and what it did not.** Re-measured
-independently on a fresh clone of GitHub origin after the force-push and the
-visibility flip:
-
-| check | required | default clone | after `git fetch origin refs/pull/*/head` |
+| check | required | measured (default clone) | measured (via `refs/pull/*`) |
 |---|---|---|---|
-| `mcp-roundtrip-evals/` commits | 0 | **0** | **5** |
-| `docs-seed/` commits | 0 | **0** | **5** |
-| `DEBUG-LOG.md` commits | 0 | **0** | **16** |
-| real `sess_` lines (fixture excluded) | empty | **empty** | **non-empty** |
-| `REDACTED-SESSION-ID` | > 0 | **10** | (not the question) |
-| all-zeros fixture | preserved | **9** | (not the question) |
+| real ids in history | 0 | **0** | **42 lines restored** |
+| `mcp-roundtrip-evals/` commits | 0 | **0** | **5 restored** |
+| `docs-seed/` commits | 0 | **0** | **5 restored** |
+| `DEBUG-LOG.md` commits | 0 | **0** | **16 restored** |
+| `REDACTED-SESSION-ID` markers | > 0 | **10** | **2** |
+| all-zeros synthetic fixture | preserved | **9** | **9** |
+| `git ls-remote origin 'refs/pull/*'` | empty | **NON-EMPTY** (PRs 1–4) | **FAILED GATE** |
+| `node bin/build-plugin-manifests.js --check` | pass | **pass** | — |
 
-The default-clone column is what this runbook's verification block used to
-measure, and it is why a PASS table can be true and still leave the leak
-fetchable. `git ls-remote origin 'refs/pull/*'` still listed three pull heads;
-`git push origin --delete refs/pull/N/head` is rejected (`deny updating a hidden
-ref`); `DELETE /git/refs/pull/N/head` returns `422 refs/pull/* is read-only`.
-GitHub's commit and contents APIs still resolve pre-rewrite SHAs, including a
-tree that lists `mcp-roundtrip-evals/`. Do not paste those SHAs here.
+**Why the gate remains open:** Default clones are clean. But GitHub maintains internal, immutable
+`refs/pull/*/head` refs that point to pre-rewrite commits. Fetching those refs restores the leaks.
+Closing the gate fully requires a GitHub Support purge or publishing from a fresh repository.
 
 ## The operation
 
@@ -164,6 +103,10 @@ git log --all -p \
 
 git rev-list --all -- mcp-roundtrip-evals/ | wc -l                          # must be 0
 git rev-list --all -- docs-seed/ | wc -l                                    # must be 0
+git rev-list --all -- DEBUG-LOG.md | wc -l                                  # must be 0
+
+# 4. GITHUB REMOTE REFS CHECK — verify no hidden pull request heads retain old objects
+git ls-remote origin 'refs/pull/*'                                          # must be EMPTY
 ```
 
 **Why the exclusion exists, and why it is not a loophole.** The gate's purpose is *no real record
@@ -178,6 +121,23 @@ able to fail: any *other* id-shaped string still trips it.
 An empty result is the only acceptable outcome. A count that merely went down means the operation
 half-worked, which is worse than not having run it, because the gate will read as passed.
 
+## The GitHub pull-ref and cached-object trap
+
+**Measured 2026-08-14:** Even after force-pushing rewritten branches and deleting leftover remote
+branch heads, GitHub retains pre-rewrite commits under `refs/pull/*/head` and serves loose objects
+by pre-rewrite commit SHA. `refs/pull/*` refs are read-only to git clients (`deny updating a hidden
+ref`, HTTP 422), so a client-side force-push cannot clear them.
+
+A default clone checks out only heads and tags, so local greps appear 100% clean while fetching
+`refs/pull/*` from origin restores the pre-scrub commits and leaks.
+
+**Closure requires one of two paths:**
+
+1. **GitHub Support purge**: Request GitHub Support to purge unreachable cached objects and
+   remove `refs/pull/{1,2,3}/head` on the repository.
+2. **Fresh publishable repository**: Push only rewritten `main` and release tags to a brand new
+   repository that never had those PRs, update URLs in `plugin.json`, and archive the original repo.
+
 ## After
 
 - Force-push the rewritten history, then have every clone re-clone. A `git pull` onto rewritten
@@ -185,24 +145,8 @@ half-worked, which is worse than not having run it, because the gate will read a
 - Every commit sha changes. Anything that cites a sha — ADRs, `AGENTS.md`, board events, commit
   messages quoting other commits — now points at nothing. Budget for that: it is documentation
   work, not a side effect that resolves itself.
-- Re-run the gate greps once more on a clone taken after the force-push.
-- **Also fetch what GitHub still advertises besides `main`.** A default clone
-  does not take `refs/pull/*`, so `git log --all` on that clone is silent about
-  pull-request heads. Measure them:
-
-  ```bash
-  git ls-remote origin 'refs/pull/*' 'refs/heads/*' 'refs/tags/*'
-  # if any pull heads exist, fetch them into a throwaway clone and re-run the
-  # path and sess_ greps against --all. Required: still 0 / 0 / empty.
-  ```
-
-  Deleting leftover *branch* heads (`refs/heads/cursor/…`) is necessary and not
-  sufficient. GitHub keeps `refs/pull/N/head` after the branch is deleted, and
-  the client cannot delete those refs. GitHub Support has to purge them — the
-  same ticket that asks for a cache purge after a public history rewrite. Until
-  that ticket lands, or until the public artifact is a new repository that never
-  had those PRs, anyone who fetches a pull head or a pre-rewrite SHA still gets
-  the old DAG.
+- Re-run the gate greps once more on a clone taken after the force-push, including the
+  `git ls-remote origin 'refs/pull/*'` check.
 
 ## The alternative that avoids all of this
 

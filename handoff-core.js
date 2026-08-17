@@ -2019,7 +2019,12 @@ async function handleApi(method, p, query, b) {
         }
         s.install_id = inst;
       }
-      s.native_ref = null; // never asserted here; the owning host's agent claims it
+      /* Never asserted here — the owning host's agent claims it — but never WITHDRAWN here
+       * either. This verb is callable from any machine; a refresh (e.g. naming the seat)
+       * must not destroy a binding the owning host's own door already claimed. Measured
+       * live 2026-08-16: the SessionStart hook claimed Flame's binding, register_code_session
+       * nulled it, and the wake gate (dest.native_ref) went dark on a live terminal. */
+      if (!s.native_ref) s.native_ref = null;
       s.remote = {
         host,
         attested_by: b.attested_by || 'access',
@@ -2255,14 +2260,19 @@ async function handleApi(method, p, query, b) {
         const title = b.title || b.native_name || ('terminal · ' + (b.cwd ? path.basename(b.cwd) : String(b.native_id).slice(0, 8)));
         const localId = parseClientUuid(b.native_id, 'code');
         s = createSession({ surface: 'code', title, id: localId.error ? undefined : localId.id });
-        /* native_ref is inspectable-here, not "I exist". A peer/Grok uuid the home
-         * host cannot see in ~/.claude/sessions must stay null — faking kind:claude-code
-         * is the unbundle native-ref defect. */
-        if (nativeUuidInspectable(b.native_id)) {
-          s.native_ref = { kind: 'claude-code', session_id: b.native_id, cwd: b.cwd || null, resume: `claude --resume ${b.native_id}` };
-        } else {
-          s.native_ref = null;
-        }
+        s.native_ref = null;
+        s.enrolment_kind = 'claude-code';
+      }
+      /* THE CLAIM, one gate for mint and refresh alike: native_ref is inspectable-here, not
+       * "I exist". A peer/Grok uuid the home host cannot see in ~/.claude/sessions must stay
+       * null — faking kind:claude-code is the unbundle native-ref defect. The same gate on a
+       * REUSED record heals a null binding — whether its first mint was uninspectable here or
+       * a remote enrolment withdrew a claim it never owned (the Flame wipe, 2026-08-16). This
+       * door runs ON the owning host with the uuid in hand; if the uuid is inspectable now,
+       * the claim is as good as it would have been at mint. Without the refresh half, a
+       * nulled binding is a one-way door no register can ever heal. */
+      if (!s.native_ref && s.enrolment_kind !== 'cursor-cli' && nativeUuidInspectable(b.native_id)) {
+        s.native_ref = { kind: 'claude-code', session_id: b.native_id, cwd: b.cwd || null, resume: `claude --resume ${b.native_id}` };
         s.enrolment_kind = 'claude-code';
       }
       /* THE DEVICE THE SEAT REPORTED, recorded so ownership can be decided.

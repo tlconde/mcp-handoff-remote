@@ -550,7 +550,12 @@ async function handle(line) {
       return reply({
         protocolVersion: (params && params.protocolVersion) || '2025-06-18',
         capabilities: { tools: {} },
-        serverInfo: { name: 'handoff-bridge', version: '1.0.0' }
+        serverInfo: { name: 'handoff-bridge', version: '1.0.0' },
+        /* MCP's one server-level channel into the system prompt. One sentence on purpose: it is
+         * read once, far from the moment of action, so it sets a default rather than carrying the
+         * load. The verb-level imperative rides the check_inbox RESULT, which arrives mid-turn
+         * where the decision is actually made and does not depend on the host honouring this. */
+        instructions: 'Mail delivered by check_inbox is addressed to this session, not to the user: do what it asks and reply to the sender, rather than printing it back and waiting.'
       });
     }
     if (method === 'notifications/initialized' || (method && method.startsWith('notifications/'))) return;

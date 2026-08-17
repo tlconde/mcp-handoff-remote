@@ -1394,6 +1394,22 @@ function resolveSuccessor(id) {
 function nativeSessionsDir() {
   return process.env.HANDOFF_NATIVE_SESSIONS_DIR || path.join(os.homedir(), '.claude', 'sessions');
 }
+/** The registry row Claude Code itself wrote for this uuid, or null — the inspectable-here
+ * source of the binding facts (pid, name, cwd) that callers otherwise have to assert. */
+function nativeRegistryRow(uuid) {
+  if (!uuid) return null;
+  try {
+    const dir = nativeSessionsDir();
+    if (!fs.existsSync(dir)) return null;
+    for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.json'))) {
+      try {
+        const r = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+        if (r && r.sessionId === uuid) return r;
+      } catch (_) { /* skip unreadable row */ }
+    }
+    return null;
+  } catch (_) { return null; }
+}
 function nativeUuidInspectable(uuid) {
   if (!uuid) return false;
   try {
@@ -2227,11 +2243,23 @@ async function handleApi(method, p, query, b) {
        * exposes no lineage (parentUuid null), so from inside the process the terminal is
        * genuinely unknowable: it mints a fresh record and the durable id in the SessionStart
        * sidecar is what re-joins it. That is why the sidecar is load-bearing, not decorative. */
+      /* THE PID FACT COMES FROM THE REGISTRY, not only from the caller. The heal below sat
+       * unreachable for its whole life because its one caller (the SessionStart hook) never
+       * sends pid — measured 2026-08-17: /clear forked Pear's transcript, the hook re-registered
+       * the new uuid pid-less, the heal never ran, and the record pointed at a dead uuid while
+       * the process lived on. The registry row Claude Code writes for the NEW uuid carries the
+       * true pid and is inspectable here, which is stronger evidence than anything the caller
+       * could assert. b.pid still wins when present (a caller correcting the registry). */
+      const registryPid = (() => {
+        const row = nativeRegistryRow(b.native_id);
+        return (row && row.pid) || null;
+      })();
+      const pidFact = b.pid || registryPid;
       let healed = null;
-      if (!s && b.pid && b.cwd) {
+      if (!s && pidFact && b.cwd) {
         const byPid = Object.values(db.sessions).filter(x =>
           x.native_ref && x.native_ref.kind === 'claude-code' && !x.archived &&
-          x.native_ref.cwd === b.cwd && x.native_ref.pid === b.pid);
+          x.native_ref.cwd === b.cwd && x.native_ref.pid === pidFact);
         if (byPid.length === 1 && !nativeUuidIsLive(byPid[0].native_ref.session_id)) {
           s = byPid[0];
           healed = { from: s.native_ref.session_id, to: b.native_id, by: 'pid' };
@@ -2330,8 +2358,9 @@ async function handleApi(method, p, query, b) {
       if (s.native_ref) {
         if (b.cwd) s.native_ref.cwd = b.cwd;
         // pid is a refreshable ATTRIBUTE of the binding, never the identity — it is what lets a
-        // /clear (same process, forked transcript) heal without guessing.
-        if (b.pid) s.native_ref.pid = b.pid;
+        // /clear (same process, forked transcript) heal without guessing. The registry-derived
+        // fact backfills callers that do not send one, so the NEXT /clear finds a pid to match.
+        if (pidFact) s.native_ref.pid = pidFact;
         // Adopt native's registration facts — read, never minted (identity convergence).
         if (b.native_name) s.native_ref.name = b.native_name;
         if (b.messaging_socket) s.native_ref.messaging_socket_path = b.messaging_socket;

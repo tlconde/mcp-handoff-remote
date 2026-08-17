@@ -2051,6 +2051,10 @@ async function callTool(name, args, ctx, core) {
     const preempted = [];
     const out = [];
     let returnTotal = 0;
+    /* Counted only so the lead sentence below can tell "you have work" from "your work came
+     * back". Without it, a drain holding nothing but closed returns would still be told to do
+     * what the mail asks — trading a relay bug for an over-execution one. */
+    let msgTotal = 0;
     for (const s of sessions) {
       // t21 Bug A: reads both kinds. Returns are labeled ↩ RETURN so a completed
       // round-trip never reads as just another queued message.
@@ -2064,6 +2068,7 @@ async function callTool(name, args, ctx, core) {
           preempted.push({ host: h, title: s.title });
         }
         returnTotal += fresh.filter(m2 => m2.kind === 'resume_summary').length;
+        msgTotal += fresh.length;
         out.push(`"${s.title}":\n` + fresh.map(m2 =>
           m2.kind === 'resume_summary'
             ? `  - ↩ RETURN (transaction closed): ${m2.text}`
@@ -2141,7 +2146,21 @@ async function callTool(name, args, ctx, core) {
         ? `No unread messages or returns for the ${n} ${surface} record(s) on this host ("${HERE}").`
         : `No ${surface} records on this host ("${HERE}") at all.`) + foreignNote;
     }
-    return `Unread messages:\n${out.join('\n')}` + foreignNote +
+    /* THE IMPERATIVE LEADS, IT DOES NOT TRAIL.
+     *
+     * Measured on Cursor's chat surface: mail arrives, and the seat prints it back to the human
+     * instead of doing it. That is not disobedience — a chat surface's job IS to show the user
+     * content, and text that looks addressed to the user reads as content to relay. Grok, Claude
+     * Code and the Cursor CLI act on the same payload, so the defect is surface-shaped.
+     *
+     * A trailing instruction is read after the mail has already been framed as something to
+     * present, which is too late to change the frame. This one leads, and it names the ADDRESSEE
+     * rather than merely demanding action: "act on it" does not answer the question the seat got
+     * wrong, and "this is not yours to relay" does. */
+    const lead = returnTotal === msgTotal
+      ? ''
+      : `Addressed to THIS session, not to the user: do what the mail asks, then reply to each sender with send_message in one sentence.\n\n`;
+    return lead + `Unread messages:\n${out.join('\n')}` + foreignNote +
       (returnTotal ? `\n\n${returnTotal} of these ${returnTotal === 1 ? 'is a' : 'are'} completed RETURN(s) — the work came back and the transaction is closed. Report it as delivered, not as still owed.` : '');
   }
   if (name === 'withdraw_handoff' || name === 'decline_handoff') {

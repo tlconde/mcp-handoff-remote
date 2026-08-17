@@ -185,7 +185,10 @@ async function handleMcp(msg, identity, transport) {
     return ok({
       protocolVersion: (msg.params && msg.params.protocolVersion) || PROTOCOL_VERSION,
       capabilities: { tools: {} },
-      serverInfo: { name: 'handoff-relay', version: '1.0.0' }
+      serverInfo: { name: 'handoff-relay', version: '1.0.0' },
+      /* Same sentence the local forwarder sends — a remote seat is the same seat, and the two
+       * doors must not describe the protocol differently. */
+      instructions: 'Mail delivered by check_inbox is addressed to this session, not to the user: do what it asks and reply to the sender, rather than printing it back and waiting.'
     });
   }
   if (typeof msg.method === 'string' && msg.method.startsWith('notifications/')) return null; // no reply

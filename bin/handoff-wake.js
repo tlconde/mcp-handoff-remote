@@ -248,10 +248,10 @@ function sessionsDir() {
  * "not found" as a loud degrade rather than a mystery. */
 /* WINDOWS RESOLUTION (added 2026-08-11). The list above was POSIX-only: three unix paths and a
  * `which` fallback, none of which can resolve on win32, where the lookup verb is `where` and the
- * launcher carries an extension. Measured on HP_laptop — `where claude` prints THREE hits:
- *   C:\Users\simoe\.local\bin\claude.exe          <- native, directly spawnable
- *   C:\Users\simoe\AppData\Roaming\npm\claude     <- sh script, not spawnable by CreateProcess
- *   C:\Users\simoe\AppData\Roaming\npm\claude.cmd <- shim
+ * launcher carries an extension. Measured on the Windows peer — `where claude` prints THREE hits:
+ *   C:\Users\<user>\.local\bin\claude.exe          <- native, directly spawnable
+ *   C:\Users\<user>\AppData\Roaming\npm\claude     <- sh script, not spawnable by CreateProcess
+ *   C:\Users\<user>\AppData\Roaming\npm\claude.cmd <- shim
  * The old code checked `~/.local/bin/claude` WITHOUT `.exe`, so it missed the one good answer and
  * then called a `which` that does not exist there — null on every Windows machine.
  *

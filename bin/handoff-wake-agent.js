@@ -87,8 +87,8 @@ const AGENT_VERSION = '0.1.0';
  * the value the process can already compute — a setting whose right answer is "whatever it would
  * have been anyway" is not configuration, it is a spelling test with no validation.
  *
- * And it had four known spellings in flight at once for ONE machine: HP_LAPTOP (COMPUTERNAME),
- * HP_laptop (os.hostname()), HP-laptop (typed by hand, hyphen, would have matched nothing), and
+ * And it had four known spellings in flight at once for ONE machine: PEER_LAPTOP (COMPUTERNAME),
+ * Peer_laptop (os.hostname()), peer-laptop (typed by hand, hyphen, would have matched nothing), and
  * windows-laptop (what a doc told the operator to write). Each one is a delivery failure that
  * looks like a healthy cycle, because a host that owns no records and a host that is misnamed
  * report identically. Removing the knob removes all four at once. */

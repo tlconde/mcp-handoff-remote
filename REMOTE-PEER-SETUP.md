@@ -161,7 +161,7 @@ HANDOFF_REMOTE_URL=https://<relay-host>/mcp
 > mail addressed to that machine, decided it owned none of it, and reported a healthy cycle. The
 > knob is now REMOVED rather than repaired — **a peer's id is whatever the machine calls itself**,
 > and the fleet accepts that rather than dictating it. One machine had four spellings in flight at
-> once (`HP_LAPTOP`, `HP_laptop`, `HP-laptop`, `windows-laptop`); each would have produced a
+> once (`PEER_LAPTOP`, `Peer_laptop`, `peer-laptop`, `windows-laptop`); each would have produced a
 > delivery failure that looks exactly like an idle one.
 
 The agent reads it at startup, and a real environment variable always overrides it — so a one-off

@@ -197,7 +197,7 @@ going to appear. 231 pipes, zero matches — and the one apparent hit was `97CC-
 matching a `cc-` filter.
 
 **The naming hazard is real but does not apply here.** That machine reports three identities —
-`COMPUTERNAME=HP_LAPTOP`, `os.hostname()=HP_laptop`, and the doc's `windows-laptop` — and anything
+`COMPUTERNAME=PEER_LAPTOP`, `os.hostname()=Peer_laptop`, and the doc's `windows-laptop` — and anything
 matching by string equality can split it in half silently. It cannot explain a negative peer result,
 though: **the verb is absent, so no lookup runs and there is no name to mis-key.** Keep the hazard
 in mind for host matching (see `DEBUG-LOG` M2), not for peer discovery.

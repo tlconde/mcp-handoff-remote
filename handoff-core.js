@@ -2034,18 +2034,18 @@ async function handleApi(method, p, query, b) {
          * is legitimate — a record is data — but it must never be mistaken later for one the
          * device's own agent wrote. */
         minted_by: b.minted_by || 'unknown',
-        /* WHO SAID THIS DEVICE IS CALLED THAT — operator ruling, 2026-08-11, verbatim:
-         * "the host device decide doesn't guess a sessions name, the session sends the decide os
-         * hostname (as a remote) — if it's HP_LAPTOP, so be it, if HPlaptop, so be it — this also
-         * helps differentiate".
+        /* WHO SAID THIS DEVICE IS CALLED THAT — operator ruling, 2026-08-11 (device names
+         * replaced for publication): "the host device decide doesn't guess a sessions name, the
+         * session sends the decide os hostname (as a remote) — if it's PEER_LAPTOP, so be it, if
+         * Peerlaptop, so be it — this also helps differentiate".
          *
          * So a device string is authoritative ONLY when the seat reported it about itself, and the
          * only thing a seat can supply that no third party can invent is its own cli_uuid. A caller
          * naming a machine it is not on is making a CLAIM, which is legitimate as data and must
          * never later be mistaken for the machine's own answer.
          *
-         * This is not theoretical: one laptop reports THREE strings by environment — HPlaptop in
-         * WSL, HP_LAPTOP as COMPUTERNAME, HP_laptop from native Windows Node. Every one is correct
+         * This is not theoretical: one laptop reports THREE strings by environment — Peerlaptop in
+         * WSL, PEER_LAPTOP as COMPUTERNAME, Peer_laptop from native Windows Node. Every one is correct
          * for the seat that reports it, and the split is the DISCRIMINATOR rather than a bug: two
          * seats, two transports, two socket namespaces. Four records were retired today because a
          * third party's belief about a machine was recorded as its name. */
@@ -2284,7 +2284,7 @@ async function handleApi(method, p, query, b) {
        *
        * Self-reported only: this value arrives with the seat's own cli_uuid. The operator's ruling
        * is that a device string is the seat's to state and nobody else's, so it is stored verbatim —
-       * no normalising, no case-folding, no repair. HPlaptop and HP_LAPTOP are two devices.
+       * no normalising, no case-folding, no repair. Peerlaptop and PEER_LAPTOP are two devices.
        *
        * Host lives on remote.host when native_ref is null. Putting it on a fabricated
        * native_ref made "inspectable here" and "which machine" the same field. */

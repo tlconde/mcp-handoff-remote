@@ -65,11 +65,57 @@ async function main() {
     return;
   }
 
+  /* SIDECAR RE-JOIN (the durable id that survives quit+relaunch — handoff-core documents the
+   * sidecar as load-bearing; this is the half that presents it). The store wrote a sidecar
+   * naming the last record that held a live binding in this cwd. If that record's uuid no
+   * longer answers to any live process, THIS session presents it through the explicit
+   * `succeeds` door — adoption by the caller, never inference by the store. Every gate errs
+   * toward NOT adopting: wrong identity is worse than no identity, and a skipped re-join
+   * costs one manual naming, not a corrupted record.
+   *   - sidecar unreadable / malformed id            → skip
+   *   - sidecar names THIS session's own uuid        → skip (normal resume, nothing to join)
+   *   - old uuid still answers to a live process     → skip (that seat is alive — a second
+   *     terminal in the same folder must not steal it)
+   *   - predecessor record missing/archived/retired/
+   *     already superseded                           → skip (never force the 409 path; a
+   *     failed adoption must not cost the registration)
+   * Operator ruling 2026-08-17: "solve the issue so that next time, the agent in the
+   * terminal will pick up the task immediately." */
+  let succeeds, adoptionEvidence;
+  try {
+    const home = process.env.HANDOFF_HOME || path.join(require('os').homedir(), '.claude-handoff');
+    const scKey = require('crypto').createHash('sha1').update(String(cwd)).digest('hex');
+    const sc = JSON.parse(fs.readFileSync(path.join(home, 'sidecars', scKey + '.json'), 'utf8'));
+    if (sc && /^sess_[a-z]+_[A-Za-z0-9._-]+$/.test(sc.record_id || '') && sc.uuid && sc.uuid !== sessionId) {
+      let oldAlive = false;
+      const nd = process.env.HANDOFF_NATIVE_SESSIONS_DIR || path.join(require('os').homedir(), '.claude', 'sessions');
+      for (const f of fs.readdirSync(nd).filter(f => f.endsWith('.json'))) {
+        try {
+          const row = JSON.parse(fs.readFileSync(path.join(nd, f), 'utf8'));
+          if (!row || row.sessionId !== sc.uuid) continue;
+          if (!row.pid) { oldAlive = true; break; }
+          try { process.kill(row.pid, 0); oldAlive = true; } catch (e) { if (e.code === 'EPERM') oldAlive = true; }
+          break;
+        } catch (_) { /* unreadable row is not evidence of life */ }
+      }
+      if (!oldAlive) {
+        const pred = JSON.parse(fs.readFileSync(path.join(home, 'store', 'v1', 'sessions', sc.record_id + '.json'), 'utf8'));
+        if (pred && !pred.archived && !pred.retired && !pred.superseded_by) {
+          succeeds = sc.record_id;
+          adoptionEvidence = `sidecar re-join: last claude-code session in ${cwd}; predecessor binding (${String(sc.uuid).slice(0, 8)}…) dead at adoption`;
+          note(`sidecar re-join: presenting succeeds=${sc.record_id}`);
+        }
+      }
+    }
+  } catch (_) { /* no sidecar, or any doubt at any gate: register plainly, adopt nothing */ }
+
   try {
     const r = await core.handleApi('POST', '/api/register', {}, {
       kind: 'claude-code',
       native_id: sessionId,
       cwd,
+      succeeds,
+      adoption_evidence: adoptionEvidence,
       // No title and no role: naming is the human's, and a hook that invented one would be
       // asserting an identity nobody chose. Refreshing a binding is not the same as naming a thing.
     });

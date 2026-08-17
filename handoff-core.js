@@ -2046,7 +2046,7 @@ async function handleApi(method, p, query, b) {
       /* Never asserted here — the owning host's agent claims it — but never WITHDRAWN here
        * either. This verb is callable from any machine; a refresh (e.g. naming the seat)
        * must not destroy a binding the owning host's own door already claimed. Measured
-       * live 2026-08-16: the SessionStart hook claimed Flame's binding, register_code_session
+       * live 2026-08-16: the SessionStart hook claimed a live terminal's binding, register_code_session
        * nulled it, and the wake gate (dest.native_ref) went dark on a live terminal. */
       if (!s.native_ref) s.native_ref = null;
       s.remote = {
@@ -2232,7 +2232,7 @@ async function handleApi(method, p, query, b) {
         x.native_ref && x.native_ref.kind === 'claude-code' && x.native_ref.session_id === b.native_id && !x.archived);
       /* A RETIRED RECORD IS NEVER REFRESHED — registering into one is resurrection, and retire's
        * contract says the first ending is the true one. Measured 2026-08-17: the /clear repair
-       * retired Pear's accidental duplicate with successor=Pear, and the very next hook register
+       * retired a /clear duplicate with its named original as successor, and the very next hook register
        * matched the duplicate by uuid and refreshed it as if nothing had ended. Sends already
        * resolve FORWARD through superseded_by; the register door now does the same — the seat
        * follows its thread to the successor and the binding heals there. No successor → fall
@@ -2270,7 +2270,7 @@ async function handleApi(method, p, query, b) {
        * sidecar is what re-joins it. That is why the sidecar is load-bearing, not decorative. */
       /* THE PID FACT COMES FROM THE REGISTRY, not only from the caller. The heal below sat
        * unreachable for its whole life because its one caller (the SessionStart hook) never
-       * sends pid — measured 2026-08-17: /clear forked Pear's transcript, the hook re-registered
+       * sends pid — measured 2026-08-17: /clear forked a named terminal's transcript, the hook re-registered
        * the new uuid pid-less, the heal never ran, and the record pointed at a dead uuid while
        * the process lived on. The registry row Claude Code writes for the NEW uuid carries the
        * true pid and is inspectable here, which is stronger evidence than anything the caller
@@ -2329,7 +2329,7 @@ async function handleApi(method, p, query, b) {
        * "I exist". A peer/Grok uuid the home host cannot see in ~/.claude/sessions must stay
        * null — faking kind:claude-code is the unbundle native-ref defect. The same gate on a
        * REUSED record heals a null binding — whether its first mint was uninspectable here or
-       * a remote enrolment withdrew a claim it never owned (the Flame wipe, 2026-08-16). This
+       * a remote enrolment withdrew a claim it never owned (the naming wipe, 2026-08-16). This
        * door runs ON the owning host with the uuid in hand; if the uuid is inspectable now,
        * the claim is as good as it would have been at mint. Without the refresh half, a
        * nulled binding is a one-way door no register can ever heal. */
@@ -2461,6 +2461,26 @@ async function handleApi(method, p, query, b) {
       // to the caller, so a heal is something you can see happen rather than infer.
       if (healed) ops('identity_healed', { session: s.id, from: healed.from, to: healed.to, by: healed.by, pid: b.pid || null });
       save();
+      /* THE SESSIONSTART SIDECAR, finally written (its load-bearing role was documented above
+       * long before anything wrote it — measured 2026-08-17: a named seat quit+relaunched, the new
+       * session minted a fresh anonymous record, the named record's binding died with its pid,
+       * and a full envelope queued to a seat nothing could reach). One file per cwd, holding
+       * the durable record id of the LAST claude-code session that held a live binding there.
+       * The store only WRITES this fact; it never acts on it — the SessionStart hook reads it
+       * and PRESENTS it through the explicit succeeds door above, so adoption stays
+       * caller-explicit and §I2b's no-guessing rule holds. Failure is swallowed: a sidecar
+       * miss must never break a registration. */
+      if (s.native_ref && b.cwd) {
+        try {
+          const scDir = path.join(HOME, 'sidecars');
+          fs.mkdirSync(scDir, { recursive: true });
+          const scKey = crypto.createHash('sha1').update(String(b.cwd)).digest('hex');
+          fs.writeFileSync(path.join(scDir, scKey + '.json'), JSON.stringify({
+            record_id: s.id, cwd: b.cwd, uuid: s.native_ref.session_id,
+            title: s.title || null, written_at: now()
+          }));
+        } catch (_) { /* never break the register */ }
+      }
       /* The registration is saved FIRST, then the nickname refusal is reported — so the caller
        * ends up with a real record and an honest "the name was refused", never with neither. */
       if (nickRefusal) {

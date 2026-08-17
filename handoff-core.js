@@ -2011,13 +2011,17 @@ async function handleApi(method, p, query, b) {
        * reconnect key for a seat that has not yet named its product conversation id.
        * Falling back to (host, title) while a NEW uuid is in hand would refresh a store-minted
        * ULID in place and never mint sess_<surface>_<client-uuid> — the live Falcon/Luke defect. */
+      /* Retired records are excluded here for the same reason as the claude-code arm below:
+       * refreshing one is resurrection. If the retired record still holds the uuid-derived id,
+       * the fresh mint takes a ULID id rather than erasing an ended record's history. */
       let s = parsed
-        ? Object.values(db.sessions).find(x => !x.archived && x.id === parsed.id)
+        ? Object.values(db.sessions).find(x => !x.archived && !x.retired && x.id === parsed.id)
         : Object.values(db.sessions).find(x =>
-          !x.archived && x.remote && x.remote.host === host && x.title === b.title);
+          !x.archived && !x.retired && x.remote && x.remote.host === host && x.title === b.title);
       const minted = !s;
       if (!s) {
-        s = createSession({ surface: 'code', title: b.title, id: parsed ? parsed.id : undefined });
+        const idTaken = parsed && db.sessions[parsed.id];
+        s = createSession({ surface: 'code', title: b.title, id: (parsed && !idTaken) ? parsed.id : undefined });
       }
       s.title = b.title;
       if (b.role !== undefined) s.role = b.role || null;
@@ -2226,6 +2230,27 @@ async function handleApi(method, p, query, b) {
       /* ---- claude-code arm (default) ---- */
       let s = Object.values(db.sessions).find(x =>
         x.native_ref && x.native_ref.kind === 'claude-code' && x.native_ref.session_id === b.native_id && !x.archived);
+      /* A RETIRED RECORD IS NEVER REFRESHED — registering into one is resurrection, and retire's
+       * contract says the first ending is the true one. Measured 2026-08-17: the /clear repair
+       * retired Pear's accidental duplicate with successor=Pear, and the very next hook register
+       * matched the duplicate by uuid and refreshed it as if nothing had ended. Sends already
+       * resolve FORWARD through superseded_by; the register door now does the same — the seat
+       * follows its thread to the successor and the binding heals there. No successor → fall
+       * through with s=null, and the mint below must NOT reuse the retired record's id. */
+      let resurrectionBlocked = false;
+      if (s && s.retired) {
+        const succ = s.superseded_by && db.sessions[s.superseded_by];
+        if (succ && !succ.archived && !succ.retired) {
+          s = succ;
+          if (s.native_ref) {
+            s.native_ref.session_id = b.native_id;
+            s.native_ref.resume = `claude --resume ${b.native_id}`;
+          }
+        } else {
+          s = null;
+          resurrectionBlocked = true;
+        }
+      }
       /* SELF-HEALING BINDING. The uuid is the terminal's CURRENT address, not its identity:
        * a resume forks a new one under the same conversation and leaves no lineage, so a
        * lookup by uuid alone finds nothing and mints a SECOND record for a terminal that
@@ -2258,7 +2283,7 @@ async function handleApi(method, p, query, b) {
       let healed = null;
       if (!s && pidFact && b.cwd) {
         const byPid = Object.values(db.sessions).filter(x =>
-          x.native_ref && x.native_ref.kind === 'claude-code' && !x.archived &&
+          x.native_ref && x.native_ref.kind === 'claude-code' && !x.archived && !x.retired &&
           x.native_ref.cwd === b.cwd && x.native_ref.pid === pidFact);
         if (byPid.length === 1 && !nativeUuidIsLive(byPid[0].native_ref.session_id)) {
           s = byPid[0];
@@ -2282,7 +2307,9 @@ async function handleApi(method, p, query, b) {
           }
           // Same product id already has a record (e.g. uninspectable first mint left native_ref
           // null so the kind-keyed find missed it). Reuse — never overwrite via createSession.
-          s = prior;
+          // Unless it ENDED: a retired record is not a reusable slot (see resurrection note above).
+          if (!prior.retired) s = prior;
+          else resurrectionBlocked = true;
         }
       }
       const minted = !s;
@@ -2291,7 +2318,10 @@ async function handleApi(method, p, query, b) {
         // title wins (it becomes the alias), else the native name, else the old fallback.
         const title = b.title || b.native_name || ('terminal · ' + (b.cwd ? path.basename(b.cwd) : String(b.native_id).slice(0, 8)));
         const localId = parseClientUuid(b.native_id, 'code');
-        s = createSession({ surface: 'code', title, id: localId.error ? undefined : localId.id });
+        // A retired record may still HOLD the uuid-derived id; minting over it would erase an
+        // ended record's history. The fresh seat gets a ULID id instead — ids are stable, and
+        // the retired record's superseded_by (absent here by construction) stays the only link.
+        s = createSession({ surface: 'code', title, id: (localId.error || resurrectionBlocked) ? undefined : localId.id });
         s.native_ref = null;
         s.enrolment_kind = 'claude-code';
       }

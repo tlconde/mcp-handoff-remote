@@ -75,7 +75,7 @@ function protectedResourceMetadata() {
     authorization_servers: AS_ISSUER ? [AS_ISSUER] : [],
     bearer_methods_supported: ['header'],
     scopes_supported: ['handoff.read', 'handoff.write'],
-    resource_documentation: 'https://github.com/tlconde/handoff-remote'
+    resource_documentation: 'https://github.com/tlconde/mcp-handoff-remote'
   };
 }
 

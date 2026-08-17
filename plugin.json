@@ -1,13 +1,13 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "handoff",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Hand work between seats — Claude or Grok, chat or code — and machines: envelopes that carry a task, its decisions and its artifacts, a shared store, and a per-machine wake agent that delivers locally.",
   "author": {
     "name": "handoff contributors"
   },
-  "homepage": "https://github.com/tlconde/handoff-remote",
-  "repository": "https://github.com/tlconde/handoff-remote",
+  "homepage": "https://github.com/tlconde/mcp-handoff-remote",
+  "repository": "https://github.com/tlconde/mcp-handoff-remote",
   "license": "MIT",
   "keywords": [
     "handoff",

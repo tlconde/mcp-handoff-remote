@@ -44,7 +44,7 @@
  * quiet after the first line, so a store outage costs one turn rather than one per cycle.
  *
  * HOW IT IS ARMED IS PART OF WHETHER IT WORKS, and getting this wrong produces a silent failure
- * that looks exactly like a broken watcher. Measured on the lili seat, 2026-08-11: the watcher ran
+ * that looks exactly like a broken watcher. Measured on the peer seat, 2026-08-11: the watcher ran
  * correctly, found the mail and printed the line, and NOTHING WOKE — because it had been armed as a
  * background shell command, and a background command reports to its session ONLY WHEN IT EXITS.
  * This one never exits, so its output sat in a file nobody read.
@@ -62,7 +62,7 @@
  *   node bin/handoff-session-watch.js                   poll forever, print only on change
  *   node bin/handoff-session-watch.js --exit-on-mail    poll until mail appears, print it, EXIT
  *   node bin/handoff-session-watch.js --mine            only mail for THIS seat's record
- *   node bin/handoff-session-watch.js --title lulu      only conversations matching a title
+ *   node bin/handoff-session-watch.js --title <name>    only conversations matching a title
  *   node bin/handoff-session-watch.js --interval 15     seconds between cycles (10..300)
  *   node bin/handoff-session-watch.js --verbose         print every cycle, changed or not
  *
@@ -102,7 +102,7 @@ const INTERVAL = Math.min(300, Math.max(10,
 
 /* EVERY LINE CARRIES THE TIME IT WAS PRINTED, and this is not decoration.
  *
- * Asked "how long did the wake take", the lili seat could not answer and refused to estimate:
+ * Asked "how long did the wake take", the peer seat could not answer and refused to estimate:
  * the monitor event carries no timestamp and the watch line carried none either, so any duration
  * would have been reconstructed rather than observed. It said the gap plainly rather than handing
  * the operator a number dressed as a measurement — and it is right that "how long did the wake

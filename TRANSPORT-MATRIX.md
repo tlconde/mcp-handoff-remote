@@ -123,7 +123,7 @@ machines ran **that** invocation and asked the spawned one-shot what it has.
 |---|---|---|
 | `claude --version` | **2.1.226** | **2.1.226** |
 | `ListAgents` inside the spawned one-shot | **"ListAgents is available."** | **"ListAgents: not available."** |
-| rung-2 relay outcome | reaches the target | `{"success":false,"message":"No agent named 'lulu' is reachable…"}` |
+| rung-2 relay outcome | reaches the target | `{"success":false,"message":"No agent named '<name>' is reachable…"}` |
 
 **Identical version, different platform, different tool set. That is a measured platform boundary,
 not an inference.** The Windows failure is byte-identical whether the call is made from a session or

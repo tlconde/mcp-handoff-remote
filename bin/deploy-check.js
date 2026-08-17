@@ -31,7 +31,7 @@
  * WHAT SURVIVES UNCHANGED, because a clean before/after on the identical call proves it: same
  * arguments, same client, same route, same schema, and only the deploy differed —
  *   pre-deploy:  status {surface, cli_uuid, cli_pid} → "You are: unidentified"
- *   post-deploy: same call                           → "You are: lulu"
+ *   post-deploy: same call                           → "You are: <seat name>"
  * committed/on-disk/running drift was the real cause, and it is what this file checks.
  *
  * "committed, on disk, and running are three different states, and all our verification tools read

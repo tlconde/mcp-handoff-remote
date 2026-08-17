@@ -3,11 +3,11 @@
 /**
  * STORE INTEGRITY — find records that CANNOT receive, before someone sends to them.
  *
- * WHY THIS EXISTS. A `lulu` record declaring device `windows-laptop` sat live in the store for two
+ * WHY THIS EXISTS. A record declaring device `windows-laptop` sat live in the store for two
  * days after that machine stopped reporting that name. It surfaced only when a peer re-registered
  * and the verb answered "Refreshed" — adopting a record nobody had gone looking for, and reporting
- * it as success. Two `lili` records had already been retired for exactly this, and this one was
- * missed because the reconciliation was scoped BY TITLE — "the lili records" — instead of by the
+ * it as success. Two earlier records had already been retired for exactly this, and this one was
+ * missed because the reconciliation was scoped BY TITLE — one seat's title — instead of by the
  * INVARIANT that was actually broken.
  *
  * That is the whole lesson and the operator stated it: this cannot be allowed to happen by

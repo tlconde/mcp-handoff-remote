@@ -308,7 +308,7 @@ function forwardToDaemon(name, args, ctx) {
  * THE DEFECT THIS EXISTS TO KILL, observed on a real second machine 2026-08-10: the plugin's MCP
  * server came up on a laptop with no daemon, ran the tools in-process against handoff-core, and
  * MINTED A FRESH LOCAL STORE. Every verb then worked perfectly against a two-record universe —
- * `list_conversations` showed no nicky, no booty, no board, and "send hi to Nicky" correctly
+ * `list_conversations` showed none of the fleet's conversations, and a send by name correctly
  * resolved nothing. The right answer in the wrong world. A phantom store is worse than an error
  * precisely because it ANSWERS: nothing is broken enough to notice.
  *

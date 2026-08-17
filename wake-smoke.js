@@ -340,7 +340,7 @@ test('relay binary: an absolute path is used, not the bare name off PATH', () =>
      * became win32-aware, resolution returned null there, no spawn occurred, and the
      * `if (s.calls.length)` guard below meant this asserted nothing and reported ok. Making the
      * rung resolvable is what made the assertion execute. A test that passes because its subject
-     * is broken is the silence-is-not-success shape, wearing a green tick. Found by `lili` on
+     * is broken is the silence-is-not-success shape, wearing a green tick. Found by the peer seat on
      * native Windows, 2026-08-12. */
     assert.ok(require('path').isAbsolute(s.calls[0].bin), `relay must spawn an absolute path, got: ${s.calls[0].bin}`);
     assert.ok(fs.existsSync(s.calls[0].bin), 'and that path must actually exist on this machine');
@@ -352,7 +352,7 @@ test('relay binary: an absolute path is used, not the bare name off PATH', () =>
    * code on every platform. This suite writes `peer_verbs: true` into its own capability file at
    * module scope (see the header), precisely so these tests do not depend on the host OS default.
    * So the gate can never refuse INSIDE this suite, `s.calls.length` is always truthy, and the
-   * else is unreachable on macOS, Linux and native Windows alike. `lili` proved it by instrumenting
+   * else is unreachable on macOS, Linux and native Windows alike. The peer seat proved it by instrumenting
    * rather than by trusting a green total: `BRANCH-PROBE: s.calls.length=1 -> IF`.
    *
    * The case that else was written for IS covered, platform-independently, by the dedicated test

@@ -152,4 +152,6 @@ A default clone checks out only heads and tags, so local greps appear 100% clean
 
 Generating a public repo from this one (ADR-0002, rejected alternative 3) produces a tree with no
 history to scrub. If that model is chosen, this runbook is not executed — it is deleted, and the
-gate closes by construction rather than by operation.
+gate closes by construction rather than by operation. After a rewrite of a repo that already had
+PRs, it is also the remaining operator-controlled close for `refs/pull/*` residue: a new
+repository never advertises those heads.

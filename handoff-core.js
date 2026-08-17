@@ -829,7 +829,11 @@ function applyNickname(s, raw) {
 
 /* SUBSCRIPTION + MODEL_SLUG — asserted seat attributes, not keys.
  * Call from every enrolment write so both doors share one shape check.
- * subscription = product account (grok, cursor, claude). model_slug = serving model (grok-4.6).
+ * subscription = the seat's own vendor account (grok, claude, mistral, cursor, … — open set,
+ * asserted, never validated against a vendor table). model_slug = serving model (grok-4.6).
+ * Measured 2026-08-17: a Mistral chat seat read "(grok, claude)" as the allowed set, obeyed
+ * "do not invent", and enrolled as subscription:claude — the copy taught the lie. Examples in
+ * these strings must always be marked as examples.
  * Neither authorizes, drains, or participates in dedup. Empty string clears. */
 const SUBSCRIPTION_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const MODEL_SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -840,14 +844,14 @@ function applySeatProduct(s, b) {
   if (b && b.subscription !== undefined) {
     const v = (b.subscription === null || b.subscription === '') ? null : String(b.subscription).trim();
     if (v && !SUBSCRIPTION_RE.test(v)) {
-      return { code: 400, error: `subscription "${v}" must be one word — lowercase letters, digits, hyphen. It names the product account (grok, cursor, claude), not the title and not the lane.` };
+      return { code: 400, error: `subscription "${v}" must be one word — lowercase letters, digits, hyphen. It names the seat's OWN vendor account (grok, claude, mistral, cursor, …— examples, not the allowed set), not the title and not the lane.` };
     }
     nextSub = v;
   }
   if (b && b.model_slug !== undefined) {
     const v = (b.model_slug === null || b.model_slug === '') ? null : String(b.model_slug).trim();
     if (v && !MODEL_SLUG_RE.test(v)) {
-      return { code: 400, error: `model_slug "${v}" must be a slug — letters, digits, dot, hyphen, underscore (e.g. grok-4.6). Spaces are refused.` };
+      return { code: 400, error: `model_slug "${v}" must be a slug — letters, digits, dot, hyphen, underscore. Spaces are refused: join the words with hyphens ("Mistral Medium 3.5" → mistral-medium-3.5). ANY vendor's model is valid (grok-4.6, claude-fable-5, mistral-medium-3.5 — examples, not the allowed set); do not conclude you have no valid slug.` };
     }
     nextSlug = v;
   }

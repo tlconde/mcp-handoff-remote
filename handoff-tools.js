@@ -1379,6 +1379,32 @@ async function callTool(name, args, ctx, core) {
       existing: true, return_owed: returnLeg
     });
 
+    /* Wake tier for the ENVELOPE lane (same gate and call-site pattern as send_message).
+     * Measured 2026-08-17: a note woke a Code seat and a full handoff envelope — the thing
+     * with locked decisions and a return contract — queued silently, so the seat most owed
+     * a reaction was the one never told to react. An envelope is always attention-class;
+     * there is no fyi mode here because send_to has no fyi. Same rules as the other call
+     * site: wake() never blocks or breaks the send, and the rung outcome is written down
+     * at the moment it happens. */
+    let woke = null;
+    if (args.to === 'code' && target.native_ref) {
+      try {
+        woke = require('./bin/handoff-wake').wake({
+          tier: 'attention',
+          thread: target.title, conversation: target.title, session_id: target.id,
+          native_ref: target.native_ref, channels: false, from: args.from || 'your chat'
+        });
+      } catch (e) { woke = { woke: false, tier: 'threw', error: (e && e.message) || String(e) }; }
+      try {
+        core.ops('wake', {
+          dest: target.id, surface: args.to,
+          tier: (woke && woke.tier) || 'none',
+          woke: !!(woke && woke.woke),
+          requested: 'attention', via: 'send_to'
+        });
+      } catch (_) { /* logging must never break the send */ }
+    }
+
     if (args.open_in !== 'none' && args.to !== 'code' && !process.env.HANDOFF_NO_AUTOOPEN) {
       try {
         const { spawn } = require('child_process');
@@ -1391,8 +1417,13 @@ async function callTool(name, args, ctx, core) {
     const returnLine = returnLeg
       ? `Return link OPEN — from that conversation call return_to_origin when done (outcome:"failed" if blocked). The origin keeps the "While you were away" card.`
       : `Standalone send — no return path. The carrier was delivered; this transaction does not expect return_to_origin.`;
+    const wakeLine = woke
+      ? (woke.woke
+        ? `Asked "${target.title}" to start a turn (${woke.tier} dispatched — not yet confirmed; if it does not pick up, the envelope is waiting in its inbox). `
+        : `Wake not dispatched (${woke.tier}${woke.error ? ': ' + woke.error : ''}) — the envelope is queued durably; the seat sees it on its next turn. `)
+      : `Queued for inbox (check_inbox / next turn there). `;
     return `Sent FULL envelope to EXISTING ${args.to} conversation "${target.title}". ` +
-      `Queued for inbox (check_inbox / next turn there). No new conversation was created. ` +
+      wakeLine + `No new conversation was created. ` +
       (args.open_in === 'none' ? '' : `App opened at Recents — click that exact title. `) +
       returnLine + overflowNote;
   }

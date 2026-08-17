@@ -210,8 +210,21 @@ function notify(ev, opts) {
 
     // Channel 1: Dispatch push seam. A daemon sets HANDOFF_DISPATCH_HOOK to a command that
     // takes title + body as argv; if present we prefer it (reaches their phone).
+    // ABSOLUTE PATH TO AN EXISTING FILE, or refused. This env var is arbitrary-exec by
+    // design (that is what a hook is), so the one check we can make is that the operator
+    // pinned a real script rather than a bare word resolved through PATH — a compromised
+    // env that can append to PATH must not get execution out of a notification. execFile
+    // (no shell) already keeps title/body as argv, never as command text.
     const hook = process.env.HANDOFF_DISPATCH_HOOK;
     if (hook) {
+      const path = require('path'), fs = require('fs');
+      if (!path.isAbsolute(hook) || !fs.existsSync(hook)) {
+        // Loud, like every other failed rung: a refusal that only the caller's return
+        // value knows about is the silent-degrade class this file exists to kill.
+        console.error(`handoff-notify: dispatch FAILED — HANDOFF_DISPATCH_HOOK must be an absolute path to an existing file (got ${JSON.stringify(hook)}); nothing was executed`);
+        return { fired: false, channel: 'dispatch',
+          note: `refused: HANDOFF_DISPATCH_HOOK must be an absolute path to an existing file (got ${JSON.stringify(hook)}) — nothing was executed` };
+      }
       dispatch(hook, [title, body], 'dispatch');
       return { fired: true, channel: 'dispatch', confirmed: false };
     }

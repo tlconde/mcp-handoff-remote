@@ -224,7 +224,7 @@ function nativeRefFor(runtime, nativeId, dir) {
     return { kind: 'claude-code', session_id: nativeId, cwd: dir, resume: `claude --resume ${nativeId}` };
   }
   if (runtime.id === 'codex') {
-    return { kind: 'codex', session_id: nativeId, cwd: dir, resume: 'codex exec resume --last' };
+    return { kind: 'codex', session_id: nativeId, cwd: dir, resume: `codex exec resume ${nativeId}` };
   }
   return { kind: runtime.id, session_id: nativeId, cwd: dir, resume: null };
 }
@@ -256,10 +256,12 @@ function spawnArgv(runtime, { nativeId, prompt, allowedTools } = {}) {
     return { bin: runtime.binPath || 'claude', args };
   }
   if (runtime.spawnKind === 'codex') {
-    return {
-      bin: runtime.binPath || 'codex',
-      args: ['exec', '--sandbox', 'workspace-write', '--skip-git-repo-check', prompt],
-    };
+    /* Pass OUR uuid on spawn so `codex exec resume <id>` reopens THIS worker, not --last
+     * (which is whoever finished most recently on the machine). */
+    const args = ['exec', '--sandbox', 'workspace-write', '--skip-git-repo-check'];
+    if (nativeId) args.push('--session-id', nativeId);
+    args.push(prompt);
+    return { bin: runtime.binPath || 'codex', args };
   }
   return null;
 }

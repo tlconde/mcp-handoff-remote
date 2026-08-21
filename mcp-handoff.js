@@ -66,7 +66,7 @@ function refreshCore() {
         `Call send_to with to:"chat", mode:"new", autosend:true, title "btw: <short name>", context/task from: $ARGUMENTS, and expected_return stating exactly what should come back and in what form. Then continue the main work — do not wait.\n`,
       'workers.md':
         `---\ndescription: What are my dispatched tasks/workers doing? Pull any finished results\n---\n${MARK}\n` +
-        `Call list_workers. For any resolved entries whose summaries the user hasn't seen, or the latest active one with progress, call get_worker_result and present results compactly. State plainly which are still working.\n`,
+        `Call list_workers. For a resolved entry whose summary the user hasn't seen, call get_worker_result with that worker_id. If exactly one worker is in flight, worker_id may be omitted; if several are in flight, pass worker_id — do not guess the last one. Present results compactly. State plainly which are still working.\n`,
       'inbox.md':
         `---\ndescription: Check queued cross-surface messages addressed to this surface\n---\n${MARK}\n` +
         `Call check_inbox with the surface you are on (code in a terminal). Deliver the unread mail. Then do what it asks: an executable assignment (a handoff envelope, work to commit, EXECUTE NOW) is the current work. Start it. Do not wait for the human to re-authorize a job they already sent. A status or chat ping is presented, not executed. "check inbox" is how queued work arrives; it is not a read-only scope.\n`,

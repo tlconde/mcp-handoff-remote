@@ -617,6 +617,26 @@ async function buildStatusReport(args, ctx, core) {
   return lines.join('\n');
 }
 
+/** Choose which worker get_worker_result talks about. Never ws[length-1].
+ * worker_id wins. Otherwise: exactly one in-flight (status active) worker for the
+ * origin (or globally if origin is unnamed) may omit worker_id. Several in flight
+ * → refuse with the ids listed. */
+function pickWorker(ws, args) {
+  const want = args && String(args.worker_id || '').trim();
+  if (want) {
+    const hit = (ws || []).find(x => x.worker_id === want);
+    return hit ? { worker: hit } : { missing: want };
+  }
+  const originId = String((args && (args.origin_session_id || args.session_id || args.session_uuid)) || '').trim() || null;
+  const pool = originId ? (ws || []).filter(w => w.origin && w.origin.id === originId) : (ws || []).slice();
+  const inflight = pool.filter(w => w.status === 'active');
+  if (inflight.length === 1) return { worker: inflight[0] };
+  if (inflight.length > 1) return { refuse: inflight, reason: 'in_flight' };
+  if (pool.length === 1) return { worker: pool[0] };
+  if (!pool.length) return { empty: true };
+  return { refuse: pool, reason: 'ambiguous' };
+}
+
 /** Tools migrated to the shared daemon tool layer (served identically by the in-process
  * bridge and the daemon's tools/call). 3a: get_handoff, get_decisions. 3b: report_progress,
  * get_worker_result, then the pin WRITERS pick_up + continue_from (3b-5) — the first tools
@@ -822,8 +842,20 @@ async function callTool(name, args, ctx, core) {
   if (name === 'get_worker_result') {
     const ws = await call('GET', '/api/workers');
     if (!ws.length) return 'No workers exist yet.';
-    const w = (args && args.worker_id) ? ws.find(x => x.worker_id === args.worker_id) : ws[ws.length - 1];
-    if (!w) throw new Error('no such worker: ' + (args && args.worker_id));
+    const picked = pickWorker(ws, args);
+    if (picked.missing) throw new Error('no such worker: ' + picked.missing);
+    if (picked.empty) return 'No workers exist yet.';
+    if (picked.refuse) {
+      const why = picked.reason === 'in_flight'
+        ? 'several workers are in flight'
+        : 'several workers exist and none is uniquely in flight';
+      return `REFUSED: ${why} — pass worker_id. This tool will not pick the last one.\n` +
+        picked.refuse.map(row =>
+          `- ${row.worker_id} [${row.dest_runtime || row.dest_surface || 'worker'}] ${row.task || ''}`.trim()
+        ).join('\n') +
+        '\nCall get_worker_result with worker_id from that list (or list_workers). Nothing was retrieved.';
+    }
+    const w = picked.worker;
     if (w.status === 'resolved') return `Worker ${w.worker_id} (already retrieved):\n${w.summary || 'no summary recorded'}`;
     if (w.status === 'failed') return `Worker ${w.worker_id} FAILED (transaction closed honestly — the blocker was delivered to the origin). Task: ${w.task}`;
     const nat = w.native_ref ? `\nReopen the actual worker session anytime: ${w.native_ref.resume}` : '';
@@ -2933,7 +2965,7 @@ function formatSessionCandidates(sessions, st) {
 }
 
 module.exports = {
-  namedOrPinned, callTool, MIGRATED,
+  namedOrPinned, callTool, MIGRATED, pickWorker,
   isTargetable,   // exported for the retirement suite: the one chokepoint every by-name path uses
   deliveryNoteFor, seatProductLabel, registrationMissing, incompleteNote, enrolmentDoor,
   targetNames, matchesName, matchesNameExact, filterByName,

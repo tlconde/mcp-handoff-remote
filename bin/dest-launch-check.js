@@ -17,7 +17,9 @@
  *   9. omitted dir and missing project_id prints the home cwd fallback.
  *  10. worker spawn ignores stdin and drains stderr (Codex exec hang class) without a live Codex.
  *  11. stderr progress is NOT concatenated into the stdout auto-summary sink.
- *  12. Claude headless prompt keeps MCP close; Codex/Gemini read HANDOFF.md and print stdout.
+ *  13. get_worker_result without worker_id refuses when several workers are in flight.
+ *  14. A single in-flight worker may omit worker_id.
+ *  15. Codex spawn argv carries --session-id; resume is `codex exec resume <that id>`, not --last.
  *
  *   node bin/dest-launch-check.js
  */
@@ -95,6 +97,16 @@ function fail(msg) {
   if (!worker) fail('worker record missing');
   if (!worker.native_ref || worker.native_ref.kind !== 'codex') {
     fail('dest native_ref.kind must be codex, got ' + JSON.stringify(worker.native_ref));
+  }
+  if (!worker.native_ref.session_id) fail('Codex native_ref.session_id must be set');
+  if (worker.native_ref.resume !== 'codex exec resume ' + worker.native_ref.session_id) {
+    fail('Codex resume must target THIS worker id, not --last, got ' + worker.native_ref.resume);
+  }
+  if (/--last/.test(worker.native_ref.resume) || /--last/.test(dispatched)) {
+    fail('must not print codex exec resume --last as if it addressed this worker\n' + dispatched);
+  }
+  if (!dispatched.includes(worker.native_ref.session_id) || !dispatched.includes('codex exec resume')) {
+    fail('dispatch must print the Codex session id and a resume command that uses it\n' + dispatched);
   }
   if (worker.native_ref.cwd !== ws) {
     fail('workspace bind: native_ref.cwd must be origin project_id when dir omitted, got ' + worker.native_ref.cwd);
@@ -180,11 +192,35 @@ function fail(msg) {
     fail('omitted dir and missing project_id must print the cwd fallback so a missed bind cannot hide\n' + fallback);
   }
 
+  const many = String(await callTool('get_worker_result', { origin_session_id: originId }, ctx, core));
+  if (!/^REFUSED:/.test(many) || !/pass worker_id/.test(many) || !/will not pick the last one/.test(many)) {
+    fail('get_worker_result without worker_id and several in-flight workers must refuse, listing ids\n' + many);
+  }
+  if (many.indexOf(wid[1]) < 0) {
+    fail('ambiguous get_worker_result must list the in-flight worker ids\n' + many);
+  }
+  const named = String(await callTool('get_worker_result', { worker_id: wid[1] }, ctx, core));
+  if (/^REFUSED:/.test(named) || named.indexOf(wid[1]) < 0) {
+    fail('get_worker_result with worker_id must address that worker\n' + named);
+  }
+  const one = String(await callTool('get_worker_result', { origin_session_id: m2[1] }, ctx, core));
+  if (/^REFUSED:/.test(one) || /will not pick the last one/.test(one)) {
+    fail('a single in-flight worker may omit worker_id\n' + one);
+  }
+  if (!/still working|ORPHANED|Worker /.test(one)) {
+    fail('single in-flight omit worker_id must report that worker, got\n' + one);
+  }
+
   const dests = require('../handoff-dest-runtimes');
   const { spawn } = require('child_process');
   if (dests.WORKER_STDIO[0] !== 'ignore' || dests.WORKER_STDIO[1] !== 'pipe' || dests.WORKER_STDIO[2] !== 'pipe') {
     fail('worker stdio must ignore stdin and pipe stdout+stderr, got ' + JSON.stringify(dests.WORKER_STDIO));
   }
+  const plan = dests.spawnArgv({ spawnKind: 'codex', binPath: 'codex' }, { nativeId: 'uuid-this-worker', prompt: 'x' });
+  if (!plan || plan.args.indexOf('--session-id') < 0 || plan.args[plan.args.indexOf('--session-id') + 1] !== 'uuid-this-worker') {
+    fail('Codex spawn argv must carry --session-id for this worker, got ' + JSON.stringify(plan && plan.args));
+  }
+  if (plan.args.indexOf('--last') >= 0) fail('Codex spawn argv must not use --last');
   const claudePrompt = dests.workerHeadlessPrompt({
     runtime: dests.CATALOG.find(r => r.id === 'claude-code'),
     sessionId: 'sess_code_test',

@@ -336,10 +336,15 @@ const TOOLS = [
   },
   {
     name: 'get_worker_result',
-    description: "Pull a worker's result back into this conversation (resolves the handoff link — the full round-trip). If the worker is still running with no progress yet, says so. Omit worker_id to get the most recent worker.",
+    description: "Pull a worker's result back into this conversation (resolves the handoff link — the full round-trip). If the worker is still running with no progress yet, says so. worker_id may be omitted only when exactly one worker is in flight for this origin. Several in flight → REFUSED with the worker ids listed; this tool never picks the last one.",
     inputSchema: {
       type: 'object',
-      properties: { worker_id: { type: 'string', description: 'From send_to_worker or list_workers. Optional.' } },
+      properties: {
+        worker_id: { type: 'string', description: 'From send_to_worker or list_workers. Required when more than one worker is in flight for this origin.' },
+        origin_session_id: { type: 'string', description: 'Optional. Scope in-flight workers to this enrolled origin (the sess_… register_chat_session returned). session_id / session_uuid are the same value.' },
+        session_id: { type: 'string', description: 'Same value as origin_session_id.' },
+        session_uuid: { type: 'string', description: 'Same value as origin_session_id / session_id.' }
+      },
       additionalProperties: false
     }
   },

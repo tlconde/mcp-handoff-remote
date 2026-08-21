@@ -29,6 +29,7 @@
  *  21. list_workers / get_worker_result refuse list use dest task text, not the origin chat's first message.
  *  22. native session/resume is omitted until session_id is harvested.
  *  23. Probe-only dests (Gemini) do not mint a uuid as native_ref.session_id; only Claude Code does.
+ *  24. list_workers prints dest_runtime; Codex/Gemini orphan copy does not chase dest return_to_origin.
  *
  *   node bin/dest-launch-check.js
  */
@@ -281,6 +282,9 @@ function fail(msg) {
   if (/native session: null/.test(listed)) {
     fail('list_workers must not print native session until session_id is harvested\n' + listed);
   }
+  if (!/→ codex\]/.test(listed) || !/→ claude-code\]/.test(listed) || !/→ gemini\]/.test(listed)) {
+    fail('list_workers must print dest_runtime (codex/claude-code/gemini), not dest_surface code for every dest\n' + listed);
+  }
   const workerRows = (await core.handleApi('GET', '/api/workers', {}, {})).payload || [];
   const originTasks = workerRows.filter(w => w.origin && w.origin.id === originId).map(w => w.task);
   if (new Set(originTasks).size < 2) {
@@ -293,6 +297,36 @@ function fail(msg) {
   if (!/still working|ORPHANED|Worker /.test(one)) {
     fail('single in-flight omit worker_id must report that worker, got\n' + one);
   }
+
+  process.env.HANDOFF_ORPHAN_MINUTES = '0';
+  const listedOrphan = String(await callTool('list_workers', {}, ctx, core));
+  for (const line of listedOrphan.split('\n')) {
+    if (!/ORPHANED/.test(line)) continue;
+    if (/→ codex\]/.test(line) || /→ gemini\]/.test(line)) {
+      if (/return_to_origin outcome:"failed"/.test(line)) {
+        fail('non-Claude orphan list_workers must not tell origin the dest will call return_to_origin\n' + line);
+      }
+      if (!/no return_to_origin/.test(line)) {
+        fail('non-Claude orphan list_workers must say this dest has no return_to_origin\n' + line);
+      }
+    }
+    if (/→ claude-code\]/.test(line) && !/return_to_origin outcome:"failed"/.test(line)) {
+      fail('Claude orphan list_workers may still mention dest return_to_origin\n' + line);
+    }
+  }
+  const orphanedCodex = String(await callTool('get_worker_result', { worker_id: wid[1] }, ctx, core));
+  if (!/ORPHANED/.test(orphanedCodex)) fail('Codex worker past the orphan threshold must say ORPHANED\n' + orphanedCodex);
+  if (/return_to_origin outcome:"failed" from its session/.test(orphanedCodex)) {
+    fail('Codex get_worker_result orphan copy must not tell origin to wait for dest return_to_origin\n' + orphanedCodex);
+  }
+  if (!/no return_to_origin/.test(orphanedCodex)) {
+    fail('Codex get_worker_result orphan copy must say this dest has no return_to_origin\n' + orphanedCodex);
+  }
+  const orphanedClaude = String(await callTool('get_worker_result', { worker_id: defWid[1] }, ctx, core));
+  if (!/ORPHANED/.test(orphanedClaude) || !/return_to_origin outcome:"failed"/.test(orphanedClaude)) {
+    fail('Claude get_worker_result orphan copy may still mention dest return_to_origin\n' + orphanedClaude);
+  }
+  delete process.env.HANDOFF_ORPHAN_MINUTES;
 
   const dests = require('../handoff-dest-runtimes');
   const { spawn } = require('child_process');

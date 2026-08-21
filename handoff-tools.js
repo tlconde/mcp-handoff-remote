@@ -637,6 +637,28 @@ function pickWorker(ws, args) {
   return { refuse: pool, reason: 'ambiguous' };
 }
 
+function workerDestLabel(w) {
+  return (w && (w.dest_runtime || w.dest_surface)) || 'code';
+}
+
+function destHasReturnToOrigin(w) {
+  const runtime = w && w.dest_runtime;
+  return !runtime || runtime === 'claude-code';
+}
+
+function orphanCloseCopy(w) {
+  if (destHasReturnToOrigin(w)) {
+    return {
+      list: 'reopen it or close with return_to_origin outcome:"failed"',
+      result: 'Either reopen it, or close the transaction honestly: return_to_origin outcome:"failed" from its session, or resolve here once you know the real outcome.',
+    };
+  }
+  return {
+    list: 'reopen it, or resolve here once you know the real outcome (this dest has no return_to_origin)',
+    result: 'Either reopen it, or resolve here once you know the real outcome (this dest has no return_to_origin).',
+  };
+}
+
 /** Tools migrated to the shared daemon tool layer (served identically by the in-process
  * bridge and the daemon's tools/call). 3a: get_handoff, get_decisions. 3b: report_progress,
  * get_worker_result, then the pin WRITERS pick_up + continue_from (3b-5) — the first tools
@@ -861,7 +883,7 @@ async function callTool(name, args, ctx, core) {
     const nat = (w.native_ref && w.native_ref.session_id)
       ? `\nReopen the actual worker session anytime: ${w.native_ref.resume || w.native_ref.session_id}`
       : '';
-    if (w.orphaned) return `⚠ Worker ${w.worker_id} looks ORPHANED — no progress and silent past the threshold. Task: ${w.task}${nat}\nEither reopen it, or close the transaction honestly: return_to_origin outcome:"failed" from its session, or resolve here once you know the real outcome.`;
+    if (w.orphaned) return `⚠ Worker ${w.worker_id} looks ORPHANED — no progress and silent past the threshold. Task: ${w.task}${nat}\n${orphanCloseCopy(w).result}`;
     if (w.working) return `Worker ${w.worker_id} is still working — no progress reported yet. Task: ${w.task}${nat}`;
     const r = await call('POST', `/api/links/${w.link_id}/resolve`);
     return `Worker result (round-trip complete, link resolved):\n${r.message.text}${nat}`;
@@ -2302,7 +2324,7 @@ async function callTool(name, args, ctx, core) {
     const ws = await call('GET', '/api/workers');
     if (!ws.length) return banner + 'No workers yet. Use send_to_worker to dispatch one — or call status for what is waiting.';
     return banner + ws.map(w =>
-      `- ${w.worker_id} [${w.status}${w.working ? ' · still working' : ''}${w.orphaned ? ' · ⚠ ORPHANED — silent past the threshold; reopen it or close with return_to_origin outcome:"failed"' : ''} → ${w.dest_surface || 'code'}] task: ${w.task}` +
+      `- ${w.worker_id} [${w.status}${w.working ? ' · still working' : ''}${w.orphaned ? ` · ⚠ ORPHANED — silent past the threshold; ${orphanCloseCopy(w).list}` : ''} → ${workerDestLabel(w)}] task: ${w.task}` +
       (w.native_ref && w.native_ref.session_id
         ? `\n  native session: ${w.native_ref.session_id}${w.native_ref.resume ? ` · ${w.native_ref.resume}` : ''}`
         : '') +

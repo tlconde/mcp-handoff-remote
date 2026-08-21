@@ -604,7 +604,7 @@ async function buildStatusReport(args, ctx, core) {
   } else if (working.length) {
     next = `list_workers / get_worker_result — ${working.length} worker(s) still running.`;
   } else if (orphaned.length) {
-    next = `Close or reopen orphaned worker ${orphaned[0].worker_id} (return_to_origin outcome:"failed", or reopen via its native resume).`;
+    next = `Close or reopen orphaned worker ${orphaned[0].worker_id}. ${orphanCloseCopy(orphaned[0]).result}`;
   } else if (!sessions.length) {
     next = 'Fresh install ✓ — from any chat: /handoff code (or "hand this off to Claude Code").';
   } else {
@@ -2998,6 +2998,7 @@ function formatSessionCandidates(sessions, st) {
 
 module.exports = {
   namedOrPinned, callTool, MIGRATED, pickWorker,
+  workerDestLabel, destHasReturnToOrigin, orphanCloseCopy,
   isTargetable,   // exported for the retirement suite: the one chokepoint every by-name path uses
   deliveryNoteFor, seatProductLabel, registrationMissing, incompleteNote, enrolmentDoor,
   targetNames, matchesName, matchesNameExact, filterByName,

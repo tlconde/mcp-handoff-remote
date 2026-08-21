@@ -30,6 +30,7 @@
  *  22. native session/resume is omitted until session_id is harvested.
  *  23. Probe-only dests (Gemini) do not mint a uuid as native_ref.session_id; only Claude Code does.
  *  24. list_workers prints dest_runtime; Codex/Gemini orphan copy does not chase dest return_to_origin.
+ *  25. status Next reuses dest-specific orphanCloseCopy (Codex/Gemini do not have return_to_origin).
  *
  *   node bin/dest-launch-check.js
  */
@@ -325,6 +326,28 @@ function fail(msg) {
   const orphanedClaude = String(await callTool('get_worker_result', { worker_id: defWid[1] }, ctx, core));
   if (!/ORPHANED/.test(orphanedClaude) || !/return_to_origin outcome:"failed"/.test(orphanedClaude)) {
     fail('Claude get_worker_result orphan copy may still mention dest return_to_origin\n' + orphanedClaude);
+  }
+  const { orphanCloseCopy } = require('../handoff-tools');
+  const claudeOrphan = orphanCloseCopy({ dest_runtime: 'claude-code' });
+  const codexOrphan = orphanCloseCopy({ dest_runtime: 'codex' });
+  const geminiOrphan = orphanCloseCopy({ dest_runtime: 'gemini' });
+  if (!/return_to_origin outcome:"failed"/.test(claudeOrphan.result)) {
+    fail('Claude orphanCloseCopy must still mention dest return_to_origin');
+  }
+  if (/return_to_origin outcome:"failed"/.test(codexOrphan.result) || /return_to_origin outcome:"failed"/.test(geminiOrphan.result)) {
+    fail('Codex/Gemini orphanCloseCopy must not tell origin the dest will call return_to_origin');
+  }
+  if (!/no return_to_origin/.test(codexOrphan.result) || !/no return_to_origin/.test(geminiOrphan.result)) {
+    fail('Codex/Gemini orphanCloseCopy must say this dest has no return_to_origin');
+  }
+  const statusOrphan = String(await callTool('status', {}, ctx, core));
+  if (/return_to_origin outcome:"failed", or reopen via its native resume/.test(statusOrphan)) {
+    fail('status Next must not use Claude-only orphan close for every dest\n' + statusOrphan);
+  }
+  const toolsSrc = fs.readFileSync(path.join(__dirname, '../handoff-tools.js'), 'utf8');
+  const statusFn = toolsSrc.slice(toolsSrc.indexOf('function buildStatusReport'), toolsSrc.indexOf('function pickWorker'));
+  if (!/orphanCloseCopy\(orphaned\[0\]\)/.test(statusFn)) {
+    fail('status Next for orphans must reuse orphanCloseCopy(orphaned[0])');
   }
   delete process.env.HANDOFF_ORPHAN_MINUTES;
 

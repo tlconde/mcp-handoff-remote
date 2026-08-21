@@ -9,7 +9,7 @@
       "name": "handoff",
       "source": "./",
       "description": "Hand work between seats — Claude or Grok, chat or code — and machines: envelopes that carry a task, its decisions and its artifacts, a shared store, and a per-machine wake agent that delivers locally.",
-      "version": "1.0.5",
+      "version": "1.0.6",
       "license": "MIT",
       "keywords": [
         "handoff",

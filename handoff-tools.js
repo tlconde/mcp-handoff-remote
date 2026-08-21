@@ -2626,7 +2626,13 @@ function localCodeSessions(limit) {
           // Skip machine noise when deriving a title: our own STALE BRIDGE warning once
           // leaked into a session title via the first tool response (found by the Cowork
           // agent reading the list). Take the first candidate that reads like content.
-          const noise = t => /STALE BRIDGE|^⚠|^\[Image:/.test(t);
+          // Tag-shaped openers cover the CLASS of harness-injected content (<system-reminder>,
+          // <total_tokens>, our own <!-- handoff-protocol command --> preamble, ...) rather
+          // than one tag per escape: measured 2026-08-21, 27 of the 30 most recent sessions
+          // here were titled "<total_tokens>...</total_tokens>", which also broke every
+          // title-based resolver match on them. "Caveat: The messages below" is the preamble
+          // the CLI writes into resumed-session transcripts.
+          const noise = t => /STALE BRIDGE|^⚠|^\[Image:|^\s*<(?:!--|[a-z_][\w-]*[\s>])|^Caveat: The messages below/i.test(t);
           for (const rx of [/"summary"\s*:\s*"((?:[^"\\]|\\.){4,120})/g, /"text"\s*:\s*"((?:[^"\\]|\\.){8,120})/g]) {
             let mm;
             while (!title && (mm = rx.exec(head))) {
@@ -2634,11 +2640,18 @@ function localCodeSessions(limit) {
             }
             if (title) break;
           }
+          // The slug decode below turns EVERY dash into a slash, so any folder with a dash
+          // in its name ("grok-ship" → "grok/ship") decodes to a path that exists nowhere.
+          // The transcript itself records the real path: prefer its "cwd" field and keep the
+          // decode only as the fallback for a head with no cwd line.
+          const cwdM = head.match(/"cwd"\s*:\s*"((?:[^"\\]|\\.)+)"/);
+          let folder = null;
+          if (cwdM) { try { folder = JSON.parse('"' + cwdM[1] + '"'); } catch (_) {} }
           out.push({
             id: f.slice(0, -6),
             title: (title || '(untitled session)').slice(0, 80),
             mtime: fs.statSync(fp).mtimeMs,
-            folder: proj.replace(/^-/, '/').replace(/-/g, '/')
+            folder: folder || proj.replace(/^-/, '/').replace(/-/g, '/')
           });
         } catch (_) {}
       }

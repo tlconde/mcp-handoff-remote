@@ -10,10 +10,14 @@
  *   4. dest omitted when both present is REFUSED as ambiguous.
  *   5. dest omitted when only one is present defaults to that one.
  *   6. A second identical dispatch within the window returns duplicate_in_flight.
+ *   6b. A different task still dispatches even if a return-owed non-code dest exists from this origin.
+ *   6c. A code dest with no worker_task_fp is not a duplicate of any task.
  *   7. origin.project_state.project_id binds cwd when dir is omitted, and the result names it.
  *   8. worker_id reused as session_id is refused (origin is the enrolled chat).
  *   9. omitted dir and missing project_id prints the home cwd fallback.
  *  10. worker spawn ignores stdin and drains stderr (Codex exec hang class) without a live Codex.
+ *  11. stderr progress is NOT concatenated into the stdout auto-summary sink.
+ *  12. Claude headless prompt keeps MCP close; Codex/Gemini read HANDOFF.md and print stdout.
  *
  *   node bin/dest-launch-check.js
  */
@@ -122,6 +126,36 @@ function fail(msg) {
     fail('second identical dispatch must hit the duplicate guard and name the existing worker\n' + dup);
   }
 
+  const side = await core.handleApi('POST', `/api/sessions/${originId}/continue`, {}, { to: 'chat', return_leg: true });
+  if (side.code >= 400 || !side.payload || !side.payload.dest) {
+    fail('continue chat dest for duplicate-guard fixture failed: ' + JSON.stringify(side.payload));
+  }
+  const chatDestId = side.payload.dest.id;
+  const otherTask = String(await callTool('send_to_worker', {
+    task: 'a different task so it is not a duplicate',
+    origin_session_id: originId,
+    dest: 'codex',
+  }, ctx, core));
+  if (!/Worker dispatched/.test(otherTask) || /Duplicate in-flight/.test(otherTask)) {
+    fail('a different task must dispatch even when a return-owed chat dest exists from this origin\n' + otherTask);
+  }
+  if (otherTask.indexOf(chatDestId) >= 0) {
+    fail('duplicate guard must not point at a non-code dest\n' + otherTask);
+  }
+
+  const stFp = (await core.handleApi('GET', '/api/state', {}, {})).payload;
+  const workerRec = stFp.sessions[wid[1]];
+  if (!workerRec) fail('worker record missing before fingerprint-strip test');
+  const stripped = JSON.parse(JSON.stringify(workerRec));
+  delete stripped.worker_task_fp;
+  core.__writeRecordForTests('sessions', workerRec.id, stripped);
+  const afterStrip = String(await callTool('send_to_worker', {
+    task: 'ship the dest picker', origin_session_id: originId, dest: 'codex',
+  }, ctx, core));
+  if (!/Worker dispatched/.test(afterStrip) || /Duplicate in-flight/.test(afterStrip)) {
+    fail('a code dest with no worker_task_fp must not count as duplicate_in_flight\n' + afterStrip);
+  }
+
   process.env.HANDOFF_DEST_PRESENT = 'claude-code';
   const def = String(await callTool('send_to_worker', {
     task: 'a different task so it is not a duplicate',
@@ -151,11 +185,34 @@ function fail(msg) {
   if (dests.WORKER_STDIO[0] !== 'ignore' || dests.WORKER_STDIO[1] !== 'pipe' || dests.WORKER_STDIO[2] !== 'pipe') {
     fail('worker stdio must ignore stdin and pipe stdout+stderr, got ' + JSON.stringify(dests.WORKER_STDIO));
   }
+  const claudePrompt = dests.workerHeadlessPrompt({
+    runtime: dests.CATALOG.find(r => r.id === 'claude-code'),
+    sessionId: 'sess_code_test',
+    viaMcp: true,
+  });
+  if (!/get_handoff/.test(claudePrompt) || !/return_to_origin/.test(claudePrompt) || !/mcp__handoff__/.test(claudePrompt)) {
+    fail('Claude headless prompt must keep the MCP close chain\n' + claudePrompt);
+  }
+  const codexPrompt = dests.workerHeadlessPrompt({
+    runtime: dests.CATALOG.find(r => r.id === 'codex'),
+    sessionId: 'sess_code_test',
+    viaMcp: false,
+  });
+  if (!/HANDOFF\.md/.test(codexPrompt) || !/stdout/.test(codexPrompt)) {
+    fail('Codex prompt must say read HANDOFF.md and print a summary on stdout\n' + codexPrompt);
+  }
+  if (/mcp__handoff|return_to_origin|get_handoff|CLAUDE_CODE_SESSION_ID/.test(codexPrompt)) {
+    fail('Codex prompt must not mention Claude MCP close tools\n' + codexPrompt);
+  }
+  const geminiPrompt = dests.workerHeadlessPrompt({ runtime: dests.CATALOG.find(r => r.id === 'gemini') });
+  if (!/HANDOFF\.md/.test(geminiPrompt) || /mcp__handoff|return_to_origin|get_handoff/.test(geminiPrompt)) {
+    fail('Gemini prompt must be the non-Claude HANDOFF.md path, not MCP\n' + geminiPrompt);
+  }
   const fake = path.join(tmp, 'fake-codex-exec.js');
   fs.writeFileSync(fake, [
     "'use strict';",
     "let got = false;",
-    "process.stderr.write('progress'.repeat(8000));",
+    "process.stderr.write('progress-1\\n'.repeat(4000));",
     "process.stdin.on('data', () => { got = true; });",
     "const done = (msg, code) => { process.stdout.write(msg + '\\n'); process.exit(code); };",
     "if (process.stdin.readableEnded) done('STDIN_EOF', 0);",
@@ -165,7 +222,7 @@ function fail(msg) {
     '',
   ].join('\n'));
   const child = spawn(process.execPath, [fake], dests.workerSpawnOpts({ cwd: tmp }));
-  const sink = { out: '' };
+  const sink = { out: '', err: '' };
   dests.consumeWorkerPipes(child, sink);
   const started = await dests.waitChildStarted(child);
   if (!started.started) fail('fixture spawn must start: ' + ((started.error && started.error.message) || 'unknown'));
@@ -179,14 +236,20 @@ function fail(msg) {
   if (code !== 0 || !/STDIN_EOF/.test(sink.out)) {
     fail('Codex-shaped spawn must see stdin EOF and drain stderr, exit ' + code + ' out=' + sink.out.slice(0, 300));
   }
+  if (/progress-1/.test(sink.out)) {
+    fail('stderr progress must not land in the stdout auto-summary sink, out=' + sink.out.slice(0, 300));
+  }
+  if (!/progress-1/.test(sink.err)) {
+    fail('stderr must still be drained into the discarded err buffer');
+  }
   const missing = spawn(path.join(tmp, 'no-such-codex-bin'), ['exec'], dests.workerSpawnOpts({ cwd: tmp }));
-  dests.consumeWorkerPipes(missing, { out: '' });
+  dests.consumeWorkerPipes(missing, { out: '', err: '' });
   const missed = await dests.waitChildStarted(missing);
   if (missed.started) fail('ENOENT spawn must not report started/launched:true');
 
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) { /* scratch */ }
   try { fs.rmSync(ws, { recursive: true, force: true }); } catch (_) { /* scratch */ }
-  console.log('dest-launch-check: OK — enrolled origin, dest probe/name/default, workspace bind, duplicate guard, spawn stdio.');
+  console.log('dest-launch-check: OK — enrolled origin, dest probe/name/default, workspace bind, duplicate guard, spawn stdio, dest prompt.');
 })().catch(e => {
   console.error('dest-launch-check: threw — ' + (e && e.stack || e));
   process.exit(2);

@@ -193,6 +193,12 @@ const withEnv = (env, fn) => {
       'probe-only dests have no invented spawn argv');
     ok(dests.WORKER_STDIO[0] === 'ignore' && dests.WORKER_STDIO[2] === 'pipe',
       'worker spawn ignores stdin (Codex exec EOF) and pipes stderr (progress must be consumed)');
+    const claudeP = dests.workerHeadlessPrompt({ runtime: { id: 'claude-code' }, sessionId: 'sess_x', viaMcp: true });
+    ok(/get_handoff/.test(claudeP) && /return_to_origin/.test(claudeP),
+      'Claude headless prompt keeps the MCP close chain');
+    const otherP = dests.workerHeadlessPrompt({ runtime: { id: 'codex' } });
+    ok(/HANDOFF\.md/.test(otherP) && /stdout/.test(otherP) && !/mcp__handoff|return_to_origin|get_handoff/.test(otherP),
+      'non-Claude dest prompt is HANDOFF.md + stdout, not MCP tools');
   }
 
   console.log(`\ncapability-probe: ${pass} passed, ${fail} failed`);

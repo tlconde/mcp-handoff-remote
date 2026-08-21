@@ -18,20 +18,36 @@ const { CURRENT } = require('./bin/platform-profile');
 /* stdin ignore = immediate EOF. Codex exec treats an open piped stdin as extra context
  * and never sees EOF if the parent keeps the pipe. stderr is piped so progress cannot
  * fill an unread buffer and block. Same stdio for every dest spawn — Claude -p does not
- * need stdin either; the prompt is argv. */
+ * need stdin either; the prompt is argv.
+ *
+ * stdout and stderr are drained separately. doLaunch turns sink.out into `[auto CLI]`
+ * progress; Codex writes progress on stderr, so mixing the two overwrites the real
+ * summary. stderr is consumed into a capped discarded buffer and never used as the
+ * auto summary. */
 const WORKER_STDIO = ['ignore', 'pipe', 'pipe'];
+const PIPE_CAP = 20000;
 
 function workerSpawnOpts(extra) {
   return Object.assign({ stdio: WORKER_STDIO.slice() }, extra || {});
 }
 
 function consumeWorkerPipes(child, sink) {
-  const take = d => {
-    sink.out += d;
-    if (sink.out.length > 20000) sink.out = sink.out.slice(-20000);
+  if (!sink || typeof sink !== 'object') return sink;
+  if (typeof sink.out !== 'string') sink.out = '';
+  if (typeof sink.err !== 'string') sink.err = '';
+  const take = key => d => {
+    sink[key] += d;
+    if (sink[key].length > PIPE_CAP) sink[key] = sink[key].slice(-PIPE_CAP);
   };
-  if (child.stdout) child.stdout.on('data', take);
-  if (child.stderr) child.stderr.on('data', take);
+  if (child.stdout) {
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', take('out'));
+  }
+  if (child.stderr) {
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', take('err'));
+  }
+  return sink;
 }
 
 function waitChildStarted(child) {
@@ -213,6 +229,25 @@ function nativeRefFor(runtime, nativeId, dir) {
   return { kind: runtime.id, session_id: nativeId, cwd: dir, resume: null };
 }
 
+/**
+ * Headless argv prompt. Claude keeps the MCP close chain (get_handoff / return_to_origin).
+ * Codex, Gemini, and any other dest have no those tools — they read HANDOFF.md, do the
+ * work, and print a short summary on stdout. Mentions of mcp__handoff or
+ * CLAUDE_CODE_SESSION_ID on a non-Claude dest send the worker chasing missing tools.
+ */
+function workerHeadlessPrompt({ runtime, sessionId, viaMcp } = {}) {
+  const sid = sessionId || '';
+  if (runtime && runtime.id === 'claude-code') {
+    const mountNote = 'Prefer the LOCAL handoff mount (tools named mcp__handoff__*): it reaches the daemon over a unix socket. The mcp__claude_ai_Handoff_Remote__* tools are the same server over the network with a 10-second reply budget, and get_handoff on a large brief will time out there. Use the remote mount only if the local one is unavailable.';
+    const closeNote = 'When the work is finished, call report_progress with your summary and THEN call return_to_origin to close the transaction — closing is your last act, not an optional courtesy. A transaction left open reads as unfinished work to everyone after you.';
+    if (viaMcp) {
+      return `Use the handoff MCP: call get_handoff with session_id "${sid}" to pull this session's context envelope — pass the id explicitly, do NOT rely on a pinned transaction, you do not have one. ${mountNote} Then continue the work from where it left off. ${closeNote}`;
+    }
+    return `Read HANDOFF.md and continue this session from where it left off. If the handoff MCP is available, call get_handoff with session_id "${sid}" for the full envelope (pass the id explicitly — you have no pinned transaction). ${mountNote} ${closeNote} Finish with a 2-3 sentence summary of what you did.`;
+  }
+  return 'Read HANDOFF.md, do the work it describes, then print a short summary of what you did on stdout. Do not wait for user input.';
+}
+
 function spawnArgv(runtime, { nativeId, prompt, allowedTools } = {}) {
   if (!runtime || !runtime.spawnKind) return null;
   if (runtime.spawnKind === 'claude') {
@@ -232,4 +267,5 @@ function spawnArgv(runtime, { nativeId, prompt, allowedTools } = {}) {
 module.exports = {
   CATALOG, probeDestRuntimes, pickDestRuntime, matchCatalog, nativeRefFor, spawnArgv, normalizeWant,
   WORKER_STDIO, workerSpawnOpts, consumeWorkerPipes, waitChildStarted,
+  workerHeadlessPrompt,
 };

@@ -1650,18 +1650,20 @@ function bindWorkspaceDir(dir, origin) {
 function findDuplicateWorker(origin, task, runtimeId) {
   if (!origin) return null;
   const fp = taskFingerprint(task);
+  if (!fp) return null;
   const windowMs = parseInt(process.env.HANDOFF_WORKER_DEDUP_MS || '120000', 10);
   const nowMs = Date.now();
   for (const link of Object.values(db.links)) {
     if (link.origin !== origin.id || link.status !== 'active') continue;
     const dest = db.sessions[link.dest];
     if (!dest || dest.archived || dest.retired) continue;
+    if (dest.surface !== 'code') continue;
+    if (!dest.worker_task_fp || dest.worker_task_fp !== fp) continue;
     const age = nowMs - new Date(link.created_at).getTime();
     if (!Number.isFinite(age) || age > windowMs) continue;
     if ((dest.messages || []).some(x => x.kind === 'progress')) continue;
     const destRuntime = dest.worker_runtime || (dest.native_ref && dest.native_ref.kind) || null;
     if (runtimeId && destRuntime && destRuntime !== runtimeId) continue;
-    if (fp && dest.worker_task_fp && dest.worker_task_fp !== fp) continue;
     return { worker_id: dest.id, link_id: link.id, dest };
   }
   return null;
@@ -1738,7 +1740,6 @@ async function doLaunch(s, b) {
    * The remote mount stays granted on purpose — denying it is what caused barrier 4, and a worker
    * that reaches for it should be served rather than refused. This states a PREFERENCE and the
    * reason for it, so the fast path is the default and the slow one remains a fallback. */
-  const mountNote = 'Prefer the LOCAL handoff mount (tools named mcp__handoff__*): it reaches the daemon over a unix socket. The mcp__claude_ai_Handoff_Remote__* tools are the same server over the network with a 10-second reply budget, and get_handoff on a large brief will time out there. Use the remote mount only if the local one is unavailable.';
   /* CLOSING THE TRANSACTION IS PART OF THE WORK, AND THE BRIEF NEVER SAID SO.
    *
    * Every dispatch asked for report_progress and none asked for return_to_origin. Workers did
@@ -1752,11 +1753,12 @@ async function doLaunch(s, b) {
    * A reader cannot tell an open transaction from unfinished work — that is the whole point of the
    * pending list — so the next session, or the SessionStart hook when it exists, would re-dispatch
    * or wait for work nobody owes. Reporting is not closing; the last act of doing the work is
-   * saying it is done. */
-  const closeNote = 'When the work is finished, call report_progress with your summary and THEN call return_to_origin to close the transaction — closing is your last act, not an optional courtesy. A transaction left open reads as unfinished work to everyone after you.';
-  const PROMPT = viaMcp
-    ? `Use the handoff MCP: call get_handoff with session_id "${s.id}" to pull this session's context envelope — pass the id explicitly, do NOT rely on a pinned transaction, you do not have one. ${mountNote} Then continue the work from where it left off. ${closeNote}`
-    : `Read HANDOFF.md and continue this session from where it left off. If the handoff MCP is available, call get_handoff with session_id "${s.id}" for the full envelope (pass the id explicitly — you have no pinned transaction). ${mountNote} ${closeNote} Finish with a 2-3 sentence summary of what you did.`;
+   * saying it is done.
+   *
+   * Dest-specific: Claude keeps that MCP close chain. Codex/Gemini have no those tools — a
+   * prompt that names mcp__handoff / return_to_origin / CLAUDE_CODE_SESSION_ID sends them
+   * chasing missing tools instead of reading HANDOFF.md. */
+  const PROMPT = destRuntimes.workerHeadlessPrompt({ runtime, sessionId: s.id, viaMcp });
   const spawnPlan = destRuntimes.spawnArgv(runtime, { nativeId, prompt: PROMPT });
   const command = spawnPlan
     ? `cd ${JSON.stringify(dir)} && ${spawnPlan.bin} ${spawnPlan.args.map(a => JSON.stringify(a)).join(' ')}`
@@ -1864,7 +1866,7 @@ async function doLaunch(s, b) {
    * a uuid that belongs to another session, which is the stored-address disease with a stolen
    * address. Setting it explicitly overwrites that inheritance rather than leaving it to luck.
    * Non-Claude dests do not get CLAUDE_CODE_SESSION_ID — that would be a borrowed identity. */
-  const sink = { out: '' };
+  const sink = { out: '', err: '' };
   destRuntimes.consumeWorkerPipes(child, sink);
   const startedAt = Date.now();
   const started = await destRuntimes.waitChildStarted(child);
@@ -1884,6 +1886,7 @@ async function doLaunch(s, b) {
   child.on('close', (code2) => {
     load(); // another process may have written meanwhile
     const s2 = db.sessions[s.id];
+    // stdout only — Codex progress on stderr is drained separately and must not become this line
     const summary = (sink.out.trim().split('\n').filter(Boolean).slice(-6).join(' ') || 'CLI session finished with no output').slice(0, 600);
     if (s2) { addMessage(s2, { role: 'system', kind: 'progress', text: `[auto CLI] ${summary}` }); save(); }
     ops('worker_done', { session: s.id, native: nativeId, exit: code2, secs: Math.round((Date.now() - startedAt) / 1000), summary_excerpt: summary.slice(0, 200) });

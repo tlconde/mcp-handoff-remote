@@ -22,19 +22,33 @@ const TOOLS = [
       additionalProperties: false
     }
   },
-  /* ---- origin-side tools: use from ANY Claude chat surface (Cowork, Desktop, app)
-   *      that has this MCP registered. This is the no-UI loop: dispatch work to a
-   *      Claude Code worker and pull its results back into the conversation. ---- */
+  /* ---- origin-side tools: use from ANY enrolled chat (grok.com, claude.ai, Cursor
+   *      over Door B) that has this MCP registered. Dispatch work to a laptop agent
+   *      CLI that is actually installed (Claude Code, Codex, others) and pull results
+   *      back into THIS conversation. ---- */
   {
     name: 'send_to_worker',
-    description: 'Dispatch a task to a Claude Code worker session. Creates an origin session carrying the task + conversation context, hands it off with a full context envelope, and launches claude (headless by default, or in the IDE). Use when the user says to send work to Claude Code / a worker. Returns a worker_id to check later.',
+    description: 'Start a terminal agent on the home laptop from THIS enrolled chat. This conversation is the origin (pass origin_session_id / session_id / session_uuid: the sess_… register_chat_session returned). Probes home for installed agent CLIs (Claude Code, Codex, others); honor dest when the user named one ("start Codex", "start Claude Code"); otherwise start the one that is present. Several installed and no name → lists them and does nothing. grok.com → Codex is valid. Cursor Cloud Agents stay the Cursor-runtime path — this tool is laptop terminal spawn. Opens a return link. Duplicate in-flight dispatches are refused. Does not wrap Cowork spawn APIs. Does not add Slack or ChatGPT.',
     inputSchema: {
       type: 'object',
       properties: {
         task: { type: 'string', description: 'The work to do, imperative and specific.' },
         context: { type: 'string', description: 'Summary of the conversation so far: decisions, constraints, relevant facts. Travels in the envelope.' },
-        dir: { type: 'string', description: 'Absolute path of the repo/folder the worker should run in. Strongly recommended.' },
-        mode: { type: 'string', enum: ['headless', 'ide'], description: 'headless = invisible background run (default); ide = opens Cursor/VS Code window.' }
+        dir: { type: 'string', description: 'Absolute path of the repo/folder the worker should run in. If omitted, origin project_state.project_id is used when it is an existing directory.' },
+        mode: { type: 'string', enum: ['headless', 'ide'], description: 'headless = invisible background run (default); ide = opens Cursor/VS Code window (Claude Code dest only).' },
+        dest: { type: 'string', description: 'Laptop agent CLI to start: "codex", "claude", "claude code", "gemini". Required when several are installed. Omit to start the one that is present.' },
+        origin_session_id: { type: 'string', description: 'REQUIRED over Door B (grok.com, claude.ai, Cursor chat): the sess_… id register_chat_session returned. This chat is the origin — a shadow carrier is not minted. session_id and session_uuid are the same value.' },
+        session_id: { type: 'string', description: 'Same value as origin_session_id — the field name register_chat_session prints.' },
+        session_uuid: { type: 'string', description: 'Same value as origin_session_id / session_id.' },
+        title: { type: 'string', description: 'Short title for the worker dest. Defaults to the start of the task.' },
+        project_state: {
+          type: 'object',
+          description: 'Optional workspace bind: project_id is an absolute folder path on the home machine.',
+          properties: {
+            project_id: { type: 'string', description: 'Workspace / repo / folder path on the home machine.' }
+          },
+          additionalProperties: true
+        }
       },
       required: ['task'], additionalProperties: false
     }

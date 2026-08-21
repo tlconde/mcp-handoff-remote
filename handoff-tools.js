@@ -571,6 +571,13 @@ async function buildStatusReport(args, ctx, core) {
     lines.push('Workers: none');
   }
 
+  let destProbe = { dests: [], present: [] };
+  try { destProbe = await call('GET', '/api/dest-runtimes'); } catch (_) { destProbe = { dests: [], present: [] }; }
+  const destPresent = (destProbe && destProbe.present) || [];
+  lines.push(destPresent.length
+    ? `Laptop dests: ${destPresent.map(d => d.label).join(', ')} (probe of home agent CLIs)`
+    : 'Laptop dests: none of Claude Code, Codex, Gemini CLI found on the home machine');
+
   const surfaceHint = (args && args.surface) ? ` on ${args.surface}` : '';
   // Priority: live handoffs/inbox first. Orphans are debris — mention them, but do not
   // steal Next: from a pending offer the user is actively trying to claim (field failure
@@ -1670,15 +1677,39 @@ async function callTool(name, args, ctx, core) {
 
   if (name === 'send_to_worker') {
     if (!args || !args.task) throw new Error('task required');
+    const originId = String(args.origin_session_id || args.session_id || args.session_uuid || '').trim() || null;
+    const peerUuid = args._peer_identity && args._peer_identity.cli_uuid;
+    const remoteChat = !!(ctx && ctx.remote && !ctx.cli_uuid && !peerUuid);
+    if (remoteChat && !originId) {
+      return 'REFUSED: this chat is not identified. Pass origin_session_id (the sess_… id register_chat_session returned; session_id and session_uuid are the same value). This conversation is the origin — a shadow carrier is not minted. Nothing was dispatched.';
+    }
     const r = await call('POST', '/api/workers', {}, {
-      task: args.task, context: args.context, dir: args.dir, mode: args.mode
+      task: args.task, context: args.context, dir: args.dir, mode: args.mode,
+      dest: args.dest, origin_session_id: originId, title: args.title,
+      project_state: args.project_state,
     });
+    if (r && (r.error || (r.launched === false && r.detail && !r.launch))) {
+      const present = (r.present && r.present.length)
+        ? ` Present: ${r.present.map(p => p.label).join(', ')}.`
+        : '';
+      return `REFUSED: ${r.detail || r.error}${present} Nothing was dispatched.`;
+    }
     const l = r.launch || {};
+    const destLabel = (r.dest && r.dest.label) || 'laptop agent';
+    if (l.reason === 'duplicate_in_flight') {
+      return `Duplicate in-flight — the same task is already running from this origin.\nworker_id: ${r.worker_id}\norigin: ${r.origin_id}\ndest: ${destLabel}\nNothing new was dispatched. Check later with get_worker_result. Home-timeout on a prior call is the same case: verify by effect, do not retry blind.`;
+    }
     const how = l.launched
-      ? (l.mode === 'ide' ? `NEW Claude Code session in a ${l.ide === 'code' ? 'VS Code' : 'Cursor'} window (interactive)` : 'NEW Claude Code session, headless in the background — its summary will come back on its own')
-      : `NEW Claude Code session prepared but NOT auto-launched (${l.reason || 'unknown'}); run this in the target folder: ${l.command || 'n/a'}`;
-    const nat = l.native_ref ? `\nNative Claude Code session: ${l.native_ref.session_id} (reopen anytime: ${l.native_ref.resume})` : '';
-    return `Worker dispatched.\nworker_id: ${r.worker_id}\nStatus: ${how}${nat}\nCheck later with get_worker_result (worker_id optional).`;
+      ? (l.mode === 'ide' ? `NEW ${destLabel} session in a ${l.ide === 'code' ? 'VS Code' : 'Cursor'} window (interactive)` : `NEW ${destLabel} session, headless on the home laptop — its summary will come back on its own`)
+      : `NEW ${destLabel} session prepared but NOT auto-launched (${l.reason || 'unknown'}); run this in the target folder: ${l.command || 'n/a'}`;
+    const nat = l.native_ref ? `\nNative session: ${l.native_ref.kind || destLabel} ${l.native_ref.session_id}${l.native_ref.resume ? ` (reopen: ${l.native_ref.resume})` : ''}` : '';
+    const originLine = r.origin_minted
+      ? `Origin: minted carrier ${r.origin_id} (this caller did not pass origin_session_id).`
+      : `Origin: this conversation (${r.origin_id}) — no shadow carrier.`;
+    const pickLine = r.dest && r.dest.explicit
+      ? `Dest: ${destLabel} (named).`
+      : (r.dest && r.dest.defaulted ? `Dest: ${destLabel} (the one present on the home machine).` : `Dest: ${destLabel}.`);
+    return `Worker dispatched.\n${originLine}\n${pickLine}\nworker_id: ${r.worker_id}\nStatus: ${how}${nat}\nReturn link OPEN — call get_worker_result later, or the dest calls return_to_origin.`;
   }
   if (name === 'list_conversations') {
     const st = await call('GET', '/api/state');
@@ -1733,7 +1764,7 @@ async function callTool(name, args, ctx, core) {
         'No conversations in the protocol yet.\n\n' +
         'Getting started (30 seconds):\n' +
         '1. Call status — confirms the bridge is current.\n' +
-        '2. From any Claude chat with this MCP: /handoff code (or say "hand this off to Claude Code").\n' +
+        '2. From an enrolled chat with this MCP: send_to_worker (pass origin_session_id; dest if you named Codex / Claude Code).\n' +
         '3. In the Code session: pick_up or /pull — then work and /return-to-origin.'
       );
     }

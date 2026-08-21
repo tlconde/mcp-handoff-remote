@@ -88,6 +88,7 @@ async function main() {
     task,
     context: 'Dispatch-chain preflight. The only success criterion is the marker file with the exact content given in the task.',
     dir,
+    dest: 'claude-code',
     mode: 'headless',
   });
 

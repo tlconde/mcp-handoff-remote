@@ -38,6 +38,8 @@ jobs:
       # matrix above has three rows.
       - name: capability-probe smoke
         run: node capability-probe-smoke.js
+      - name: dest launch check
+        run: node bin/dest-launch-check.js
       - name: role smoke
         run: node role-smoke.js
       - name: notify smoke

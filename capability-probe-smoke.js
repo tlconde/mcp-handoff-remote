@@ -123,6 +123,76 @@ const withEnv = (env, fn) => {
     fs.rmSync(xdg, { recursive: true, force: true });
   }
 
+  // ---- LAPTOP DEST RUNTIMES: probe + pick, injected, never inherited ----
+  {
+    const dests = require('./handoff-dest-runtimes');
+    const { profileFor } = require('./bin/platform-profile');
+    const none = () => false;
+    const whichNone = { claude: '', codex: '', gemini: '' };
+
+    const probedNone = dests.probeDestRuntimes({
+      profile: profileFor('darwin', '/tmp/home-dest'),
+      exists: none, whichOutput: whichNone,
+    });
+    ok(probedNone.every(r => r.present === false),
+      'dest probe: empty PATH and no candidate files → nothing present (not a Claude default)');
+    const nonePick = dests.pickDestRuntime(null, probedNone);
+    ok(nonePick.ok === false && nonePick.error === 'none_present',
+      'dest pick: nothing present and no name → refuse, do not guess Claude Code');
+
+    const darwinHome = '/tmp/home-dest-d';
+    const probedClaude = dests.probeDestRuntimes({
+      profile: profileFor('darwin', darwinHome),
+      exists: p => p === darwinHome + '/.local/bin/claude',
+      whichOutput: whichNone,
+    });
+    ok(probedClaude.find(r => r.id === 'claude-code').present === true, 'darwin candidate finds claude');
+    ok(probedClaude.find(r => r.id === 'codex').present === false, 'darwin candidate does not invent Codex');
+    const one = dests.pickDestRuntime(null, probedClaude);
+    ok(one.ok && one.defaulted && one.runtime.id === 'claude-code',
+      'dest pick: one present, no name → start that one');
+
+    const probedBoth = dests.probeDestRuntimes({
+      profile: profileFor('darwin', darwinHome),
+      exists: p => p === darwinHome + '/.local/bin/claude' || p === darwinHome + '/.local/bin/codex',
+      whichOutput: whichNone,
+    });
+    const ambi = dests.pickDestRuntime(null, probedBoth);
+    ok(ambi.ok === false && ambi.error === 'ambiguous' && ambi.present.length === 2,
+      'dest pick: Claude Code AND Codex present, no name → refuse, never guess');
+    const named = dests.pickDestRuntime('start Codex', probedBoth);
+    ok(named.ok && named.explicit && named.runtime.id === 'codex',
+      'dest pick: "start Codex" honors the name when both are present');
+    const namedClaude = dests.pickDestRuntime('Claude Code', probedBoth);
+    ok(namedClaude.ok && namedClaude.runtime.id === 'claude-code',
+      'dest pick: "Claude Code" honors the name');
+    const missing = dests.pickDestRuntime('codex', probedClaude);
+    ok(missing.ok === false && missing.error === 'dest_not_installed',
+      'dest pick: named Codex when only Claude Code is present → refuse, do not fall back');
+    const unknown = dests.pickDestRuntime('slack', probedBoth);
+    ok(unknown.ok === false && unknown.error === 'unknown_dest',
+      'dest pick: Slack is not a dest in this cut');
+    ok(!dests.matchCatalog('chatgpt'),
+      'dest catalog does not include ChatGPT');
+
+    const winProf = profileFor('win32', 'C:\\Users\\x');
+    const winClaude = dests.probeDestRuntimes({
+      profile: winProf,
+      exists: p => /claude\.exe$/i.test(p),
+      whichOutput: whichNone,
+    });
+    ok(winClaude.find(r => r.id === 'claude-code').present === true,
+      'win32: .exe candidate is found without calling `which`');
+    ok(winProf.binCandidates('codex').some(p => /\.exe$/i.test(p)),
+      'win32 binCandidates for a dest other than claude are still .exe paths — not a Claude-only list');
+
+    const argv = dests.spawnArgv({ spawnKind: 'codex', binPath: '/opt/codex' }, { prompt: 'do the thing' });
+    ok(argv && argv.bin === '/opt/codex' && argv.args[0] === 'exec',
+      'codex spawn is `codex exec`, not a Claude argv');
+    ok(dests.spawnArgv({ spawnKind: null, id: 'gemini' }, { prompt: 'x' }) === null,
+      'probe-only dests have no invented spawn argv');
+  }
+
   console.log(`\ncapability-probe: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

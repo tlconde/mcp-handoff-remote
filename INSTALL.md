@@ -108,6 +108,14 @@ register just returned (`session_uuid` or `session_id` — same value). A no-arg
 `whoami` after a successful register says unidentified; that is not a failed enrol.
 Do not register again.
 
+**Start a laptop agent from this chat.** After enrolment, call `send_to_worker` and pass
+`origin_session_id` (the minted `sess_…` id). This conversation is the origin — a second
+carrier record is not minted. The home machine probes for installed agent CLIs (Claude Code,
+Codex, others). If you named one ("start Codex", "start Claude Code"), that dest is used;
+otherwise the one that is present is started. Several installed and no name is a refuse, not
+a guess. `dir` or `project_state.project_id` can bind a repo folder; spawn working is enough
+if neither is set. Cursor Cloud Agents are a different path (`register_code_session` on that
+VM) and are unchanged.
 
 **Optional — the background daemon.** One process serving every terminal, so sessions can
 reach each other and wake each other:

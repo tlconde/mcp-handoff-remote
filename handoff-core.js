@@ -17,6 +17,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
 const { registrationMissing } = require('./handoff-enrolment');
+const destRuntimes = require('./handoff-dest-runtimes');
 
 const HOME = process.env.HANDOFF_HOME || path.join(os.homedir(), '.claude-handoff');
 const DATA = path.join(HOME, 'data.json');
@@ -1238,7 +1239,7 @@ function dedupeDecisions(sessions) {
  * worker dispatch. Link states: active (awaiting return) → resolved (returned) |
  * failed (honest blocker, closes the debt) | withdrawn/declined/superseded (offer died
  * first). ORPHANED is observational — computed from silence, never stored. */
-async function continueIn(origin, toSurface, { include = [], archive_origin = false, return_leg } = {}) {
+async function continueIn(origin, toSurface, { include = [], archive_origin = false, return_leg, supersede } = {}) {
   const envelope = await buildEnvelope(origin);
   const included = [];
   for (const sid of include) {
@@ -1250,14 +1251,20 @@ async function continueIn(origin, toSurface, { include = [], archive_origin = fa
   // (send_to_surface mints a fresh origin per call, so a re-run /handoff would never
   // match by id alone). Kills the pick:"latest" hack at the root — pick_up never sees
   // stale duplicates.
-  for (const old of Object.values(db.sessions)) {
-    if (!old.origin_ref || old.surface !== toSurface || offerState(old) !== 'offered') continue;
-    const sameOrigin = old.origin_ref.session_id === origin.id;
-    const sameWork = old.title === origin.title && old.origin_ref.surface === origin.surface;
-    if (sameOrigin || sameWork) {
-      old.offer = 'superseded';
-      closeOfferLink(old.id, 'superseded');
-      ops('offer_superseded', { old: old.id, origin: origin.id, surface: toSurface, by_title: !sameOrigin });
+  //
+  // Worker dispatch from an ENROLLED chat passes supersede:false: that chat is the origin
+  // for every worker it starts, and closing the previous worker's return link would turn
+  // a second task into a silent cancellation of the first.
+  if (supersede !== false) {
+    for (const old of Object.values(db.sessions)) {
+      if (!old.origin_ref || old.surface !== toSurface || offerState(old) !== 'offered') continue;
+      const sameOrigin = old.origin_ref.session_id === origin.id;
+      const sameWork = old.title === origin.title && old.origin_ref.surface === origin.surface;
+      if (sameOrigin || sameWork) {
+        old.offer = 'superseded';
+        closeOfferLink(old.id, 'superseded');
+        ops('offer_superseded', { old: old.id, origin: origin.id, surface: toSurface, by_title: !sameOrigin });
+      }
     }
   }
   const dest = createSession({ surface: toSurface, title: origin.title });
@@ -1627,27 +1634,70 @@ async function gather(toSurface, fromIds) {
   return { dest, envelopes, conflicts };
 }
 
+function taskFingerprint(task) {
+  return String(task || '').replace(/\s+/g, ' ').trim().slice(0, 400);
+}
+
+function bindWorkspaceDir(dir, origin) {
+  if (dir) return dir;
+  const pid = origin && origin.project_state && origin.project_state.project_id;
+  if (pid && typeof pid === 'string') {
+    try { if (fs.existsSync(pid) && fs.statSync(pid).isDirectory()) return pid; } catch (_) { /* unreadable is not a bind */ }
+  }
+  return process.cwd();
+}
+
+function findDuplicateWorker(origin, task, runtimeId) {
+  if (!origin) return null;
+  const fp = taskFingerprint(task);
+  const windowMs = parseInt(process.env.HANDOFF_WORKER_DEDUP_MS || '120000', 10);
+  const nowMs = Date.now();
+  for (const link of Object.values(db.links)) {
+    if (link.origin !== origin.id || link.status !== 'active') continue;
+    const dest = db.sessions[link.dest];
+    if (!dest || dest.archived || dest.retired) continue;
+    const age = nowMs - new Date(link.created_at).getTime();
+    if (!Number.isFinite(age) || age > windowMs) continue;
+    if ((dest.messages || []).some(x => x.kind === 'progress')) continue;
+    const destRuntime = dest.worker_runtime || (dest.native_ref && dest.native_ref.kind) || null;
+    if (runtimeId && destRuntime && destRuntime !== runtimeId) continue;
+    if (fp && dest.worker_task_fp && dest.worker_task_fp !== fp) continue;
+    return { worker_id: dest.id, link_id: link.id, dest };
+  }
+  return null;
+}
+
 /* ---------------- launch (headless / ide) ---------------- */
 async function doLaunch(s, b) {
   const dir = b.dir || process.cwd();
   if (!fs.existsSync(dir)) return { code: 400, payload: { error: 'dir does not exist: ' + dir } };
   const mode = b.mode || process.env.HANDOFF_LAUNCH_MODE || 'headless';
   const nativeId = crypto.randomUUID();
-  s.native_ref = { kind: 'claude-code', session_id: nativeId, cwd: dir, resume: `claude --resume ${nativeId}` };
+  const picked = (b && b.runtime && b.runtime.id)
+    ? { ok: true, runtime: b.runtime, explicit: true }
+    : destRuntimes.pickDestRuntime(b && b.dest);
+  if (!picked.ok) {
+    return { code: 409, payload: { launched: false, error: picked.error, detail: picked.detail, present: picked.present || [] } };
+  }
+  const runtime = picked.runtime;
+  s.native_ref = destRuntimes.nativeRefFor(runtime, nativeId, dir);
+  s.worker_runtime = runtime.id;
   save();
-  try {
-    const cmdDir = path.join(dir, '.claude', 'commands');
-    fs.mkdirSync(cmdDir, { recursive: true });
-    fs.writeFileSync(path.join(cmdDir, 'return-to-origin.md'),
-      '---\ndescription: Send this session back to its origin surface in the Claude app, with a summary\n---\n' +
-      'Call the handoff MCP tool `return_to_origin` with a 2-3 sentence summary of what was accomplished, ' +
-      'the current state, and any open questions. After the tool confirms, tell the user the session has been returned to its origin and stop working.\n');
-    fs.writeFileSync(path.join(cmdDir, 'continue-from.md'),
-      '---\ndescription: Pull a session from the Claude app (chat/cowork/design) into THIS Claude Code session\n---\n' +
-      'Call the handoff MCP tool `continue_from` with the surface named in $ARGUMENTS (default: chat). ' +
-      'It hands the latest session from that surface to this one and returns a task brief — read it and continue the work. Report back via report_progress / return_to_origin.\n');
-  } catch (e) { /* command files are best-effort */ }
-  const viaMcp = mcpRegistered();
+  if (runtime.id === 'claude-code') {
+    try {
+      const cmdDir = path.join(dir, '.claude', 'commands');
+      fs.mkdirSync(cmdDir, { recursive: true });
+      fs.writeFileSync(path.join(cmdDir, 'return-to-origin.md'),
+        '---\ndescription: Send this session back to its origin surface in the Claude app, with a summary\n---\n' +
+        'Call the handoff MCP tool `return_to_origin` with a 2-3 sentence summary of what was accomplished, ' +
+        'the current state, and any open questions. After the tool confirms, tell the user the session has been returned to its origin and stop working.\n');
+      fs.writeFileSync(path.join(cmdDir, 'continue-from.md'),
+        '---\ndescription: Pull a session from the Claude app (chat/cowork/design) into THIS Claude Code session\n---\n' +
+        'Call the handoff MCP tool `continue_from` with the surface named in $ARGUMENTS (default: chat). ' +
+        'It hands the latest session from that surface to this one and returns a task brief — read it and continue the work. Report back via report_progress / return_to_origin.\n');
+    } catch (e) { /* command files are best-effort */ }
+  }
+  const viaMcp = runtime.id === 'claude-code' && mcpRegistered();
   let fp = null;
   if (viaMcp) {
     try {
@@ -1707,14 +1757,32 @@ async function doLaunch(s, b) {
   const PROMPT = viaMcp
     ? `Use the handoff MCP: call get_handoff with session_id "${s.id}" to pull this session's context envelope — pass the id explicitly, do NOT rely on a pinned transaction, you do not have one. ${mountNote} Then continue the work from where it left off. ${closeNote}`
     : `Read HANDOFF.md and continue this session from where it left off. If the handoff MCP is available, call get_handoff with session_id "${s.id}" for the full envelope (pass the id explicitly — you have no pinned transaction). ${mountNote} ${closeNote} Finish with a 2-3 sentence summary of what you did.`;
-  const command = `cd ${JSON.stringify(dir)} && claude --session-id ${nativeId} ${JSON.stringify(PROMPT)}`;
-  if (!claudeCliAvailable()) {
+  const spawnPlan = destRuntimes.spawnArgv(runtime, { nativeId, prompt: PROMPT });
+  const command = spawnPlan
+    ? `cd ${JSON.stringify(dir)} && ${spawnPlan.bin} ${spawnPlan.args.map(a => JSON.stringify(a)).join(' ')}`
+    : `cd ${JSON.stringify(dir)} && ${runtime.bin || 'agent'} ${JSON.stringify(PROMPT)}`;
+  const destAvailable = !process.env.HANDOFF_NO_CLI
+    && !(process.env.HANDOFF_TEST === '1' && process.env.HANDOFF_DEST_PRESENT !== undefined)
+    && !!(runtime.present && runtime.binPath);
+  const canSpawn = destAvailable && !!spawnPlan;
+  if (!canSpawn) {
     const env2 = await buildEnvelope(s);
     fp = path.join(dir, 'HANDOFF.md');
     fs.writeFileSync(fp, renderHandoffMd(env2, s, 'code'));
-    return { code: 200, payload: { launched: false, mode, transport: 'file', reason: 'claude CLI not found on this machine', path: fp, command, native_ref: s.native_ref } };
+    const reason = process.env.HANDOFF_NO_CLI
+      ? `${runtime.label} CLI not launched (HANDOFF_NO_CLI)`
+      : (!spawnPlan
+        ? `${runtime.label} is present but auto-spawn argv is unmeasured — start it from a terminal with: ${command}`
+        : `${runtime.label} CLI not found on this machine`);
+    return {
+      code: 200,
+      payload: {
+        launched: false, mode, transport: 'file', reason, path: fp, command,
+        native_ref: s.native_ref, dest: { id: runtime.id, label: runtime.label },
+      },
+    };
   }
-  if (mode === 'ide') {
+  if (mode === 'ide' && runtime.id === 'claude-code') {
     const ideCmd = [b.ide || process.env.HANDOFF_IDE || 'cursor', 'code']
       .find(c => { try { return spawnSync('which', [c], { timeout: 3000 }).status === 0; } catch (_) { return false; } });
     if (!ideCmd) return { code: 200, payload: { launched: false, mode, reason: 'no IDE command found (tried cursor, code)', path: fp, command, native_ref: s.native_ref } };
@@ -1745,8 +1813,8 @@ async function doLaunch(s, b) {
     const child = spawn(ideCmd, ideArgs, { detached: true, stdio: 'ignore' });
     child.unref();
     child.on('error', () => {});
-    ops('launch', { session: s.id, mode: 'ide', transport: viaMcp ? 'mcp' : 'file', ide: ideCmd, native: nativeId, launched: true });
-    return { code: 202, payload: { launched: true, mode, transport: viaMcp ? 'mcp' : 'file', ide: ideCmd, path: fp, session: s.id, note: taskNote, native_ref: s.native_ref } };
+    ops('launch', { session: s.id, mode: 'ide', transport: viaMcp ? 'mcp' : 'file', ide: ideCmd, native: nativeId, launched: true, dest: runtime.id });
+    return { code: 202, payload: { launched: true, mode, transport: viaMcp ? 'mcp' : 'file', ide: ideCmd, path: fp, session: s.id, note: taskNote, native_ref: s.native_ref, dest: { id: runtime.id, label: runtime.label } } };
   }
   /* THE SAME SERVER IS MOUNTED UNDER MORE THAN ONE NAME, AND THE GRANT NAMED ONLY ONE.
    *
@@ -1770,9 +1838,13 @@ async function doLaunch(s, b) {
     ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash']
       .concat(HANDOFF_MOUNTS.flatMap(m => HANDOFF_VERBS.map(v => `mcp__${m}__${v}`)))
       .join(',');
+  const planned = destRuntimes.spawnArgv(runtime, { nativeId, prompt: PROMPT, allowedTools: runtime.id === 'claude-code' ? ALLOWED : undefined })
+    || spawnPlan;
+  const childEnv = { ...process.env, HANDOFF_SESSION_ID: s.id };
+  if (runtime.id === 'claude-code') childEnv.CLAUDE_CODE_SESSION_ID = nativeId;
   // Resolved, not inherited — this is the actual worker LAUNCH, and a bare name here is what made
   // a dispatch come back "prepared but NOT auto-launched" while the binary sat in ~/.local/bin.
-  const child = spawn(claudeBin() || 'claude', ['-p', '--session-id', nativeId, PROMPT, '--output-format', 'text', '--allowedTools', ALLOWED],
+  const child = spawn(planned.bin, planned.args,
     /* ONE IDENTITY, TWO PLACES, BOTH THE WORKER'S OWN — barrier 7 of seven.
      *
      * The child was given HANDOFF_SESSION_ID (its protocol record) and no CLAUDE_CODE_SESSION_ID.
@@ -1789,8 +1861,9 @@ async function doLaunch(s, b) {
      * IT ALSO CLOSES A BORROWED-IDENTITY HOLE. The spread of process.env carried the DAEMON's
      * CLAUDE_CODE_SESSION_ID through to the child whenever the daemon had one — a worker asserting
      * a uuid that belongs to another session, which is the stored-address disease with a stolen
-     * address. Setting it explicitly overwrites that inheritance rather than leaving it to luck. */
-    { cwd: dir, env: { ...process.env, HANDOFF_SESSION_ID: s.id, CLAUDE_CODE_SESSION_ID: nativeId } });
+     * address. Setting it explicitly overwrites that inheritance rather than leaving it to luck.
+     * Non-Claude dests do not get CLAUDE_CODE_SESSION_ID — that would be a borrowed identity. */
+    { cwd: dir, env: childEnv });
   let out = '';
   child.stdout.on('data', d => { out += d; if (out.length > 20000) out = out.slice(-20000); });
   const startedAt = Date.now();
@@ -1803,8 +1876,8 @@ async function doLaunch(s, b) {
     autoReceipt();
   });
   child.on('error', () => {});
-  ops('launch', { session: s.id, mode: 'headless', transport: viaMcp ? 'mcp' : 'file', native: nativeId, launched: true });
-  return { code: 202, payload: { launched: true, mode: 'headless', transport: viaMcp ? 'mcp' : 'file', path: fp, session: s.id, native_ref: s.native_ref } };
+  ops('launch', { session: s.id, mode: 'headless', transport: viaMcp ? 'mcp' : 'file', native: nativeId, launched: true, dest: runtime.id });
+  return { code: 202, payload: { launched: true, mode: 'headless', transport: viaMcp ? 'mcp' : 'file', path: fp, session: s.id, native_ref: s.native_ref, dest: { id: runtime.id, label: runtime.label } } };
 }
 
 /* ---------------- demo seed (pitch UI only) ---------------- */
@@ -2842,11 +2915,48 @@ async function handleApi(method, p, query, b) {
     }
     if ((m = p.match(/^\/api\/sessions\/([^/]+)\/launch$/)) && method === 'POST') {
       const s = db.sessions[m[1]]; if (!s) return { code: 404, payload: { error: 'not found' } };
-      return await doLaunch(s, b);
+      const destHint = (b && b.dest) || s.worker_runtime || (s.native_ref && s.native_ref.kind) || null;
+      return await doLaunch(s, Object.assign({}, b || {}, destHint ? { dest: destHint } : {}));
+    }
+    if (method === 'GET' && p === '/api/dest-runtimes') {
+      const probed = destRuntimes.probeDestRuntimes();
+      return { code: 200, payload: { dests: probed, present: probed.filter(d => d.present).map(d => ({ id: d.id, label: d.label, bin: d.bin })) } };
     }
     if (method === 'POST' && p === '/api/workers') {
       if (!b.task) return { code: 400, payload: { error: 'task required' } };
-      const origin = createSession({ surface: b.origin_surface || 'chat', title: b.title || b.task.slice(0, 60) });
+      let origin = null;
+      let originMinted = false;
+      if (b.origin_session_id) {
+        origin = db.sessions[b.origin_session_id];
+        if (!origin || origin.archived || origin.retired) {
+          return { code: 404, payload: { error: 'origin_not_found', detail: `no live session ${b.origin_session_id} — pass the sess_… id register_chat_session returned. Nothing was dispatched.` } };
+        }
+      } else {
+        origin = createSession({ surface: b.origin_surface || 'chat', title: b.title || b.task.slice(0, 60) });
+        originMinted = true;
+      }
+      if (b.project_state && !origin.project_state) origin.project_state = normalizeProjectState(b.project_state);
+      const probed = destRuntimes.probeDestRuntimes();
+      const picked = destRuntimes.pickDestRuntime(b.dest, probed);
+      if (!picked.ok) {
+        if (originMinted) {
+          delete db.sessions[origin.id];
+          save();
+        }
+        return { code: 409, payload: { launched: false, error: picked.error, detail: picked.detail, present: picked.present || [] } };
+      }
+      const dup = findDuplicateWorker(origin, b.task, picked.runtime.id);
+      if (dup) {
+        ops('dispatch_duplicate', { worker_id: dup.worker_id, origin_id: origin.id, dest: picked.runtime.id });
+        return {
+          code: 200,
+          payload: {
+            worker_id: dup.worker_id, origin_id: origin.id, link_id: dup.link_id, origin_minted: originMinted,
+            dest: { id: picked.runtime.id, label: picked.runtime.label },
+            launch: { launched: false, reason: 'duplicate_in_flight', existing: true, native_ref: dup.dest.native_ref || null },
+          },
+        };
+      }
       /* THE TASK RIDES VERBATIM, LIKE THE CONTEXT — and it was the one field that did not.
        *
        * `kind: 'context'` is what puts a message in supplied_context, which contextBlock renders
@@ -2869,12 +2979,30 @@ async function handleApi(method, p, query, b) {
        * the most important field being the only one left unprotected. */
       addMessage(origin, { role: 'user', text: b.task, kind: 'context' });
       if (b.context) addMessage(origin, { role: 'user', text: 'Context from the conversation: ' + b.context, kind: 'context' }); // carriers quote decisions; never re-lock
-      const cont = await continueIn(origin, 'code', {});
-      const launch = (await doLaunch(cont.dest, b)).payload;
+      const dir = bindWorkspaceDir(b.dir, origin);
+      const destTitle = b.title || b.task.slice(0, 60);
+      const cont = await continueIn(origin, 'code', { supersede: false });
+      if (destTitle) cont.dest.title = destTitle;
+      cont.dest.worker_runtime = picked.runtime.id;
+      cont.dest.worker_task_fp = taskFingerprint(b.task);
+      const launch = (await doLaunch(cont.dest, Object.assign({}, b, { dir, runtime: picked.runtime }))).payload;
       save();
-      ops('dispatch', { worker_id: cont.dest.id, origin_id: origin.id, link_id: cont.link.id, task: b.task.slice(0, 200), launched: !!launch.launched, mode: launch.mode, transport: launch.transport, native: launch.native_ref && launch.native_ref.session_id });
+      ops('dispatch', {
+        worker_id: cont.dest.id, origin_id: origin.id, link_id: cont.link && cont.link.id,
+        task: b.task.slice(0, 200), launched: !!launch.launched, mode: launch.mode,
+        transport: launch.transport, native: launch.native_ref && launch.native_ref.session_id,
+        dest: picked.runtime.id, origin_minted: originMinted,
+      });
       autoReceipt(); // traces from the very first lifecycle event — failed launches included
-      return { code: 201, payload: { worker_id: cont.dest.id, origin_id: origin.id, link_id: cont.link.id, launch } };
+      return {
+        code: 201,
+        payload: {
+          worker_id: cont.dest.id, origin_id: origin.id, link_id: cont.link && cont.link.id,
+          origin_minted: originMinted,
+          dest: { id: picked.runtime.id, label: picked.runtime.label, defaulted: !!picked.defaulted, explicit: !!picked.explicit },
+          launch,
+        },
+      };
     }
     if (method === 'GET' && p === '/api/workers') {
       const out = [];
@@ -2906,6 +3034,7 @@ async function handleApi(method, p, query, b) {
         const orphaned = link.status === 'active' && !progressed && ageMin > orphanMin;
         out.push({
           worker_id: dest.id, link_id: link.id, status: link.status, dest_surface: dest.surface,
+          dest_runtime: dest.worker_runtime || (dest.native_ref && dest.native_ref.kind) || null,
           // The task label is what the user reads to decide whether a worker matters.
           // Taking the first user message made two of them read "Decision: CTA color is
           // blue" — a locked decision is a constraint ON the task, never the task.
@@ -2947,6 +3076,8 @@ module.exports = {
   sessionRecordId, parseClientUuid, projectObject, registrationMissing,
   claudeCliAvailable, claudeBin, mcpRegistered, ops, autoReceipt, getPrefs, setPref, resolveAutosend,
   artifactCap, artifactBlock, buildBrief, fencedBlock,
+  probeDestRuntimes: destRuntimes.probeDestRuntimes,
+  pickDestRuntime: destRuntimes.pickDestRuntime,
   __claudeCompactForTests: claudeCompact,
   /* Exported ONLY so the suite can assert the id invariant FIRES. handleApi calls load() at the
    * top of every operation, so an in-memory id mutation is wiped before any save can see it —

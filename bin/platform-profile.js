@@ -69,6 +69,24 @@ function profileFor(plat, homeDir) {
         '/opt/homebrew/bin/claude',
         '/usr/local/bin/claude',
       ],
+    /* WHERE ANY NAMED BIN LIVES — same candidate roots as cliCandidates, parameterized.
+     * Dest runtime probe looks up Claude Code, Codex, and other agent CLIs; hardcoding
+     * `claude` into the only candidate list made every other dest unresolvable. */
+    binCandidates: (name) => {
+      const n = String(name || '').replace(/[^A-Za-z0-9._-]/g, '');
+      if (!n) return [];
+      if (isWin) {
+        return [
+          path.join(home, '.local', 'bin', n + '.exe'),
+          path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'Programs', n, n + '.exe'),
+        ];
+      }
+      return [
+        path.join(home, '.local', 'bin', n),
+        '/opt/homebrew/bin/' + n,
+        '/usr/local/bin/' + n,
+      ];
+    },
     cliLookupCommand: isWin ? 'where' : 'which',
     /* `where` prints EVERY match; `which` prints one. On Windows a .cmd/.bat cannot be spawned by
      * Node >=18.20 without shell:true, and shell:true would push the multi-line quoted relay prompt

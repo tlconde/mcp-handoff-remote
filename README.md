@@ -28,6 +28,10 @@ Full guide, including remote access from your phone or a second laptop: [INSTALL
 
 - **`send_to`** — one send verb. Route work to Chat, Cowork, Design or a Code terminal, as a
   new conversation or into an existing one, carrying the full envelope.
+- **`send_to_worker`** — from an enrolled grok.com / claude.ai / Cursor chat, start a terminal
+  agent on the home laptop. This chat is the origin. The dest is whichever agent CLI is
+  installed (Claude Code, Codex, others); name one if several are present. Cursor Cloud Agents
+  remain the Cursor-runtime path.
 - **`check_inbox` / `pick_up`** — the receiving side. A handoff is a handshake: offered until
   claimed, and never re-offered once shaken.
 - **Waking** — mail for an *open* terminal starts a turn there with no taps. If it cannot be

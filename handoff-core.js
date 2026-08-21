@@ -1861,8 +1861,7 @@ async function doLaunch(s, b) {
       .join(',');
   const planned = destRuntimes.spawnArgv(runtime, { nativeId, prompt: PROMPT, allowedTools: runtime.id === 'claude-code' ? ALLOWED : undefined })
     || spawnPlan;
-  const childEnv = { ...process.env, HANDOFF_SESSION_ID: s.id };
-  if (runtime.id === 'claude-code') childEnv.CLAUDE_CODE_SESSION_ID = nativeId;
+  const childEnv = destRuntimes.workerChildEnv(runtime, { sessionId: s.id, nativeId, env: process.env });
   // Resolved, not inherited — this is the actual worker LAUNCH, and a bare name here is what made
   // a dispatch come back "prepared but NOT auto-launched" while the binary sat in ~/.local/bin.
   const child = spawn(planned.bin, planned.args, destRuntimes.workerSpawnOpts({ cwd: dir, env: childEnv }));
@@ -1883,10 +1882,41 @@ async function doLaunch(s, b) {
    * CLAUDE_CODE_SESSION_ID through to the child whenever the daemon had one — a worker asserting
    * a uuid that belongs to another session, which is the stored-address disease with a stolen
    * address. Setting it explicitly overwrites that inheritance rather than leaving it to luck.
-   * Non-Claude dests do not get CLAUDE_CODE_SESSION_ID — that would be a borrowed identity. */
+   * Non-Claude dests DELETE CLAUDE_CODE_SESSION_ID — leaving it would be a borrowed identity. */
   const sink = { out: '', err: '' };
   destRuntimes.consumeWorkerPipes(child, sink);
   const startedAt = Date.now();
+  const persistCodexNativeRef = () => {
+    if (runtime.id !== 'codex') return null;
+    const id = (sink && sink.sessionId)
+      || destRuntimes.harvestCodexSessionId(sink && sink.head)
+      || destRuntimes.harvestCodexSessionId(sink && sink.out);
+    if (!id) return null;
+    const rec = db.sessions[s.id];
+    if (rec && (!rec.native_ref || rec.native_ref.session_id !== id)) {
+      rec.native_ref = destRuntimes.nativeRefFor(runtime, id, dir);
+      save();
+    }
+    if (rec && rec.native_ref) s.native_ref = rec.native_ref;
+    return id;
+  };
+  const onWorkerClose = (code2) => {
+    load(); // another process may have written meanwhile
+    persistCodexNativeRef();
+    const s2 = db.sessions[s.id];
+    // stdout only — Codex progress on stderr is drained separately and must not become this line.
+    // Codex --json: prefer the last agent_message over raw JSONL.
+    const jsonSummary = runtime.id === 'codex'
+      ? destRuntimes.harvestCodexSummary((sink.head || '') + '\n' + (sink.out || ''))
+      : null;
+    const summary = (jsonSummary
+      || (sink.out || '').trim().split('\n').filter(Boolean).slice(-6).join(' ')
+      || 'CLI session finished with no output').slice(0, 600);
+    if (s2) { addMessage(s2, { role: 'system', kind: 'progress', text: `[auto CLI] ${summary}` }); save(); }
+    ops('worker_done', { session: s.id, native: s2 && s2.native_ref && s2.native_ref.session_id, exit: code2, secs: Math.round((Date.now() - startedAt) / 1000), summary_excerpt: summary.slice(0, 200) });
+    autoReceipt();
+  };
+  destRuntimes.attachWorkerClose(child, onWorkerClose);
   const started = await destRuntimes.waitChildStarted(child);
   const workspace = { cwd: dir, via: (b && b.workspace_via) || 'dir' };
   if (!started.started) {
@@ -1903,10 +1933,8 @@ async function doLaunch(s, b) {
   }
   if (runtime.id === 'codex') {
     const harvested = await destRuntimes.waitForCodexSession(child, sink, 3000);
-    if (harvested.sessionId) {
-      s.native_ref = destRuntimes.nativeRefFor(runtime, harvested.sessionId, dir);
-      save();
-    } else if (harvested.exited || child.exitCode !== null) {
+    persistCodexNativeRef();
+    if (!harvested.sessionId && (harvested.exited || child.exitCode !== null || child.signalCode)) {
       const why = 'Codex exited before publishing a session id (thread.started)';
       ops('launch', { session: s.id, mode: 'headless', transport: viaMcp ? 'mcp' : 'file', native: null, launched: false, dest: runtime.id, error: why });
       return {
@@ -1919,25 +1947,13 @@ async function doLaunch(s, b) {
       };
     }
   }
-  s.worker_launched = true;
+  load();
+  const live = db.sessions[s.id];
+  if (live) live.worker_launched = true;
   save();
-  child.on('close', (code2) => {
-    load(); // another process may have written meanwhile
-    const s2 = db.sessions[s.id];
-    // stdout only — Codex progress on stderr is drained separately and must not become this line.
-    // Codex --json: prefer the last agent_message over raw JSONL.
-    const jsonSummary = runtime.id === 'codex'
-      ? destRuntimes.harvestCodexSummary((sink.head || '') + '\n' + (sink.out || ''))
-      : null;
-    const summary = (jsonSummary
-      || sink.out.trim().split('\n').filter(Boolean).slice(-6).join(' ')
-      || 'CLI session finished with no output').slice(0, 600);
-    if (s2) { addMessage(s2, { role: 'system', kind: 'progress', text: `[auto CLI] ${summary}` }); save(); }
-    ops('worker_done', { session: s.id, native: s2 && s2.native_ref && s2.native_ref.session_id, exit: code2, secs: Math.round((Date.now() - startedAt) / 1000), summary_excerpt: summary.slice(0, 200) });
-    autoReceipt();
-  });
-  ops('launch', { session: s.id, mode: 'headless', transport: viaMcp ? 'mcp' : 'file', native: s.native_ref && s.native_ref.session_id, launched: true, dest: runtime.id });
-  return { code: 202, payload: { launched: true, mode: 'headless', transport: viaMcp ? 'mcp' : 'file', path: fp, session: s.id, native_ref: s.native_ref, dest: { id: runtime.id, label: runtime.label }, workspace } };
+  const nativeRef = (live && live.native_ref) || s.native_ref;
+  ops('launch', { session: s.id, mode: 'headless', transport: viaMcp ? 'mcp' : 'file', native: nativeRef && nativeRef.session_id, launched: true, dest: runtime.id });
+  return { code: 202, payload: { launched: true, mode: 'headless', transport: viaMcp ? 'mcp' : 'file', path: fp, session: s.id, native_ref: nativeRef, dest: { id: runtime.id, label: runtime.label }, workspace } };
 }
 
 /* ---------------- demo seed (pitch UI only) ---------------- */

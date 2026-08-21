@@ -1750,7 +1750,11 @@ async function callTool(name, args, ctx, core) {
     const pickLine = r.dest && r.dest.explicit
       ? `Dest: ${destLabel} (named).`
       : (r.dest && r.dest.defaulted ? `Dest: ${destLabel} (the one present on the home machine).` : `Dest: ${destLabel}.`);
-    return `Worker dispatched.\n${originLine}\n${pickLine}${wsLine}\nworker_id: ${r.worker_id}\nStatus: ${how}${nat}\nReturn link OPEN — call get_worker_result later, or the dest calls return_to_origin.`;
+    const destId = r.dest && r.dest.id;
+    const closeLine = (!destId || destId === 'claude-code')
+      ? 'Return link OPEN — call get_worker_result later, or the dest calls return_to_origin.'
+      : 'Return link OPEN — call get_worker_result later; this dest prints a short summary on stdout (it has no return_to_origin).';
+    return `Worker dispatched.\n${originLine}\n${pickLine}${wsLine}\nworker_id: ${r.worker_id}\nStatus: ${how}${nat}\n${closeLine}`;
   }
   if (name === 'list_conversations') {
     const st = await call('GET', '/api/state');

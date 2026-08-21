@@ -103,6 +103,25 @@ function waitChildStarted(child) {
   });
 }
 
+/** Attach close now. If the child already exited, Node will not replay 'close' — run immediately. */
+function attachWorkerClose(child, onClose) {
+  let done = false;
+  const run = code => {
+    if (done) return;
+    done = true;
+    try { onClose(code); } catch (_) { /* close path must not throw into spawn */ }
+  };
+  child.on('close', run);
+  if (child.exitCode !== null || child.signalCode) run(child.exitCode);
+}
+
+function workerChildEnv(runtime, { sessionId, nativeId, env } = {}) {
+  const childEnv = Object.assign({}, env || process.env, { HANDOFF_SESSION_ID: sessionId });
+  if (runtime && runtime.id === 'claude-code') childEnv.CLAUDE_CODE_SESSION_ID = nativeId;
+  else delete childEnv.CLAUDE_CODE_SESSION_ID;
+  return childEnv;
+}
+
 /** Wait for Codex `--json` to publish thread.started. Does not wait for the job to finish. */
 function waitForCodexSession(child, sink, timeoutMs) {
   const ms = timeoutMs == null ? 3000 : timeoutMs;
@@ -358,6 +377,7 @@ function spawnArgv(runtime, { nativeId, prompt, allowedTools } = {}) {
 
 module.exports = {
   CATALOG, probeDestRuntimes, pickDestRuntime, matchCatalog, nativeRefFor, spawnArgv, normalizeWant,
-  WORKER_STDIO, workerSpawnOpts, consumeWorkerPipes, waitChildStarted,
+  WORKER_STDIO, workerSpawnOpts, consumeWorkerPipes, waitChildStarted, attachWorkerClose,
   workerHeadlessPrompt, harvestCodexSessionId, harvestCodexSummary, waitForCodexSession,
+  workerChildEnv,
 };

@@ -22,6 +22,9 @@
  *  14. A single in-flight worker may omit worker_id.
  *  15. Codex spawn uses --json (not --session-id); harvest thread.started; resume is that id, not --last.
  *  16. Codex HANDOFF.md On completion is stdout-summary, not MCP/return_to_origin.
+ *  17. send_to_worker close sentence is dest-specific (Codex: get_worker_result / stdout).
+ *  18. attachWorkerClose fires if the child already exited (harvest-wait race).
+ *  19. Non-Claude dests delete inherited CLAUDE_CODE_SESSION_ID.
  *
  *   node bin/dest-launch-check.js
  */
@@ -84,6 +87,12 @@ function fail(msg) {
   if (!/Worker dispatched/.test(dispatched)) fail('named Codex must dispatch\n' + dispatched);
   if (!/no shadow carrier/.test(dispatched)) fail('enrolled origin must say no shadow carrier\n' + dispatched);
   if (!/Codex/.test(dispatched)) fail('result must name Codex\n' + dispatched);
+  if (/the dest calls return_to_origin/.test(dispatched)) {
+    fail('Codex dest must not tell origin the dest will call return_to_origin\n' + dispatched);
+  }
+  if (!/get_worker_result/.test(dispatched) || !/stdout/.test(dispatched) || !/has no return_to_origin/.test(dispatched)) {
+    fail('Codex dest must tell origin to use get_worker_result / stdout summary\n' + dispatched);
+  }
   const wid = /worker_id:\s*(\S+)/.exec(dispatched);
   if (!wid) fail('dispatch must print worker_id\n' + dispatched);
 
@@ -194,6 +203,9 @@ function fail(msg) {
   if (!/Worker dispatched/.test(def) || !/Claude Code/.test(def) || !/the one present/.test(def)) {
     fail('one CLI present and no name must default to that CLI\n' + def);
   }
+  if (!/the dest calls return_to_origin/.test(def)) {
+    fail('Claude dest send_to_worker may still mention dest return_to_origin\n' + def);
+  }
 
   const reg2 = String(await callTool('register_chat_session', {
     surface: 'chat', title: 'Lane', nickname: 'Lane',
@@ -231,6 +243,26 @@ function fail(msg) {
 
   const dests = require('../handoff-dest-runtimes');
   const { spawn } = require('child_process');
+  const inherited = {
+    PATH: '/usr/bin',
+    CLAUDE_CODE_SESSION_ID: 'daemon-borrowed-id',
+    HOME: '/tmp',
+  };
+  const geminiEnv = dests.workerChildEnv(
+    { id: 'gemini' },
+    { sessionId: 'mcp-sess', nativeId: 'unused', env: inherited },
+  );
+  if (geminiEnv.HANDOFF_SESSION_ID !== 'mcp-sess') fail('workerChildEnv must set HANDOFF_SESSION_ID');
+  if (Object.prototype.hasOwnProperty.call(geminiEnv, 'CLAUDE_CODE_SESSION_ID')) {
+    fail('non-Claude dests must not inherit the daemon CLAUDE_CODE_SESSION_ID');
+  }
+  const claudeEnv = dests.workerChildEnv(
+    { id: 'claude-code' },
+    { sessionId: 'mcp-sess', nativeId: 'native-uuid', env: inherited },
+  );
+  if (claudeEnv.CLAUDE_CODE_SESSION_ID !== 'native-uuid') {
+    fail('Claude dest must overwrite CLAUDE_CODE_SESSION_ID with the worker native id, got ' + claudeEnv.CLAUDE_CODE_SESSION_ID);
+  }
   if (dests.WORKER_STDIO[0] !== 'ignore' || dests.WORKER_STDIO[1] !== 'pipe' || dests.WORKER_STDIO[2] !== 'pipe') {
     fail('worker stdio must ignore stdin and pipe stdout+stderr, got ' + JSON.stringify(dests.WORKER_STDIO));
   }
@@ -331,9 +363,86 @@ function fail(msg) {
   const missed = await dests.waitChildStarted(missing);
   if (missed.started) fail('ENOENT spawn must not report started/launched:true');
 
+  const alreadyGone = spawn(process.execPath, ['-e', [
+    "process.stdout.write(JSON.stringify({ type: 'thread.started', thread_id: 'already-gone-id' }) + '\\n');",
+    "process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'exited before attach' } }) + '\\n');",
+    'process.exit(0);',
+  ].join('')], dests.workerSpawnOpts({ cwd: tmp }));
+  const goneSink = { out: '', err: '' };
+  dests.consumeWorkerPipes(alreadyGone, goneSink);
+  const goneStarted = await dests.waitChildStarted(alreadyGone);
+  if (!goneStarted.started) fail('already-exited fixture must spawn');
+  await new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('already-exited fixture hung')), 4000);
+    alreadyGone.on('close', () => { clearTimeout(t); resolve(); });
+  });
+  if (alreadyGone.exitCode === null && !alreadyGone.signalCode) {
+    fail('already-exited fixture must have exitCode or signalCode set before attachWorkerClose');
+  }
+  let goneCloses = 0;
+  let goneSummary = null;
+  dests.attachWorkerClose(alreadyGone, () => {
+    goneCloses += 1;
+    goneSummary = dests.harvestCodexSummary((goneSink.head || '') + '\n' + (goneSink.out || ''));
+  });
+  if (goneCloses !== 1) {
+    fail('attachWorkerClose must fire immediately when Codex already exited (harvest-wait race), got ' + goneCloses);
+  }
+  if (goneSummary !== 'exited before attach') {
+    fail('already-exited close path must still harvest the stdout summary, got ' + goneSummary);
+  }
+  dests.attachWorkerClose(alreadyGone, () => { goneCloses += 1; });
+  if (goneCloses !== 2) fail('a second attach on an already-exited child must still run once');
+
+  const lateGo = path.join(tmp, 'late-go');
+  const lateEnv = Object.assign({}, process.env, { LATE_GO: lateGo });
+  const late = spawn(process.execPath, ['-e', [
+    "const fs = require('fs');",
+    'const go = process.env.LATE_GO;',
+    'const t = setInterval(() => {',
+    '  if (!go || !fs.existsSync(go)) return;',
+    '  clearInterval(t);',
+    "  process.stdout.write(JSON.stringify({ type: 'thread.started', thread_id: 'late-id' }) + '\\n');",
+    "  process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'late summary' } }) + '\\n');",
+    '  process.exit(0);',
+    '}, 20);',
+  ].join('')], dests.workerSpawnOpts({ cwd: tmp, env: lateEnv }));
+  const lateSink = { out: '', err: '' };
+  dests.consumeWorkerPipes(late, lateSink);
+  let lateCloses = 0;
+  let lateId = null;
+  dests.attachWorkerClose(late, () => {
+    lateCloses += 1;
+    lateId = lateSink.sessionId || dests.harvestCodexSessionId(lateSink.head) || dests.harvestCodexSessionId(lateSink.out);
+  });
+  const lateStarted = await dests.waitChildStarted(late);
+  if (!lateStarted.started) fail('late thread.started fixture must spawn');
+  const lateHarvest = await dests.waitForCodexSession(late, lateSink, 50);
+  if (!lateHarvest.timeout) {
+    fail('harvest wait must time out while Codex is still running, got ' + JSON.stringify(lateHarvest));
+  }
+  if (lateHarvest.sessionId) {
+    fail('session id must not be known yet when harvest times out, got ' + lateHarvest.sessionId);
+  }
+  if (lateCloses) fail('close must not fire during a harvest timeout while Codex is still running');
+  fs.writeFileSync(lateGo, '1');
+  await new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('late thread.started fixture hung')), 4000);
+    const finish = () => { clearTimeout(t); resolve(); };
+    late.on('close', finish);
+    if (late.exitCode !== null || late.signalCode) finish();
+  });
+  if (lateCloses !== 1) fail('close handler attached before harvest wait must still fire after late exit, got ' + lateCloses);
+  if (lateId !== 'late-id') {
+    fail('close path must persist/see the session id that arrived after harvest timeout, got ' + lateId);
+  }
+  if (dests.harvestCodexSummary((lateSink.head || '') + '\n' + (lateSink.out || '')) !== 'late summary') {
+    fail('late close path must harvest the stdout summary');
+  }
+
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) { /* scratch */ }
   try { fs.rmSync(ws, { recursive: true, force: true }); } catch (_) { /* scratch */ }
-  console.log('dest-launch-check: OK — enrolled origin, dest probe/name/default, workspace bind, duplicate guard, spawn stdio, dest prompt.');
+  console.log('dest-launch-check: OK — enrolled origin, dest probe/name/default, workspace bind, duplicate guard, spawn stdio, dest prompt, close race, env isolation.');
 })().catch(e => {
   console.error('dest-launch-check: threw — ' + (e && e.stack || e));
   process.exit(2);

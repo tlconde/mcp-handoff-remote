@@ -212,6 +212,16 @@ const withEnv = (env, fn) => {
     const otherP = dests.workerHeadlessPrompt({ runtime: { id: 'codex' } });
     ok(/HANDOFF\.md/.test(otherP) && /stdout/.test(otherP) && !/mcp__handoff|return_to_origin|get_handoff/.test(otherP),
       'non-Claude dest prompt is HANDOFF.md + stdout, not MCP tools');
+    const inherited = { PATH: '/usr/bin', CLAUDE_CODE_SESSION_ID: 'daemon-borrowed-id' };
+    const geminiEnv = dests.workerChildEnv({ id: 'gemini' }, { sessionId: 's1', nativeId: 'n1', env: inherited });
+    ok(geminiEnv.HANDOFF_SESSION_ID === 's1' && !Object.prototype.hasOwnProperty.call(geminiEnv, 'CLAUDE_CODE_SESSION_ID'),
+      'non-Claude dest env deletes inherited CLAUDE_CODE_SESSION_ID');
+    const claudeEnv = dests.workerChildEnv({ id: 'claude-code' }, { sessionId: 's1', nativeId: 'native-uuid', env: inherited });
+    ok(claudeEnv.CLAUDE_CODE_SESSION_ID === 'native-uuid',
+      'Claude dest overwrites CLAUDE_CODE_SESSION_ID with the worker native id');
+    let closeN = 0;
+    dests.attachWorkerClose({ exitCode: 0, signalCode: null, on() {} }, () => { closeN += 1; });
+    ok(closeN === 1, 'attachWorkerClose fires immediately when the child already exited');
   }
 
   console.log(`\ncapability-probe: ${pass} passed, ${fail} failed`);

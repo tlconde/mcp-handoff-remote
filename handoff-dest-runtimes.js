@@ -26,22 +26,66 @@ const { CURRENT } = require('./bin/platform-profile');
  * auto summary. */
 const WORKER_STDIO = ['ignore', 'pipe', 'pipe'];
 const PIPE_CAP = 20000;
+const HEAD_CAP = 8192;
 
 function workerSpawnOpts(extra) {
   return Object.assign({ stdio: WORKER_STDIO.slice() }, extra || {});
+}
+
+function harvestCodexSessionId(text) {
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t.startsWith('{')) continue;
+    try {
+      const ev = JSON.parse(t);
+      if (!ev || typeof ev !== 'object') continue;
+      if (ev.type === 'thread.started' && ev.thread_id) return String(ev.thread_id);
+      if (ev.thread_id && typeof ev.thread_id === 'string') return ev.thread_id;
+      if (ev.session_id && typeof ev.session_id === 'string' && ev.type && /session|thread/i.test(String(ev.type))) {
+        return ev.session_id;
+      }
+    } catch (_) { /* not a JSON event line */ }
+  }
+  return null;
+}
+
+function harvestCodexSummary(text) {
+  let last = null;
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t.startsWith('{')) continue;
+    try {
+      const ev = JSON.parse(t);
+      if (ev && ev.type === 'item.completed' && ev.item && ev.item.type === 'agent_message' && ev.item.text) {
+        last = String(ev.item.text);
+      }
+    } catch (_) { /* not a JSON event line */ }
+  }
+  return last;
 }
 
 function consumeWorkerPipes(child, sink) {
   if (!sink || typeof sink !== 'object') return sink;
   if (typeof sink.out !== 'string') sink.out = '';
   if (typeof sink.err !== 'string') sink.err = '';
+  if (typeof sink.head !== 'string') sink.head = '';
   const take = key => d => {
     sink[key] += d;
     if (sink[key].length > PIPE_CAP) sink[key] = sink[key].slice(-PIPE_CAP);
   };
   if (child.stdout) {
     child.stdout.setEncoding('utf8');
-    child.stdout.on('data', take('out'));
+    child.stdout.on('data', d => {
+      take('out')(d);
+      if (sink.head.length < HEAD_CAP) {
+        sink.head += d;
+        if (sink.head.length > HEAD_CAP) sink.head = sink.head.slice(0, HEAD_CAP);
+      }
+      if (!sink.sessionId) {
+        const id = harvestCodexSessionId(sink.head);
+        if (id) sink.sessionId = id;
+      }
+    });
   }
   if (child.stderr) {
     child.stderr.setEncoding('utf8');
@@ -56,6 +100,44 @@ function waitChildStarted(child) {
     const finish = result => { if (done) return; done = true; resolve(result); };
     child.once('spawn', () => finish({ started: true }));
     child.once('error', err => finish({ started: false, error: err }));
+  });
+}
+
+/** Wait for Codex `--json` to publish thread.started. Does not wait for the job to finish. */
+function waitForCodexSession(child, sink, timeoutMs) {
+  const ms = timeoutMs == null ? 3000 : timeoutMs;
+  return new Promise(resolve => {
+    let done = false;
+    let timer = null;
+    const finish = result => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      resolve(result);
+    };
+    const currentId = () => (sink && sink.sessionId)
+      || harvestCodexSessionId(sink && sink.head)
+      || harvestCodexSessionId(sink && sink.out);
+    const check = () => {
+      const id = currentId();
+      if (id) finish({ sessionId: id });
+    };
+    if (child.exitCode !== null || child.signalCode) {
+      check();
+      if (!done) finish({ sessionId: currentId(), exited: true, code: child.exitCode });
+      return;
+    }
+    const onClose = code => {
+      check();
+      if (!done) finish({ sessionId: currentId(), exited: true, code });
+    };
+    if (child.stdout) child.stdout.on('data', check);
+    child.once('close', onClose);
+    timer = setTimeout(() => {
+      check();
+      if (!done) finish({ sessionId: currentId(), timeout: true });
+    }, ms);
+    check();
   });
 }
 
@@ -219,14 +301,22 @@ function pickDestRuntime(want, probed) {
 }
 
 function nativeRefFor(runtime, nativeId, dir) {
-  if (!runtime) return { kind: 'code', session_id: nativeId, cwd: dir, resume: null };
+  if (!runtime) return { kind: 'code', session_id: nativeId || null, cwd: dir, resume: null };
   if (runtime.id === 'claude-code') {
-    return { kind: 'claude-code', session_id: nativeId, cwd: dir, resume: `claude --resume ${nativeId}` };
+    return { kind: 'claude-code', session_id: nativeId, cwd: dir, resume: nativeId ? `claude --resume ${nativeId}` : null };
   }
   if (runtime.id === 'codex') {
-    return { kind: 'codex', session_id: nativeId, cwd: dir, resume: `codex exec resume ${nativeId}` };
+    /* Resume uses Codex's OWN thread id (harvested from --json thread.started). A uuid we
+     * invented and never passed to Codex is not a session, and `resume --last` is whoever
+     * finished most recently on the machine — neither addresses THIS worker. */
+    return {
+      kind: 'codex',
+      session_id: nativeId || null,
+      cwd: dir,
+      resume: nativeId ? `codex exec resume ${nativeId}` : null,
+    };
   }
-  return { kind: runtime.id, session_id: nativeId, cwd: dir, resume: null };
+  return { kind: runtime.id, session_id: nativeId || null, cwd: dir, resume: null };
 }
 
 /**
@@ -256,12 +346,12 @@ function spawnArgv(runtime, { nativeId, prompt, allowedTools } = {}) {
     return { bin: runtime.binPath || 'claude', args };
   }
   if (runtime.spawnKind === 'codex') {
-    /* Pass OUR uuid on spawn so `codex exec resume <id>` reopens THIS worker, not --last
-     * (which is whoever finished most recently on the machine). */
-    const args = ['exec', '--sandbox', 'workspace-write', '--skip-git-repo-check'];
-    if (nativeId) args.push('--session-id', nativeId);
-    args.push(prompt);
-    return { bin: runtime.binPath || 'codex', args };
+    /* Codex has no --session-id (clap rejects it; maintainers declined the flag). --json
+     * publishes thread.started with the real thread_id; we harvest that and resume by it. */
+    return {
+      bin: runtime.binPath || 'codex',
+      args: ['exec', '--json', '--sandbox', 'workspace-write', '--skip-git-repo-check', prompt],
+    };
   }
   return null;
 }
@@ -269,5 +359,5 @@ function spawnArgv(runtime, { nativeId, prompt, allowedTools } = {}) {
 module.exports = {
   CATALOG, probeDestRuntimes, pickDestRuntime, matchCatalog, nativeRefFor, spawnArgv, normalizeWant,
   WORKER_STDIO, workerSpawnOpts, consumeWorkerPipes, waitChildStarted,
-  workerHeadlessPrompt,
+  workerHeadlessPrompt, harvestCodexSessionId, harvestCodexSummary, waitForCodexSession,
 };

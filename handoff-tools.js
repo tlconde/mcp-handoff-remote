@@ -1741,7 +1741,9 @@ async function callTool(name, args, ctx, core) {
     const how = l.launched
       ? (l.mode === 'ide' ? `NEW ${destLabel} session in a ${l.ide === 'code' ? 'VS Code' : 'Cursor'} window (interactive)` : `NEW ${destLabel} session, headless on the home laptop — its summary will come back on its own`)
       : `NEW ${destLabel} session prepared but NOT auto-launched (${l.reason || 'unknown'}); run this in the target folder: ${l.command || 'n/a'}`;
-    const nat = l.native_ref ? `\nNative session: ${l.native_ref.kind || destLabel} ${l.native_ref.session_id}${l.native_ref.resume ? ` (reopen: ${l.native_ref.resume})` : ''}` : '';
+    const nat = (l.native_ref && l.native_ref.session_id)
+      ? `\nNative session: ${l.native_ref.kind || destLabel} ${l.native_ref.session_id}${l.native_ref.resume ? ` (reopen: ${l.native_ref.resume})` : ''}`
+      : '';
     const originLine = r.origin_minted
       ? `Origin: minted carrier ${r.origin_id} (this caller did not pass origin_session_id).`
       : `Origin: this conversation (${r.origin_id}) — no shadow carrier.`;

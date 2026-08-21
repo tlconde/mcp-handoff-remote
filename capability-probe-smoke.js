@@ -189,12 +189,19 @@ const withEnv = (env, fn) => {
     const argv = dests.spawnArgv({ spawnKind: 'codex', binPath: '/opt/codex' }, { prompt: 'do the thing', nativeId: 'sess-codex-1' });
     ok(argv && argv.bin === '/opt/codex' && argv.args[0] === 'exec',
       'codex spawn is `codex exec`, not a Claude argv');
-    ok(argv.args.indexOf('--session-id') >= 0 && argv.args[argv.args.indexOf('--session-id') + 1] === 'sess-codex-1',
-      'codex spawn argv carries the session id so resume can target THIS worker');
+    ok(argv.args.indexOf('--json') >= 0,
+      'codex spawn passes --json so thread.started can be harvested');
+    ok(argv.args.indexOf('--session-id') < 0,
+      'codex spawn does not pass --session-id (clap rejects it)');
     ok(argv.args.indexOf('--last') < 0, 'codex spawn does not use --last');
-    const nref = dests.nativeRefFor({ id: 'codex' }, 'sess-codex-1', '/tmp/ws');
-    ok(nref.resume === 'codex exec resume sess-codex-1' && !/--last/.test(nref.resume),
-      'codex resume command uses the session id, not --last');
+    ok(dests.harvestCodexSessionId('{"type":"thread.started","thread_id":"tid-9"}\n') === 'tid-9',
+      'harvestCodexSessionId reads thread.started');
+    const nref = dests.nativeRefFor({ id: 'codex' }, 'tid-9', '/tmp/ws');
+    ok(nref.resume === 'codex exec resume tid-9' && !/--last/.test(nref.resume),
+      'codex resume command uses the harvested session id, not --last');
+    const pending = dests.nativeRefFor({ id: 'codex' }, null, '/tmp/ws');
+    ok(!pending.session_id && !pending.resume && !/--last/.test(String(pending.resume || '')),
+      'codex native_ref has no resume until a real thread id is harvested');
     ok(dests.spawnArgv({ spawnKind: null, id: 'gemini' }, { prompt: 'x' }) === null,
       'probe-only dests have no invented spawn argv');
     ok(dests.WORKER_STDIO[0] === 'ignore' && dests.WORKER_STDIO[2] === 'pipe',

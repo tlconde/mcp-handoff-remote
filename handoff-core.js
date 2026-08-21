@@ -694,7 +694,21 @@ function notesBlock(env) {
   if (n.expected_return) L.push(`## Return contract (what the origin expects back)\n${n.expected_return}`);
   return L.join('\n\n');
 }
-function buildBrief(target, env, session) {
+function codeCompletionLine(destRuntime) {
+  if (destRuntime && destRuntime !== 'claude-code') {
+    return 'When finished, print a short summary of what you did on stdout. Do not wait for user input.';
+  }
+  return 'Report via the handoff MCP: report_progress for checkpoints, /return-to-origin (return_to_origin tool) when finished.';
+}
+function destRuntimeOf(session, opts) {
+  if (opts && opts.destRuntime) return opts.destRuntime;
+  if (session && session.worker_runtime) return session.worker_runtime;
+  if (session && session.native_ref && session.native_ref.kind && session.native_ref.kind !== 'code') {
+    return session.native_ref.kind;
+  }
+  return null;
+}
+function buildBrief(target, env, session, opts) {
   const from = session.origin_ref ? NAMES[session.origin_ref.surface] : NAMES[session.surface];
   const head = `Continued from ${from} — "${session.title}" (${env.created_at})` +
     (env.notes && env.notes.deadline ? ` · ⏰ ${env.notes.deadline}` : '');
@@ -711,7 +725,7 @@ function buildBrief(target, env, session) {
     `## Definition of done`, env.open_items.map(o => `- [ ] ${o}`).join('\n') || '- [ ] Confirm completion with the user',
     `## Context`, ctx,
     arts ? `## Artifacts\n${arts}` : '',
-    `## On completion`, `Report via the handoff MCP: report_progress for checkpoints, /return-to-origin (return_to_origin tool) when finished.`
+    `## On completion`, codeCompletionLine(destRuntimeOf(session, opts))
   ].filter(Boolean).join('\n\n');
   if (target === 'design') return [
     `# Design brief — ${session.title}`, head,
@@ -744,8 +758,8 @@ function buildBrief(target, env, session) {
     `## Transcript`, ctx
   ].filter(Boolean).join('\n\n');
 }
-function renderHandoffMd(env, session, target) {
-  return buildBrief(target || 'code', env, session) +
+function renderHandoffMd(env, session, target, opts) {
+  return buildBrief(target || 'code', env, session, opts) +
     '\n\n---\nThe origin session stays resumable; your progress is carried back automatically.';
 }
 
@@ -1658,6 +1672,7 @@ function findDuplicateWorker(origin, task, runtimeId) {
     const dest = db.sessions[link.dest];
     if (!dest || dest.archived || dest.retired) continue;
     if (dest.surface !== 'code') continue;
+    if (dest.worker_launched !== true) continue;
     if (!dest.worker_task_fp || dest.worker_task_fp !== fp) continue;
     const age = nowMs - new Date(link.created_at).getTime();
     if (!Number.isFinite(age) || age > windowMs) continue;
@@ -1674,7 +1689,6 @@ async function doLaunch(s, b) {
   const dir = b.dir || process.cwd();
   if (!fs.existsSync(dir)) return { code: 400, payload: { error: 'dir does not exist: ' + dir } };
   const mode = b.mode || process.env.HANDOFF_LAUNCH_MODE || 'headless';
-  const nativeId = crypto.randomUUID();
   const picked = (b && b.runtime && b.runtime.id)
     ? { ok: true, runtime: b.runtime, explicit: true }
     : destRuntimes.pickDestRuntime(b && b.dest);
@@ -1682,8 +1696,10 @@ async function doLaunch(s, b) {
     return { code: 409, payload: { launched: false, error: picked.error, detail: picked.detail, present: picked.present || [] } };
   }
   const runtime = picked.runtime;
+  const nativeId = runtime.id === 'codex' ? null : crypto.randomUUID();
   s.native_ref = destRuntimes.nativeRefFor(runtime, nativeId, dir);
   s.worker_runtime = runtime.id;
+  s.worker_launched = false;
   save();
   if (runtime.id === 'claude-code') {
     try {
@@ -1712,7 +1728,7 @@ async function doLaunch(s, b) {
   } else {
     const env2 = await buildEnvelope(s);
     fp = path.join(dir, 'HANDOFF.md');
-    fs.writeFileSync(fp, renderHandoffMd(env2, s, 'code'));
+    fs.writeFileSync(fp, renderHandoffMd(env2, s, 'code', { destRuntime: runtime.id }));
   }
   /* NAME THE TARGET, SO THERE IS NO PIN TO DEPEND ON.
    *
@@ -1770,7 +1786,7 @@ async function doLaunch(s, b) {
   if (!canSpawn) {
     const env2 = await buildEnvelope(s);
     fp = path.join(dir, 'HANDOFF.md');
-    fs.writeFileSync(fp, renderHandoffMd(env2, s, 'code'));
+    fs.writeFileSync(fp, renderHandoffMd(env2, s, 'code', { destRuntime: runtime.id }));
     const reason = process.env.HANDOFF_NO_CLI
       ? `${runtime.label} CLI not launched (HANDOFF_NO_CLI)`
       : (!spawnPlan
@@ -1816,6 +1832,8 @@ async function doLaunch(s, b) {
     const child = spawn(ideCmd, ideArgs, { detached: true, stdio: 'ignore' });
     child.unref();
     child.on('error', () => {});
+    s.worker_launched = true;
+    save();
     ops('launch', { session: s.id, mode: 'ide', transport: viaMcp ? 'mcp' : 'file', ide: ideCmd, native: nativeId, launched: true, dest: runtime.id });
     return { code: 202, payload: { launched: true, mode, transport: viaMcp ? 'mcp' : 'file', ide: ideCmd, path: fp, session: s.id, note: taskNote, native_ref: s.native_ref, dest: { id: runtime.id, label: runtime.label }, workspace: { cwd: dir, via: (b && b.workspace_via) || 'dir' } } };
   }
@@ -1883,16 +1901,42 @@ async function doLaunch(s, b) {
       },
     };
   }
+  if (runtime.id === 'codex') {
+    const harvested = await destRuntimes.waitForCodexSession(child, sink, 3000);
+    if (harvested.sessionId) {
+      s.native_ref = destRuntimes.nativeRefFor(runtime, harvested.sessionId, dir);
+      save();
+    } else if (harvested.exited || child.exitCode !== null) {
+      const why = 'Codex exited before publishing a session id (thread.started)';
+      ops('launch', { session: s.id, mode: 'headless', transport: viaMcp ? 'mcp' : 'file', native: null, launched: false, dest: runtime.id, error: why });
+      return {
+        code: 200,
+        payload: {
+          launched: false, mode: 'headless', transport: viaMcp ? 'mcp' : 'file',
+          reason: why, path: fp, command, native_ref: s.native_ref,
+          dest: { id: runtime.id, label: runtime.label }, workspace,
+        },
+      };
+    }
+  }
+  s.worker_launched = true;
+  save();
   child.on('close', (code2) => {
     load(); // another process may have written meanwhile
     const s2 = db.sessions[s.id];
-    // stdout only — Codex progress on stderr is drained separately and must not become this line
-    const summary = (sink.out.trim().split('\n').filter(Boolean).slice(-6).join(' ') || 'CLI session finished with no output').slice(0, 600);
+    // stdout only — Codex progress on stderr is drained separately and must not become this line.
+    // Codex --json: prefer the last agent_message over raw JSONL.
+    const jsonSummary = runtime.id === 'codex'
+      ? destRuntimes.harvestCodexSummary((sink.head || '') + '\n' + (sink.out || ''))
+      : null;
+    const summary = (jsonSummary
+      || sink.out.trim().split('\n').filter(Boolean).slice(-6).join(' ')
+      || 'CLI session finished with no output').slice(0, 600);
     if (s2) { addMessage(s2, { role: 'system', kind: 'progress', text: `[auto CLI] ${summary}` }); save(); }
-    ops('worker_done', { session: s.id, native: nativeId, exit: code2, secs: Math.round((Date.now() - startedAt) / 1000), summary_excerpt: summary.slice(0, 200) });
+    ops('worker_done', { session: s.id, native: s2 && s2.native_ref && s2.native_ref.session_id, exit: code2, secs: Math.round((Date.now() - startedAt) / 1000), summary_excerpt: summary.slice(0, 200) });
     autoReceipt();
   });
-  ops('launch', { session: s.id, mode: 'headless', transport: viaMcp ? 'mcp' : 'file', native: nativeId, launched: true, dest: runtime.id });
+  ops('launch', { session: s.id, mode: 'headless', transport: viaMcp ? 'mcp' : 'file', native: s.native_ref && s.native_ref.session_id, launched: true, dest: runtime.id });
   return { code: 202, payload: { launched: true, mode: 'headless', transport: viaMcp ? 'mcp' : 'file', path: fp, session: s.id, native_ref: s.native_ref, dest: { id: runtime.id, label: runtime.label }, workspace } };
 }
 

@@ -9,7 +9,7 @@
  *   3. dest:"codex" when both are present (test seam) sets native_ref.kind to codex.
  *   4. dest omitted when both present is REFUSED as ambiguous.
  *   5. dest omitted when only one is present defaults to that one.
- *   6. A second identical dispatch within the window returns duplicate_in_flight.
+ *   6. A dest that never launched is not duplicate_in_flight; a launched dest with the same fp is.
  *   6b. A different task still dispatches even if a return-owed non-code dest exists from this origin.
  *   6c. A code dest with no worker_task_fp is not a duplicate of any task.
  *   7. origin.project_state.project_id binds cwd when dir is omitted, and the result names it.
@@ -17,9 +17,11 @@
  *   9. omitted dir and missing project_id prints the home cwd fallback.
  *  10. worker spawn ignores stdin and drains stderr (Codex exec hang class) without a live Codex.
  *  11. stderr progress is NOT concatenated into the stdout auto-summary sink.
+ *  12. Claude headless prompt keeps MCP close; Codex/Gemini read HANDOFF.md and print stdout.
  *  13. get_worker_result without worker_id refuses when several workers are in flight.
  *  14. A single in-flight worker may omit worker_id.
- *  15. Codex spawn argv carries --session-id; resume is `codex exec resume <that id>`, not --last.
+ *  15. Codex spawn uses --json (not --session-id); harvest thread.started; resume is that id, not --last.
+ *  16. Codex HANDOFF.md On completion is stdout-summary, not MCP/return_to_origin.
  *
  *   node bin/dest-launch-check.js
  */
@@ -98,15 +100,21 @@ function fail(msg) {
   if (!worker.native_ref || worker.native_ref.kind !== 'codex') {
     fail('dest native_ref.kind must be codex, got ' + JSON.stringify(worker.native_ref));
   }
-  if (!worker.native_ref.session_id) fail('Codex native_ref.session_id must be set');
-  if (worker.native_ref.resume !== 'codex exec resume ' + worker.native_ref.session_id) {
-    fail('Codex resume must target THIS worker id, not --last, got ' + worker.native_ref.resume);
-  }
-  if (/--last/.test(worker.native_ref.resume) || /--last/.test(dispatched)) {
+  if (/--last/.test(String(worker.native_ref.resume || '')) || /--last/.test(dispatched)) {
     fail('must not print codex exec resume --last as if it addressed this worker\n' + dispatched);
   }
-  if (!dispatched.includes(worker.native_ref.session_id) || !dispatched.includes('codex exec resume')) {
-    fail('dispatch must print the Codex session id and a resume command that uses it\n' + dispatched);
+  if (worker.native_ref.session_id && worker.native_ref.resume !== 'codex exec resume ' + worker.native_ref.session_id) {
+    fail('Codex resume must use the harvested session id, got ' + worker.native_ref.resume);
+  }
+  if (worker.worker_launched === true) {
+    fail('HANDOFF_NO_CLI dest must not be marked launched');
+  }
+  const brief = fs.readFileSync(path.join(ws, 'HANDOFF.md'), 'utf8');
+  if (/return_to_origin|handoff MCP|mcp__handoff/.test(brief)) {
+    fail('Codex HANDOFF.md On completion must not chase MCP tools\n' + brief.slice(-500));
+  }
+  if (!/stdout/.test(brief)) {
+    fail('Codex HANDOFF.md must tell the dest to print a summary on stdout\n' + brief.slice(-400));
   }
   if (worker.native_ref.cwd !== ws) {
     fail('workspace bind: native_ref.cwd must be origin project_id when dir omitted, got ' + worker.native_ref.cwd);
@@ -131,11 +139,21 @@ function fail(msg) {
     fail('refused nested origin must not mint another dest, extra code records: ' + extraCode.map(s => s.id).join(','));
   }
 
+  const retryUnlaunched = String(await callTool('send_to_worker', {
+    task: 'ship the dest picker', origin_session_id: originId, dest: 'codex',
+  }, ctx, core));
+  if (!/Worker dispatched/.test(retryUnlaunched) || /Duplicate in-flight/.test(retryUnlaunched)) {
+    fail('a dest that never launched must not count as duplicate_in_flight\n' + retryUnlaunched);
+  }
+  const stLaunch = (await core.handleApi('GET', '/api/state', {}, {})).payload;
+  const launchedRec = JSON.parse(JSON.stringify(stLaunch.sessions[wid[1]]));
+  launchedRec.worker_launched = true;
+  core.__writeRecordForTests('sessions', launchedRec.id, launchedRec);
   const dup = String(await callTool('send_to_worker', {
     task: 'ship the dest picker', origin_session_id: originId, dest: 'codex',
   }, ctx, core));
-  if (!/Duplicate in-flight/.test(dup) || !wid[1] || dup.indexOf(wid[1]) < 0) {
-    fail('second identical dispatch must hit the duplicate guard and name the existing worker\n' + dup);
+  if (!/Duplicate in-flight/.test(dup) || dup.indexOf(wid[1]) < 0) {
+    fail('second identical dispatch after a real start must hit the duplicate guard and name the existing worker\n' + dup);
   }
 
   const side = await core.handleApi('POST', `/api/sessions/${originId}/continue`, {}, { to: 'chat', return_leg: true });
@@ -217,10 +235,22 @@ function fail(msg) {
     fail('worker stdio must ignore stdin and pipe stdout+stderr, got ' + JSON.stringify(dests.WORKER_STDIO));
   }
   const plan = dests.spawnArgv({ spawnKind: 'codex', binPath: 'codex' }, { nativeId: 'uuid-this-worker', prompt: 'x' });
-  if (!plan || plan.args.indexOf('--session-id') < 0 || plan.args[plan.args.indexOf('--session-id') + 1] !== 'uuid-this-worker') {
-    fail('Codex spawn argv must carry --session-id for this worker, got ' + JSON.stringify(plan && plan.args));
+  if (!plan || plan.args.indexOf('--json') < 0) {
+    fail('Codex spawn argv must pass --json so thread.started can be harvested, got ' + JSON.stringify(plan && plan.args));
+  }
+  if (plan.args.indexOf('--session-id') >= 0) {
+    fail('Codex spawn must not pass --session-id (clap rejects it), got ' + JSON.stringify(plan.args));
   }
   if (plan.args.indexOf('--last') >= 0) fail('Codex spawn argv must not use --last');
+  const pendingRef = dests.nativeRefFor({ id: 'codex' }, null, '/tmp/ws');
+  if (pendingRef.resume || pendingRef.session_id) {
+    fail('Codex native_ref must not invent a session id or resume command before harvest, got ' + JSON.stringify(pendingRef));
+  }
+  if (/--last/.test(String(pendingRef.resume || ''))) fail('Codex resume must never be --last');
+  const harvestedRef = dests.nativeRefFor({ id: 'codex' }, '0199a213-81c0-7800-8aa1-bbab2a035a53', '/tmp/ws');
+  if (harvestedRef.resume !== 'codex exec resume 0199a213-81c0-7800-8aa1-bbab2a035a53') {
+    fail('harvested Codex resume must target that thread id, got ' + harvestedRef.resume);
+  }
   const claudePrompt = dests.workerHeadlessPrompt({
     runtime: dests.CATALOG.find(r => r.id === 'claude-code'),
     sessionId: 'sess_code_test',
@@ -247,6 +277,8 @@ function fail(msg) {
   const fake = path.join(tmp, 'fake-codex-exec.js');
   fs.writeFileSync(fake, [
     "'use strict';",
+    "process.stdout.write(JSON.stringify({ type: 'thread.started', thread_id: 'codex-thread-real' }) + '\\n');",
+    "process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'did the work' } }) + '\\n');",
     "let got = false;",
     "process.stderr.write('progress-1\\n'.repeat(4000));",
     "process.stdin.on('data', () => { got = true; });",
@@ -262,6 +294,10 @@ function fail(msg) {
   dests.consumeWorkerPipes(child, sink);
   const started = await dests.waitChildStarted(child);
   if (!started.started) fail('fixture spawn must start: ' + ((started.error && started.error.message) || 'unknown'));
+  const harvested = await dests.waitForCodexSession(child, sink, 2000);
+  if (harvested.sessionId !== 'codex-thread-real') {
+    fail('must harvest Codex thread_id from --json thread.started, got ' + JSON.stringify(harvested));
+  }
   const code = await new Promise((resolve, reject) => {
     const t = setTimeout(() => {
       try { child.kill(); } catch (_) { /* already gone */ }
@@ -272,11 +308,23 @@ function fail(msg) {
   if (code !== 0 || !/STDIN_EOF/.test(sink.out)) {
     fail('Codex-shaped spawn must see stdin EOF and drain stderr, exit ' + code + ' out=' + sink.out.slice(0, 300));
   }
+  if (dests.harvestCodexSummary((sink.head || '') + '\n' + (sink.out || '')) !== 'did the work') {
+    fail('must harvest Codex agent_message for the auto summary, got ' + dests.harvestCodexSummary((sink.head || '') + '\n' + (sink.out || '')));
+  }
   if (/progress-1/.test(sink.out)) {
     fail('stderr progress must not land in the stdout auto-summary sink, out=' + sink.out.slice(0, 300));
   }
   if (!/progress-1/.test(sink.err)) {
     fail('stderr must still be drained into the discarded err buffer');
+  }
+  const dead = spawn(process.execPath, ['-e', 'process.exit(2)'], dests.workerSpawnOpts({ cwd: tmp }));
+  const deadSink = { out: '', err: '' };
+  dests.consumeWorkerPipes(dead, deadSink);
+  const deadStarted = await dests.waitChildStarted(dead);
+  if (!deadStarted.started) fail('immediate-exit fixture must still spawn');
+  const deadHarvest = await dests.waitForCodexSession(dead, deadSink, 2000);
+  if (deadHarvest.sessionId || !deadHarvest.exited) {
+    fail('Codex that dies before thread.started must not report a session id, got ' + JSON.stringify(deadHarvest));
   }
   const missing = spawn(path.join(tmp, 'no-such-codex-bin'), ['exec'], dests.workerSpawnOpts({ cwd: tmp }));
   dests.consumeWorkerPipes(missing, { out: '', err: '' });

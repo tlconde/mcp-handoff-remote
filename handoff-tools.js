@@ -1696,8 +1696,15 @@ async function callTool(name, args, ctx, core) {
     }
     const l = r.launch || {};
     const destLabel = (r.dest && r.dest.label) || 'laptop agent';
+    const cwd = (l.native_ref && l.native_ref.cwd) || (l.workspace && l.workspace.cwd) || (r.workspace && r.workspace.cwd) || null;
+    const via = (l.workspace && l.workspace.via) || (r.workspace && r.workspace.via) || null;
+    const wsLine = cwd
+      ? (via === 'cwd'
+        ? `\nWorkspace: ${cwd} (home cwd fallback — dir/project_id was omitted or not an existing directory; this dest can write here)`
+        : `\nWorkspace: ${cwd}${via === 'project_id' ? ' (bound from project_id)' : ''}`)
+      : '';
     if (l.reason === 'duplicate_in_flight') {
-      return `Duplicate in-flight — the same task is already running from this origin.\nworker_id: ${r.worker_id}\norigin: ${r.origin_id}\ndest: ${destLabel}\nNothing new was dispatched. Check later with get_worker_result. Home-timeout on a prior call is the same case: verify by effect, do not retry blind.`;
+      return `Duplicate in-flight — the same task is already running from this origin.\nworker_id: ${r.worker_id}\norigin: ${r.origin_id}\ndest: ${destLabel}${wsLine}\nNothing new was dispatched. Check later with get_worker_result. Home-timeout on a prior call is the same case: verify by effect, do not retry blind.`;
     }
     const how = l.launched
       ? (l.mode === 'ide' ? `NEW ${destLabel} session in a ${l.ide === 'code' ? 'VS Code' : 'Cursor'} window (interactive)` : `NEW ${destLabel} session, headless on the home laptop — its summary will come back on its own`)
@@ -1709,7 +1716,7 @@ async function callTool(name, args, ctx, core) {
     const pickLine = r.dest && r.dest.explicit
       ? `Dest: ${destLabel} (named).`
       : (r.dest && r.dest.defaulted ? `Dest: ${destLabel} (the one present on the home machine).` : `Dest: ${destLabel}.`);
-    return `Worker dispatched.\n${originLine}\n${pickLine}\nworker_id: ${r.worker_id}\nStatus: ${how}${nat}\nReturn link OPEN — call get_worker_result later, or the dest calls return_to_origin.`;
+    return `Worker dispatched.\n${originLine}\n${pickLine}${wsLine}\nworker_id: ${r.worker_id}\nStatus: ${how}${nat}\nReturn link OPEN — call get_worker_result later, or the dest calls return_to_origin.`;
   }
   if (name === 'list_conversations') {
     const st = await call('GET', '/api/state');

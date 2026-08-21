@@ -1639,12 +1639,12 @@ function taskFingerprint(task) {
 }
 
 function bindWorkspaceDir(dir, origin) {
-  if (dir) return dir;
+  if (dir) return { dir, via: 'dir' };
   const pid = origin && origin.project_state && origin.project_state.project_id;
   if (pid && typeof pid === 'string') {
-    try { if (fs.existsSync(pid) && fs.statSync(pid).isDirectory()) return pid; } catch (_) { /* unreadable is not a bind */ }
+    try { if (fs.existsSync(pid) && fs.statSync(pid).isDirectory()) return { dir: pid, via: 'project_id' }; } catch (_) { /* unreadable is not a bind */ }
   }
-  return process.cwd();
+  return { dir: process.cwd(), via: 'cwd' };
 }
 
 function findDuplicateWorker(origin, task, runtimeId) {
@@ -1779,6 +1779,7 @@ async function doLaunch(s, b) {
       payload: {
         launched: false, mode, transport: 'file', reason, path: fp, command,
         native_ref: s.native_ref, dest: { id: runtime.id, label: runtime.label },
+        workspace: { cwd: dir, via: (b && b.workspace_via) || 'dir' },
       },
     };
   }
@@ -1814,7 +1815,7 @@ async function doLaunch(s, b) {
     child.unref();
     child.on('error', () => {});
     ops('launch', { session: s.id, mode: 'ide', transport: viaMcp ? 'mcp' : 'file', ide: ideCmd, native: nativeId, launched: true, dest: runtime.id });
-    return { code: 202, payload: { launched: true, mode, transport: viaMcp ? 'mcp' : 'file', ide: ideCmd, path: fp, session: s.id, note: taskNote, native_ref: s.native_ref, dest: { id: runtime.id, label: runtime.label } } };
+    return { code: 202, payload: { launched: true, mode, transport: viaMcp ? 'mcp' : 'file', ide: ideCmd, path: fp, session: s.id, note: taskNote, native_ref: s.native_ref, dest: { id: runtime.id, label: runtime.label }, workspace: { cwd: dir, via: (b && b.workspace_via) || 'dir' } } };
   }
   /* THE SAME SERVER IS MOUNTED UNDER MORE THAN ONE NAME, AND THE GRANT NAMED ONLY ONE.
    *
@@ -1844,40 +1845,52 @@ async function doLaunch(s, b) {
   if (runtime.id === 'claude-code') childEnv.CLAUDE_CODE_SESSION_ID = nativeId;
   // Resolved, not inherited — this is the actual worker LAUNCH, and a bare name here is what made
   // a dispatch come back "prepared but NOT auto-launched" while the binary sat in ~/.local/bin.
-  const child = spawn(planned.bin, planned.args,
-    /* ONE IDENTITY, TWO PLACES, BOTH THE WORKER'S OWN — barrier 7 of seven.
-     *
-     * The child was given HANDOFF_SESSION_ID (its protocol record) and no CLAUDE_CODE_SESSION_ID.
-     * The local `handoff` mount mints from a CLI uuid and refuses without one, which is right — so
-     * a worker had a protocol identity in the store and NO WAY TO PROVE IT LOCALLY. Every handoff
-     * call fell through to the relay-backed mount and became a home round trip against a 10-second
-     * budget. Measured 2026-08-10: the sixth dispatch restated its brief correctly, then did
-     * nothing, and diagnosed itself — "set CLAUDE_CODE_SESSION_ID so the session has an identity
-     * the relay can route to." The preflight passed only because its task needs no MCP at all.
-     *
-     * nativeId is the uuid this launch already passes as --session-id, so the two now agree: the
-     * worker's own identity, in both places it is read from.
-     *
-     * IT ALSO CLOSES A BORROWED-IDENTITY HOLE. The spread of process.env carried the DAEMON's
-     * CLAUDE_CODE_SESSION_ID through to the child whenever the daemon had one — a worker asserting
-     * a uuid that belongs to another session, which is the stored-address disease with a stolen
-     * address. Setting it explicitly overwrites that inheritance rather than leaving it to luck.
-     * Non-Claude dests do not get CLAUDE_CODE_SESSION_ID — that would be a borrowed identity. */
-    { cwd: dir, env: childEnv });
-  let out = '';
-  child.stdout.on('data', d => { out += d; if (out.length > 20000) out = out.slice(-20000); });
+  const child = spawn(planned.bin, planned.args, destRuntimes.workerSpawnOpts({ cwd: dir, env: childEnv }));
+  /* ONE IDENTITY, TWO PLACES, BOTH THE WORKER'S OWN — barrier 7 of seven.
+   *
+   * The child was given HANDOFF_SESSION_ID (its protocol record) and no CLAUDE_CODE_SESSION_ID.
+   * The local `handoff` mount mints from a CLI uuid and refuses without one, which is right — so
+   * a worker had a protocol identity in the store and NO WAY TO PROVE IT LOCALLY. Every handoff
+   * call fell through to the relay-backed mount and became a home round trip against a 10-second
+   * budget. Measured 2026-08-10: the sixth dispatch restated its brief correctly, then did
+   * nothing, and diagnosed itself — "set CLAUDE_CODE_SESSION_ID so the session has an identity
+   * the relay can route to." The preflight passed only because its task needs no MCP at all.
+   *
+   * nativeId is the uuid this launch already passes as --session-id, so the two now agree: the
+   * worker's own identity, in both places it is read from.
+   *
+   * IT ALSO CLOSES A BORROWED-IDENTITY HOLE. The spread of process.env carried the DAEMON's
+   * CLAUDE_CODE_SESSION_ID through to the child whenever the daemon had one — a worker asserting
+   * a uuid that belongs to another session, which is the stored-address disease with a stolen
+   * address. Setting it explicitly overwrites that inheritance rather than leaving it to luck.
+   * Non-Claude dests do not get CLAUDE_CODE_SESSION_ID — that would be a borrowed identity. */
+  const sink = { out: '' };
+  destRuntimes.consumeWorkerPipes(child, sink);
   const startedAt = Date.now();
+  const started = await destRuntimes.waitChildStarted(child);
+  const workspace = { cwd: dir, via: (b && b.workspace_via) || 'dir' };
+  if (!started.started) {
+    const why = (started.error && (started.error.code || started.error.message)) || 'spawn failed';
+    ops('launch', { session: s.id, mode: 'headless', transport: viaMcp ? 'mcp' : 'file', native: nativeId, launched: false, dest: runtime.id, error: String(why).slice(0, 200) });
+    return {
+      code: 200,
+      payload: {
+        launched: false, mode: 'headless', transport: viaMcp ? 'mcp' : 'file',
+        reason: String(why), path: fp, command, native_ref: s.native_ref,
+        dest: { id: runtime.id, label: runtime.label }, workspace,
+      },
+    };
+  }
   child.on('close', (code2) => {
     load(); // another process may have written meanwhile
     const s2 = db.sessions[s.id];
-    const summary = (out.trim().split('\n').filter(Boolean).slice(-6).join(' ') || 'CLI session finished with no output').slice(0, 600);
+    const summary = (sink.out.trim().split('\n').filter(Boolean).slice(-6).join(' ') || 'CLI session finished with no output').slice(0, 600);
     if (s2) { addMessage(s2, { role: 'system', kind: 'progress', text: `[auto CLI] ${summary}` }); save(); }
     ops('worker_done', { session: s.id, native: nativeId, exit: code2, secs: Math.round((Date.now() - startedAt) / 1000), summary_excerpt: summary.slice(0, 200) });
     autoReceipt();
   });
-  child.on('error', () => {});
   ops('launch', { session: s.id, mode: 'headless', transport: viaMcp ? 'mcp' : 'file', native: nativeId, launched: true, dest: runtime.id });
-  return { code: 202, payload: { launched: true, mode: 'headless', transport: viaMcp ? 'mcp' : 'file', path: fp, session: s.id, native_ref: s.native_ref, dest: { id: runtime.id, label: runtime.label } } };
+  return { code: 202, payload: { launched: true, mode: 'headless', transport: viaMcp ? 'mcp' : 'file', path: fp, session: s.id, native_ref: s.native_ref, dest: { id: runtime.id, label: runtime.label }, workspace } };
 }
 
 /* ---------------- demo seed (pitch UI only) ---------------- */
@@ -2931,8 +2944,15 @@ async function handleApi(method, p, query, b) {
         if (!origin || origin.archived || origin.retired) {
           return { code: 404, payload: { error: 'origin_not_found', detail: `no live session ${b.origin_session_id} — pass the sess_… id register_chat_session returned. Nothing was dispatched.` } };
         }
+        if (!['chat', 'cowork', 'design'].includes(origin.surface)) {
+          return { code: 409, payload: { error: 'origin_must_be_enrolled_chat', detail: 'origin_session_id must name an enrolled chat, cowork, or design seat — not a code worker. Passing a worker_id as session_id would nest a dest under the dest. Nothing was dispatched.' } };
+        }
       } else {
-        origin = createSession({ surface: b.origin_surface || 'chat', title: b.title || b.task.slice(0, 60) });
+        const surface = b.origin_surface || 'chat';
+        if (!['chat', 'cowork', 'design'].includes(surface)) {
+          return { code: 409, payload: { error: 'origin_must_be_enrolled_chat', detail: 'origin_session_id must name an enrolled chat, cowork, or design seat — not a code worker. Nothing was dispatched.' } };
+        }
+        origin = createSession({ surface, title: b.title || b.task.slice(0, 60) });
         originMinted = true;
       }
       if (b.project_state && !origin.project_state) origin.project_state = normalizeProjectState(b.project_state);
@@ -2953,7 +2973,7 @@ async function handleApi(method, p, query, b) {
           payload: {
             worker_id: dup.worker_id, origin_id: origin.id, link_id: dup.link_id, origin_minted: originMinted,
             dest: { id: picked.runtime.id, label: picked.runtime.label },
-            launch: { launched: false, reason: 'duplicate_in_flight', existing: true, native_ref: dup.dest.native_ref || null },
+            launch: { launched: false, reason: 'duplicate_in_flight', existing: true, native_ref: dup.dest.native_ref || null, workspace: dup.dest.native_ref ? { cwd: dup.dest.native_ref.cwd, via: null } : null },
           },
         };
       }
@@ -2979,13 +2999,14 @@ async function handleApi(method, p, query, b) {
        * the most important field being the only one left unprotected. */
       addMessage(origin, { role: 'user', text: b.task, kind: 'context' });
       if (b.context) addMessage(origin, { role: 'user', text: 'Context from the conversation: ' + b.context, kind: 'context' }); // carriers quote decisions; never re-lock
-      const dir = bindWorkspaceDir(b.dir, origin);
+      const bound = bindWorkspaceDir(b.dir, origin);
       const destTitle = b.title || b.task.slice(0, 60);
       const cont = await continueIn(origin, 'code', { supersede: false });
       if (destTitle) cont.dest.title = destTitle;
       cont.dest.worker_runtime = picked.runtime.id;
       cont.dest.worker_task_fp = taskFingerprint(b.task);
-      const launch = (await doLaunch(cont.dest, Object.assign({}, b, { dir, runtime: picked.runtime }))).payload;
+      const launch = (await doLaunch(cont.dest, Object.assign({}, b, { dir: bound.dir, workspace_via: bound.via, runtime: picked.runtime }))).payload;
+      if (launch && !launch.workspace) launch.workspace = { cwd: bound.dir, via: bound.via };
       save();
       ops('dispatch', {
         worker_id: cont.dest.id, origin_id: origin.id, link_id: cont.link && cont.link.id,
@@ -3001,6 +3022,7 @@ async function handleApi(method, p, query, b) {
           origin_minted: originMinted,
           dest: { id: picked.runtime.id, label: picked.runtime.label, defaulted: !!picked.defaulted, explicit: !!picked.explicit },
           launch,
+          workspace: (launch && launch.workspace) || { cwd: bound.dir, via: bound.via },
         },
       };
     }

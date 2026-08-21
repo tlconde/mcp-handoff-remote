@@ -15,6 +15,34 @@ const fs = require('fs');
 const { spawnSync } = require('child_process');
 const { CURRENT } = require('./bin/platform-profile');
 
+/* stdin ignore = immediate EOF. Codex exec treats an open piped stdin as extra context
+ * and never sees EOF if the parent keeps the pipe. stderr is piped so progress cannot
+ * fill an unread buffer and block. Same stdio for every dest spawn — Claude -p does not
+ * need stdin either; the prompt is argv. */
+const WORKER_STDIO = ['ignore', 'pipe', 'pipe'];
+
+function workerSpawnOpts(extra) {
+  return Object.assign({ stdio: WORKER_STDIO.slice() }, extra || {});
+}
+
+function consumeWorkerPipes(child, sink) {
+  const take = d => {
+    sink.out += d;
+    if (sink.out.length > 20000) sink.out = sink.out.slice(-20000);
+  };
+  if (child.stdout) child.stdout.on('data', take);
+  if (child.stderr) child.stderr.on('data', take);
+}
+
+function waitChildStarted(child) {
+  return new Promise(resolve => {
+    let done = false;
+    const finish = result => { if (done) return; done = true; resolve(result); };
+    child.once('spawn', () => finish({ started: true }));
+    child.once('error', err => finish({ started: false, error: err }));
+  });
+}
+
 const CATALOG = [
   {
     id: 'claude-code',
@@ -203,4 +231,5 @@ function spawnArgv(runtime, { nativeId, prompt, allowedTools } = {}) {
 
 module.exports = {
   CATALOG, probeDestRuntimes, pickDestRuntime, matchCatalog, nativeRefFor, spawnArgv, normalizeWant,
+  WORKER_STDIO, workerSpawnOpts, consumeWorkerPipes, waitChildStarted,
 };

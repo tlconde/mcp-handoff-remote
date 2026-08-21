@@ -25,6 +25,9 @@
  *  17. send_to_worker close sentence is dest-specific (Codex: get_worker_result / stdout).
  *  18. attachWorkerClose fires if the child already exited (harvest-wait race).
  *  19. Non-Claude dests delete inherited CLAUDE_CODE_SESSION_ID.
+ *  20. doLaunch attaches close after spawn start and before Codex harvest; no [auto CLI] without a session id.
+ *  21. list_workers / get_worker_result refuse list use dest task text, not the origin chat's first message.
+ *  22. native session/resume is omitted until session_id is harvested.
  *
  *   node bin/dest-launch-check.js
  */
@@ -229,9 +232,27 @@ function fail(msg) {
   if (many.indexOf(wid[1]) < 0) {
     fail('ambiguous get_worker_result must list the in-flight worker ids\n' + many);
   }
+  if (!/ship the dest picker/.test(many) || !/a different task so it is not a duplicate/.test(many)) {
+    fail('get_worker_result refuse list must print each dest task, not the origin chat label for every worker\n' + many);
+  }
   const named = String(await callTool('get_worker_result', { worker_id: wid[1] }, ctx, core));
   if (/^REFUSED:/.test(named) || named.indexOf(wid[1]) < 0) {
     fail('get_worker_result with worker_id must address that worker\n' + named);
+  }
+  if (/Reopen the actual worker session anytime: null/.test(named) || /native session: null/.test(named)) {
+    fail('get_worker_result must not print a null native resume before harvest\n' + named);
+  }
+  const listed = String(await callTool('list_workers', {}, ctx, core));
+  if (!/ship the dest picker/.test(listed) || !/a different task so it is not a duplicate/.test(listed)) {
+    fail('list_workers must print each dest task, not the origin chat label for every worker\n' + listed);
+  }
+  if (/native session: null/.test(listed)) {
+    fail('list_workers must not print native session until session_id is harvested\n' + listed);
+  }
+  const workerRows = (await core.handleApi('GET', '/api/workers', {}, {})).payload || [];
+  const originTasks = workerRows.filter(w => w.origin && w.origin.id === originId).map(w => w.task);
+  if (new Set(originTasks).size < 2) {
+    fail('several dests from one origin must not share one task label, got ' + JSON.stringify(originTasks));
   }
   const one = String(await callTool('get_worker_result', { origin_session_id: m2[1] }, ctx, core));
   if (/^REFUSED:/.test(one) || /will not pick the last one/.test(one)) {
@@ -243,6 +264,18 @@ function fail(msg) {
 
   const dests = require('../handoff-dest-runtimes');
   const { spawn } = require('child_process');
+  const launchSrc = fs.readFileSync(path.join(__dirname, '../handoff-core.js'), 'utf8');
+  const doLaunchSrc = launchSrc.slice(launchSrc.indexOf('async function doLaunch'), launchSrc.indexOf('async function seed'));
+  const iStarted = doLaunchSrc.indexOf('waitChildStarted');
+  const iAttach = doLaunchSrc.indexOf('attachWorkerClose');
+  const iHarvest = doLaunchSrc.indexOf('waitForCodexSession');
+  if (!(iStarted >= 0 && iAttach > iStarted && iHarvest > iAttach)) {
+    fail('doLaunch must attachWorkerClose after waitChildStarted and before waitForCodexSession');
+  }
+  const closeSrc = doLaunchSrc.slice(doLaunchSrc.indexOf('onWorkerClose'), iStarted);
+  if (!/runtime\.id === 'codex' && !sessionId/.test(closeSrc)) {
+    fail('onWorkerClose must skip [auto CLI] when Codex has no session id');
+  }
   const inherited = {
     PATH: '/usr/bin',
     CLAUDE_CODE_SESSION_ID: 'daemon-borrowed-id',

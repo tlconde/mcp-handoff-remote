@@ -1912,11 +1912,17 @@ async function doLaunch(s, b) {
     const summary = (jsonSummary
       || (sink.out || '').trim().split('\n').filter(Boolean).slice(-6).join(' ')
       || 'CLI session finished with no output').slice(0, 600);
-    if (s2) { addMessage(s2, { role: 'system', kind: 'progress', text: `[auto CLI] ${summary}` }); save(); }
-    ops('worker_done', { session: s.id, native: s2 && s2.native_ref && s2.native_ref.session_id, exit: code2, secs: Math.round((Date.now() - startedAt) / 1000), summary_excerpt: summary.slice(0, 200) });
+    // Spawn failed or Codex died before thread.started → launched:false. A progress
+    // line would make get_worker_result treat this dest as finished work and resolve
+    // the link. Persist native_ref if the id arrived; do not record [auto CLI].
+    const sessionId = s2 && s2.native_ref && s2.native_ref.session_id;
+    if (s2 && !(runtime.id === 'codex' && !sessionId)) {
+      addMessage(s2, { role: 'system', kind: 'progress', text: `[auto CLI] ${summary}` });
+      save();
+    }
+    ops('worker_done', { session: s.id, native: sessionId, exit: code2, secs: Math.round((Date.now() - startedAt) / 1000), summary_excerpt: summary.slice(0, 200) });
     autoReceipt();
   };
-  destRuntimes.attachWorkerClose(child, onWorkerClose);
   const started = await destRuntimes.waitChildStarted(child);
   const workspace = { cwd: dir, via: (b && b.workspace_via) || 'dir' };
   if (!started.started) {
@@ -1931,6 +1937,7 @@ async function doLaunch(s, b) {
       },
     };
   }
+  destRuntimes.attachWorkerClose(child, onWorkerClose);
   if (runtime.id === 'codex') {
     const harvested = await destRuntimes.waitForCodexSession(child, sink, 3000);
     persistCodexNativeRef();
@@ -3120,10 +3127,11 @@ async function handleApi(method, p, query, b) {
         out.push({
           worker_id: dest.id, link_id: link.id, status: link.status, dest_surface: dest.surface,
           dest_runtime: dest.worker_runtime || (dest.native_ref && dest.native_ref.kind) || null,
-          // The task label is what the user reads to decide whether a worker matters.
-          // Taking the first user message made two of them read "Decision: CTA color is
-          // blue" — a locked decision is a constraint ON the task, never the task.
-          task: taskLabel(origin),
+          // Per-dispatch text. After supersede:false several dests share one enrolled
+          // origin, so taskLabel(origin) printed the same first user message on every
+          // worker_id. dest.worker_task_fp is the task (normalized); dest.title is the
+          // short dispatch title. Non-worker dests still have dest.title.
+          task: String(dest.worker_task_fp || dest.title || '').slice(0, 160),
           origin: { id: origin.id, surface: origin.surface, title: origin.title },
           working: link.status === 'active' && !progressed && !orphaned, orphaned, summary,
           native_ref: dest.native_ref || null

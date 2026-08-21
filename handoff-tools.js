@@ -858,7 +858,9 @@ async function callTool(name, args, ctx, core) {
     const w = picked.worker;
     if (w.status === 'resolved') return `Worker ${w.worker_id} (already retrieved):\n${w.summary || 'no summary recorded'}`;
     if (w.status === 'failed') return `Worker ${w.worker_id} FAILED (transaction closed honestly — the blocker was delivered to the origin). Task: ${w.task}`;
-    const nat = w.native_ref ? `\nReopen the actual worker session anytime: ${w.native_ref.resume}` : '';
+    const nat = (w.native_ref && w.native_ref.session_id)
+      ? `\nReopen the actual worker session anytime: ${w.native_ref.resume || w.native_ref.session_id}`
+      : '';
     if (w.orphaned) return `⚠ Worker ${w.worker_id} looks ORPHANED — no progress and silent past the threshold. Task: ${w.task}${nat}\nEither reopen it, or close the transaction honestly: return_to_origin outcome:"failed" from its session, or resolve here once you know the real outcome.`;
     if (w.working) return `Worker ${w.worker_id} is still working — no progress reported yet. Task: ${w.task}${nat}`;
     const r = await call('POST', `/api/links/${w.link_id}/resolve`);
@@ -2301,7 +2303,9 @@ async function callTool(name, args, ctx, core) {
     if (!ws.length) return banner + 'No workers yet. Use send_to_worker to dispatch one — or call status for what is waiting.';
     return banner + ws.map(w =>
       `- ${w.worker_id} [${w.status}${w.working ? ' · still working' : ''}${w.orphaned ? ' · ⚠ ORPHANED — silent past the threshold; reopen it or close with return_to_origin outcome:"failed"' : ''} → ${w.dest_surface || 'code'}] task: ${w.task}` +
-      (w.native_ref ? `\n  native session: ${w.native_ref.session_id} · ${w.native_ref.resume}` : '') +
+      (w.native_ref && w.native_ref.session_id
+        ? `\n  native session: ${w.native_ref.session_id}${w.native_ref.resume ? ` · ${w.native_ref.resume}` : ''}`
+        : '') +
       (w.summary ? `\n  summary: ${w.summary}` : '')
     ).join('\n');
   }

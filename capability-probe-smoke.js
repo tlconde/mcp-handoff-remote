@@ -202,6 +202,9 @@ const withEnv = (env, fn) => {
     const pending = dests.nativeRefFor({ id: 'codex' }, null, '/tmp/ws');
     ok(!pending.session_id && !pending.resume && !/--last/.test(String(pending.resume || '')),
       'codex native_ref has no resume until a real thread id is harvested');
+    const gemRef = dests.nativeRefFor({ id: 'gemini' }, null, '/tmp/ws');
+    ok(gemRef.kind === 'gemini' && !gemRef.session_id && !gemRef.resume,
+      'gemini native_ref has no invented session id');
     ok(dests.spawnArgv({ spawnKind: null, id: 'gemini' }, { prompt: 'x' }) === null,
       'probe-only dests have no invented spawn argv');
     ok(dests.WORKER_STDIO[0] === 'ignore' && dests.WORKER_STDIO[2] === 'pipe',

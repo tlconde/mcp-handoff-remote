@@ -28,6 +28,7 @@
  *  20. doLaunch attaches close after spawn start and before Codex harvest; no [auto CLI] without a session id.
  *  21. list_workers / get_worker_result refuse list use dest task text, not the origin chat's first message.
  *  22. native session/resume is omitted until session_id is harvested.
+ *  23. Probe-only dests (Gemini) do not mint a uuid as native_ref.session_id; only Claude Code does.
  *
  *   node bin/dest-launch-check.js
  */
@@ -208,6 +209,37 @@ function fail(msg) {
   }
   if (!/the dest calls return_to_origin/.test(def)) {
     fail('Claude dest send_to_worker may still mention dest return_to_origin\n' + def);
+  }
+  const defWid = /worker_id:\s*(\S+)/.exec(def);
+  if (!defWid) fail('Claude default dispatch must print worker_id\n' + def);
+  const defRec = (await core.handleApi('GET', '/api/state', {}, {})).payload.sessions[defWid[1]];
+  if (!defRec || !defRec.native_ref || !defRec.native_ref.session_id) {
+    fail('Claude dest must mint the uuid it will pass as --session-id, got ' + JSON.stringify(defRec && defRec.native_ref));
+  }
+  if (!/Native session:/.test(def) || def.indexOf(defRec.native_ref.session_id) < 0) {
+    fail('Claude dest send_to_worker must print the minted native session id\n' + def);
+  }
+
+  process.env.HANDOFF_DEST_PRESENT = 'claude-code,gemini';
+  const gem = String(await callTool('send_to_worker', {
+    task: 'gemini must not mint a fake session uuid',
+    origin_session_id: originId,
+    dest: 'gemini',
+  }, ctx, core));
+  if (!/Worker dispatched/.test(gem) || /Duplicate in-flight/.test(gem)) {
+    fail('named Gemini must dispatch\n' + gem);
+  }
+  if (/Native session:/.test(gem)) {
+    fail('probe-only Gemini must not print a minted uuid as native session\n' + gem);
+  }
+  const gemWid = /worker_id:\s*(\S+)/.exec(gem);
+  if (!gemWid) fail('Gemini dispatch must print worker_id\n' + gem);
+  const gemRec = (await core.handleApi('GET', '/api/state', {}, {})).payload.sessions[gemWid[1]];
+  if (!gemRec || !gemRec.native_ref || gemRec.native_ref.kind !== 'gemini') {
+    fail('Gemini dest native_ref.kind must be gemini, got ' + JSON.stringify(gemRec && gemRec.native_ref));
+  }
+  if (gemRec.native_ref.session_id || gemRec.native_ref.resume) {
+    fail('Gemini native_ref must not mint a uuid this dest never used, got ' + JSON.stringify(gemRec.native_ref));
   }
 
   const reg2 = String(await callTool('register_chat_session', {

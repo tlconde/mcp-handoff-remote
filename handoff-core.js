@@ -1696,7 +1696,9 @@ async function doLaunch(s, b) {
     return { code: 409, payload: { launched: false, error: picked.error, detail: picked.detail, present: picked.present || [] } };
   }
   const runtime = picked.runtime;
-  const nativeId = runtime.id === 'codex' ? null : crypto.randomUUID();
+  // Only Claude Code takes --session-id. Codex harvests thread.started. Probe-only dests
+  // (Gemini) never see a uuid we invent — minting one made list_workers print a fake session.
+  const nativeId = runtime.id === 'claude-code' ? crypto.randomUUID() : null;
   s.native_ref = destRuntimes.nativeRefFor(runtime, nativeId, dir);
   s.worker_runtime = runtime.id;
   s.worker_launched = false;

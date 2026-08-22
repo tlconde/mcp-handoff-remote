@@ -338,6 +338,23 @@ function nativeRefFor(runtime, nativeId, dir) {
   return { kind: runtime.id, session_id: nativeId || null, cwd: dir, resume: null };
 }
 
+function destRuntimeId(dest) {
+  if (dest && dest.worker_runtime) return dest.worker_runtime;
+  if (dest && dest.native_ref && dest.native_ref.kind && dest.native_ref.kind !== 'code') {
+    return dest.native_ref.kind;
+  }
+  return null;
+}
+
+/** Display name for return attribution. Codex/Gemini must not render as "Claude Code".
+ * Null when there is no runtime/kind — caller falls back to NAMES[surface]. */
+function destDisplayLabel(dest) {
+  const id = destRuntimeId(dest);
+  if (!id) return null;
+  const row = CATALOG.find(r => r.id === id);
+  return (row && row.label) || String(id);
+}
+
 /**
  * Headless argv prompt. Claude keeps the MCP close chain (get_handoff / return_to_origin).
  * Codex, Gemini, and any other dest have no those tools — they read HANDOFF.md, do the
@@ -379,5 +396,5 @@ module.exports = {
   CATALOG, probeDestRuntimes, pickDestRuntime, matchCatalog, nativeRefFor, spawnArgv, normalizeWant,
   WORKER_STDIO, workerSpawnOpts, consumeWorkerPipes, waitChildStarted, attachWorkerClose,
   workerHeadlessPrompt, harvestCodexSessionId, harvestCodexSummary, waitForCodexSession,
-  workerChildEnv,
+  workerChildEnv, destRuntimeId, destDisplayLabel,
 };

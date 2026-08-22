@@ -205,6 +205,14 @@ const withEnv = (env, fn) => {
     const gemRef = dests.nativeRefFor({ id: 'gemini' }, null, '/tmp/ws');
     ok(gemRef.kind === 'gemini' && !gemRef.session_id && !gemRef.resume,
       'gemini native_ref has no invented session id');
+    ok(dests.destDisplayLabel({ worker_runtime: 'codex', surface: 'code' }) === 'Codex',
+      'Codex dest return label is Codex, not Claude Code');
+    ok(dests.destDisplayLabel({ native_ref: { kind: 'gemini' }, surface: 'code' }) === 'Gemini CLI',
+      'Gemini dest return label is Gemini CLI');
+    ok(dests.destDisplayLabel({ worker_runtime: 'claude-code', surface: 'code' }) === 'Claude Code',
+      'Claude dest return label is still Claude Code');
+    ok(dests.destDisplayLabel({ surface: 'code' }) === null,
+      'no runtime/kind → caller falls back to NAMES[surface]');
     ok(dests.spawnArgv({ spawnKind: null, id: 'gemini' }, { prompt: 'x' }) === null,
       'probe-only dests have no invented spawn argv');
     ok(dests.WORKER_STDIO[0] === 'ignore' && dests.WORKER_STDIO[2] === 'pipe',

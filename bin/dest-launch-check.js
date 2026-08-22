@@ -31,6 +31,7 @@
  *  23. Probe-only dests (Gemini) do not mint a uuid as native_ref.session_id; only Claude Code does.
  *  24. list_workers prints dest_runtime; Codex/Gemini orphan copy does not chase dest return_to_origin.
  *  25. status Next reuses dest-specific orphanCloseCopy (Codex/Gemini do not have return_to_origin).
+ *  26. resolveLink attributes Codex/Gemini from worker_runtime / native_ref.kind, not NAMES.code.
  *
  *   node bin/dest-launch-check.js
  */
@@ -351,6 +352,32 @@ function fail(msg) {
   }
   delete process.env.HANDOFF_ORPHAN_MINUTES;
 
+  async function assertReturnAttribution(workerId, label) {
+    const stA = (await core.handleApi('GET', '/api/state', {}, {})).payload;
+    const linkA = Object.values(stA.links || {}).find(l => l.dest === workerId && l.status === 'active');
+    if (!linkA) fail(label + ' dest must still have an active return link');
+    const resolved = await core.handleApi('POST', `/api/sessions/${workerId}/return`, {}, {
+      summary: 'did the work',
+      artifacts: [{ name: 'out.md', type: 'file', content: 'ok' }],
+    });
+    if (resolved.code >= 400) fail(label + ' return failed: ' + JSON.stringify(resolved.payload));
+    const originA = (await core.handleApi('GET', '/api/state', {}, {})).payload.sessions[originId];
+    const card = (originA.messages || []).filter(m => m.kind === 'resume_summary' && m.from_session === workerId).pop();
+    if (!card || card.text.indexOf('While you were away, ' + label + ':') !== 0) {
+      fail(label + ' dest return must attribute ' + label + ', got ' + (card && card.text));
+    }
+    if (label !== 'Claude Code' && /While you were away, Claude Code:/.test(card.text)) {
+      fail(label + ' dest must not be attributed as Claude Code\n' + card.text);
+    }
+    const art = (originA.messages || []).filter(m => m.kind === 'xmsg' && m.from_session === workerId && /returned artifact from /.test(m.text)).pop();
+    if (!art || art.text.indexOf('[returned artifact from ' + label + ']') < 0) {
+      fail(label + ' returned artifact must use dest runtime label, got ' + (art && art.text && art.text.slice(0, 160)));
+    }
+  }
+  await assertReturnAttribution(wid[1], 'Codex');
+  await assertReturnAttribution(gemWid[1], 'Gemini CLI');
+  await assertReturnAttribution(defWid[1], 'Claude Code');
+
   const dests = require('../handoff-dest-runtimes');
   const { spawn } = require('child_process');
   const launchSrc = fs.readFileSync(path.join(__dirname, '../handoff-core.js'), 'utf8');
@@ -404,6 +431,18 @@ function fail(msg) {
   const harvestedRef = dests.nativeRefFor({ id: 'codex' }, '0199a213-81c0-7800-8aa1-bbab2a035a53', '/tmp/ws');
   if (harvestedRef.resume !== 'codex exec resume 0199a213-81c0-7800-8aa1-bbab2a035a53') {
     fail('harvested Codex resume must target that thread id, got ' + harvestedRef.resume);
+  }
+  if (dests.destDisplayLabel({ worker_runtime: 'codex', surface: 'code' }) !== 'Codex') {
+    fail('Codex destDisplayLabel must be Codex, not Claude Code');
+  }
+  if (dests.destDisplayLabel({ native_ref: { kind: 'gemini' }, surface: 'code' }) !== 'Gemini CLI') {
+    fail('Gemini destDisplayLabel must be Gemini CLI');
+  }
+  if (dests.destDisplayLabel({ worker_runtime: 'claude-code', surface: 'code' }) !== 'Claude Code') {
+    fail('Claude destDisplayLabel must stay Claude Code');
+  }
+  if (dests.destDisplayLabel({ surface: 'code' }) !== null) {
+    fail('no runtime/kind destDisplayLabel must be null so NAMES[surface] is the fallback');
   }
   const claudePrompt = dests.workerHeadlessPrompt({
     runtime: dests.CATALOG.find(r => r.id === 'claude-code'),

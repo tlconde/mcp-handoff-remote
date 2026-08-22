@@ -708,6 +708,9 @@ function destRuntimeOf(session, opts) {
   }
   return null;
 }
+function destAttribution(dest) {
+  return destRuntimes.destDisplayLabel(dest) || NAMES[dest && dest.surface] || (dest && dest.surface) || 'worker';
+}
 function buildBrief(target, env, session, opts) {
   const from = session.origin_ref ? NAMES[session.origin_ref.surface] : NAMES[session.surface];
   const head = `Continued from ${from} — "${session.title}" (${env.created_at})` +
@@ -1590,9 +1593,10 @@ async function resolveLink(link, opts) {
   const dest = db.sessions[link.dest];
   const summary = (opts && opts.summarize) ? await compact(dest) : mechanicalSummary(dest);
   const artifacts = ((opts && opts.artifacts) || []).filter(a => a && a.name && a.content);
+  const who = destAttribution(dest);
   const msg = addMessage(origin, {
     role: 'assistant', kind: 'resume_summary', from_session: dest.id,
-    text: `While you were away, ${NAMES[dest.surface]}: ${summary}` +
+    text: `While you were away, ${who}: ${summary}` +
       (artifacts.length ? `\n\nReturned artifact(s), by value: ${artifacts.map(a => a.name).join(', ')} — read them with check_inbox.` : '')
   });
   if (artifacts.length) {
@@ -1604,7 +1608,7 @@ async function resolveLink(link, opts) {
       dest.artifacts = [...new Map([...(dest.artifacts || []).map(x => [x.name, x]), [art.name, art]]).values()];
       addMessage(origin, {
         role: 'user', kind: 'xmsg', from_session: dest.id,
-        text: `[returned artifact from ${NAMES[dest.surface]}] ${art.name} BY VALUE\n\n${art.content}`
+        text: `[returned artifact from ${who}] ${art.name} BY VALUE\n\n${art.content}`
       });
     }
     origin.artifacts = [...byName.values()];
@@ -2853,7 +2857,7 @@ async function handleApi(method, p, query, b) {
       if (link.status !== 'active') return { code: 409, payload: { error: 'already ' + link.status } };
       link.status = 'failed';
       const origin = db.sessions[link.origin], dest = db.sessions[link.dest];
-      if (origin) addMessage(origin, { role: 'system', kind: 'resume_summary', from_session: link.dest, text: `While you were away: "${dest ? dest.title : link.dest}" FAILED — ${b.reason.slice(0, 400)}` });
+      if (origin) addMessage(origin, { role: 'system', kind: 'resume_summary', from_session: link.dest, text: `While you were away, ${destAttribution(dest)}: "${dest ? dest.title : link.dest}" FAILED — ${b.reason.slice(0, 400)}` });
       settleOffer(link.dest); // Bug B: a settled link never leaves a pending offer behind
       ops('link_failed', { link: link.id, dest: link.dest, reason: b.reason.slice(0, 200) });
       save();
